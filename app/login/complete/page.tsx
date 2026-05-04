@@ -1,3 +1,5 @@
+"use client";
+
 // app/login/complete/page.tsx (or wherever you handle the email link)
 import { isSignInWithEmailLink, signInWithEmailLink } from "firebase/auth";
 import { firebaseAuth } from "@/lib/firebase";
