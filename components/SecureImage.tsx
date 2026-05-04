@@ -13,6 +13,7 @@
 //   <SecureImage cloudflareImageId="abc123" variant="gallery" alt="Wedding" />
 //   <SecureImage src="https://..." alt="Custom" width={600} height={400} />
 
+import React from "react";
 import Image from "next/image";
 import type { ImageProps } from "next/image";
 import type { ImageVariant } from "@/lib/cloudflare";
@@ -41,8 +42,8 @@ export function SecureImage({
   return (
     <div
       style={{ position: "relative", userSelect: "none" }}
-      onContextMenu={handleContextMenu}
-      onDragStart={handleDragStart}
+      onContextMenu={(e) => e.preventDefault()}
+      onDragStart={(e) => e.preventDefault()}
     >
       <Image
         src={imageSrc}
