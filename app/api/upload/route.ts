@@ -3,7 +3,7 @@
 // The browser then PUTs the file directly to R2 (bypassing Vercel's 4.5MB limit).
 
 import { NextRequest, NextResponse }        from "next/server";
-import { getSession }                       from "@/lib/session";
+import { getSessionUser }                       from "@/lib/session";
 import { generatePresignedUploadUrl }       from "@/lib/cloudflare";
 import { adminDb }                          from "@/lib/firebase-admin";
 import { z }                                from "zod";
@@ -16,7 +16,7 @@ const PresignSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const session = await getSession();
+  const session = await getSessionUser();
   if (!session || session.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
