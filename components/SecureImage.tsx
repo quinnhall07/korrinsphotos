@@ -52,7 +52,6 @@ export function SecureImage({
         style={{
           pointerEvents: "none",
           userSelect: "none",
-          WebkitUserDrag: "none",
           ...((props.style as React.CSSProperties) ?? {}),
         }}
         {...props}

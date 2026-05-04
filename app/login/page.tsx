@@ -10,13 +10,14 @@ export const metadata: Metadata = {
   description: "Access your private photo gallery.",
 };
 
-export default function LoginPage({
+export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: { verify?: string; error?: string };
+  searchParams: Promise<{ verify?: string; error?: string }>;
 }) {
-  const showVerify = searchParams.verify === "1";
-  const hasError = searchParams.error === "1";
+  const { verify, error } = await searchParams;
+  const showVerify = verify === "1";
+  const hasError = error === "1";
 
   return (
     <div style={{ paddingTop: "72px" }} className="page-fade-in">

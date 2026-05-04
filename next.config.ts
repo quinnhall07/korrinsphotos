@@ -20,11 +20,7 @@ const nextConfig = {
     ],
     formats: ["image/avif", "image/webp"],
   },
-  experimental: {
-    serverActions: {
-      bodySizeLimit: "2mb",
-    },
-  },
+  serverExternalPackages: [],
 };
 
 export default nextConfig;
