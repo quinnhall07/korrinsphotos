@@ -22,12 +22,12 @@ import { useAuth }      from "@/components/FirebaseAuthProvider";
 
 const googleProvider    = new GoogleAuthProvider();
 const microsoftProvider = new OAuthProvider("microsoft.com");
-const appleProvider     = new OAuthProvider("apple.com");
+//const appleProvider     = new OAuthProvider("apple.com");
 microsoftProvider.addScope("email");
 microsoftProvider.addScope("profile");
 microsoftProvider.setCustomParameters({ prompt: "select_account" });
-appleProvider.addScope("email");
-appleProvider.addScope("name");
+//appleProvider.addScope("email");
+//appleProvider.addScope("name");
 
 const OAUTH_BUTTONS = [
   {
@@ -52,6 +52,7 @@ const OAUTH_BUTTONS = [
       </svg>
     ),
   },
+  /*
   {
     id: "apple", label: "Continue with Apple", provider: appleProvider,
     icon: (
@@ -60,6 +61,7 @@ const OAUTH_BUTTONS = [
       </svg>
     ),
   },
+  */
 ] as const;
 
 const inputStyle: React.CSSProperties = {
