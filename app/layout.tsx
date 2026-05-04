@@ -16,6 +16,9 @@ export const metadata: Metadata = {
   },
   description:
     "Fine art photography for weddings, portraits, and editorial work — crafted with intention and an eye for the extraordinary.",
+  icons: {
+    icon: "/favicon.ico",
+  },
   openGraph: {
     title: "Korrin's Photos",
     description: "Fine art photography for weddings, portraits, and editorial work.",
