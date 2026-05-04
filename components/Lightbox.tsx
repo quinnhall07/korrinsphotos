@@ -100,7 +100,6 @@ export function Lightbox({
           objectFit: "contain",
           userSelect: "none",
           pointerEvents: "none",
-          WebkitUserDrag: "none" as unknown as undefined,
           transition: "opacity 0.3s",
         }}
       />
