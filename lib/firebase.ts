@@ -1,10 +1,17 @@
 // lib/firebase.ts
-// Firebase CLIENT SDK — safe to import in Client Components.
-// All keys are NEXT_PUBLIC_ so they're exposed to the browser (that's correct for Firebase).
+// Firebase client SDK — singleton pattern for Next.js hot module replacement.
+// Import this in Client Components only.
+//
+// Required env vars (prefix NEXT_PUBLIC_ so the browser can read them):
+//   NEXT_PUBLIC_FIREBASE_API_KEY
+//   NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+//   NEXT_PUBLIC_FIREBASE_PROJECT_ID
+//   NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+//   NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+//   NEXT_PUBLIC_FIREBASE_APP_ID
 
-import { initializeApp, getApps } from "firebase/app";
-import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
+import { getAuth, type Auth } from "firebase/auth";
 
 const firebaseConfig = {
   apiKey:            process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
@@ -15,8 +22,9 @@ const firebaseConfig = {
   appId:             process.env.NEXT_PUBLIC_FIREBASE_APP_ID!,
 };
 
-// Prevent duplicate initialization during Next.js hot reload
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+function getFirebaseApp(): FirebaseApp {
+  return getApps().length > 0 ? getApps()[0]! : initializeApp(firebaseConfig);
+}
 
-export const auth = getAuth(app);
-export const db   = getFirestore(app);
+export const firebaseApp = getFirebaseApp();
+export const firebaseAuth: Auth = getAuth(firebaseApp);

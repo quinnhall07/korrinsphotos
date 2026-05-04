@@ -1,62 +1,48 @@
 // app/api/auth/session/route.ts
-// Creates or destroys the HttpOnly session cookie.
-//
-// POST /api/auth/session  — exchange a Firebase ID token for a session cookie
-// DELETE /api/auth/session — sign out (clears the cookie)
+// Called by the client immediately after Firebase sign-in.
+// Exchanges the short-lived ID token for a 14-day httpOnly session cookie.
+// Also upserts the user document in Firestore and sets the ADMIN custom claim
+// if the email matches ADMIN_EMAIL.
 
 import { NextRequest, NextResponse } from "next/server";
-import { adminAuth } from "@/lib/firebase-admin";
-import { upsertUser } from "@/lib/session";
-
-// 14 days in milliseconds
-const SESSION_DURATION_MS = 60 * 60 * 24 * 14 * 1000;
+import { adminAuth }                 from "@/lib/firebase-admin";
+import { createSession }             from "@/lib/session";
+import { upsertUser }                from "@/lib/firestore";
 
 export async function POST(req: NextRequest) {
-  const { idToken } = await req.json();
-
-  if (!idToken) {
-    return NextResponse.json({ error: "Missing idToken" }, { status: 400 });
-  }
-
   try {
-    // Verify the ID token is valid and not expired
+    const { idToken } = await req.json();
+    if (!idToken || typeof idToken !== "string") {
+      return NextResponse.json({ error: "Missing idToken" }, { status: 400 });
+    }
+
+    // Verify the ID token first
     const decoded = await adminAuth.verifyIdToken(idToken);
 
-    // Ensure the user document exists in Firestore (and promote to admin if needed)
-    await upsertUser(decoded.uid, decoded.email ?? "");
+    // Promote to ADMIN if this is the designated admin email
+    if (decoded.email === process.env.ADMIN_EMAIL) {
+      await adminAuth.setCustomUserClaims(decoded.uid, { role: "ADMIN" });
+    }
 
-    // Exchange the short-lived ID token for a long-lived session cookie
-    const sessionCookie = await adminAuth.createSessionCookie(idToken, {
-      expiresIn: SESSION_DURATION_MS,
+    // Re-fetch claims after potential promotion
+    const freshToken = await adminAuth.getUser(decoded.uid);
+    const role = (freshToken.customClaims?.["role"] as string) ?? "CLIENT";
+
+    // Persist user to Firestore (upsert — safe to call every login)
+    await upsertUser(decoded.uid, {
+      uid:         decoded.uid,
+      email:       decoded.email!,
+      displayName: decoded.name  ?? freshToken.displayName ?? null,
+      photoURL:    decoded.picture ?? freshToken.photoURL ?? null,
+      role:        role as "ADMIN" | "CLIENT",
     });
 
-    const res = NextResponse.json({ status: "ok" });
+    // Create the session cookie
+    await createSession(idToken);
 
-    res.cookies.set("session", sessionCookie, {
-      httpOnly:  true,
-      secure:    process.env.NODE_ENV === "production",
-      sameSite:  "lax",
-      maxAge:    SESSION_DURATION_MS / 1000, // maxAge is in seconds
-      path:      "/",
-    });
-
-    return res;
+    return NextResponse.json({ ok: true, role });
   } catch (err) {
-    console.error("Session creation failed:", err);
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    console.error("[session] Error:", err);
+    return NextResponse.json({ error: "Invalid token" }, { status: 401 });
   }
-}
-
-export async function DELETE() {
-  const res = NextResponse.json({ status: "ok" });
-
-  res.cookies.set("session", "", {
-    httpOnly: true,
-    secure:   process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    maxAge:   0, // Immediately expire
-    path:     "/",
-  });
-
-  return res;
 }

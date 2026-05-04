@@ -1,6 +1,7 @@
 // app/login/page.tsx
-// Client portal login page — magic link via NextAuth + Resend.
-// If ?verify=1 is in the URL, show the "check your inbox" confirmation.
+// Client portal login — magic link + Google, Microsoft, Apple OAuth.
+// ?verify=1  → "Check your inbox" confirmation state
+// ?error=1   → expired / invalid link error
 
 import type { Metadata } from "next";
 import { LoginForm } from "./LoginForm";
@@ -30,7 +31,7 @@ export default async function LoginPage({
           position: "relative",
         }}
       >
-        {/* Subtle background image */}
+        {/* Subtle background */}
         <div
           style={{
             position: "absolute",
@@ -41,17 +42,17 @@ export default async function LoginPage({
           }}
         />
 
-        {/* Login card */}
+        {/* Card */}
         <div
           style={{
             position: "relative",
             zIndex: 2,
             width: "100%",
-            maxWidth: "440px",
+            maxWidth: "460px",
             padding: "3.5rem",
             border: "0.5px solid var(--border-strong)",
-            background: "rgba(250,249,246,0.92)",
-            backdropFilter: "blur(8px)",
+            background: "rgba(250,249,246,0.96)",
+            backdropFilter: "blur(12px)",
           }}
         >
           <p
@@ -65,54 +66,44 @@ export default async function LoginPage({
           >
             Client Portal
           </p>
-          <h2
-            style={{
-              fontFamily: "'Cormorant Garamond', serif",
-              fontSize: "2.2rem",
-              fontWeight: 300,
-              lineHeight: 1.2,
-              marginBottom: "0.5rem",
-            }}
-          >
-            Welcome
-            <br />
-            <em>back</em>
-          </h2>
 
           {showVerify ? (
-            /* ── Verification sent state ────────────────────────────── */
-            <div style={{ textAlign: "center", paddingTop: "1.5rem" }}>
+            /* ── Magic link sent ───────────────────────────────────────── */
+            <div style={{ textAlign: "center", paddingTop: "1rem" }}>
               <div
                 style={{
-                  width: "48px",
-                  height: "48px",
+                  width: "52px",
+                  height: "52px",
                   borderRadius: "50%",
                   background: "var(--olive-dim)",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  margin: "0 auto 1.2rem",
-                  fontSize: "1.3rem",
+                  margin: "0 auto 1.4rem",
+                  fontSize: "1.4rem",
                   color: "var(--olive)",
                 }}
               >
                 ✓
               </div>
-              <h3
+              <h2
                 style={{
                   fontFamily: "'Cormorant Garamond', serif",
-                  fontSize: "1.5rem",
-                  fontWeight: 400,
-                  marginBottom: "0.5rem",
+                  fontSize: "2rem",
+                  fontWeight: 300,
+                  lineHeight: 1.2,
+                  marginBottom: "0.75rem",
                 }}
               >
                 Check your inbox
-              </h3>
+              </h2>
               <p
                 style={{
                   fontSize: "0.88rem",
                   color: "var(--charcoal-muted)",
-                  lineHeight: 1.7,
+                  lineHeight: 1.8,
+                  maxWidth: "300px",
+                  margin: "0 auto",
                 }}
               >
                 A magic link has been sent to your email address. The link
@@ -120,37 +111,51 @@ export default async function LoginPage({
               </p>
             </div>
           ) : (
-            /* ── Login form ─────────────────────────────────────────── */
+            /* ── Login form ───────────────────────────────────────────── */
             <>
+              <h2
+                style={{
+                  fontFamily: "'Cormorant Garamond', serif",
+                  fontSize: "2.2rem",
+                  fontWeight: 300,
+                  lineHeight: 1.2,
+                  marginBottom: "0.5rem",
+                }}
+              >
+                Welcome
+                <br />
+                <em>back</em>
+              </h2>
               <p
                 style={{
                   fontSize: "0.88rem",
                   color: "var(--charcoal-muted)",
                   lineHeight: 1.7,
-                  marginBottom: "2.5rem",
+                  marginBottom: "2rem",
                 }}
               >
-                Enter your email and we&apos;ll send you a secure magic link to
-                access your private gallery.
+                Sign in to access your private gallery.
               </p>
 
               {hasError && (
-                <p
+                <div
                   style={{
-                    color: "#B45309",
-                    fontSize: "0.82rem",
-                    marginBottom: "1.2rem",
-                    padding: "0.75rem",
+                    padding: "0.9rem 1rem",
                     background: "#FEF3C7",
+                    borderLeft: "2px solid #F59E0B",
+                    fontSize: "0.82rem",
+                    color: "#92400E",
+                    marginBottom: "1.5rem",
+                    lineHeight: 1.6,
                   }}
                 >
-                  That link has expired or is invalid. Please request a new one.
-                </p>
+                  That link has expired or is invalid. Please sign in again.
+                </div>
               )}
 
               <LoginForm />
 
-              {/* Admin quick-access (dev only — remove in production) */}
+              {/* Admin / demo links — dev only */}
               {process.env.NODE_ENV === "development" && (
                 <div
                   style={{
@@ -162,44 +167,16 @@ export default async function LoginPage({
                 >
                   <p
                     style={{
-                      fontSize: "0.78rem",
+                      fontSize: "0.75rem",
                       color: "var(--charcoal-muted)",
                       marginBottom: "0.75rem",
                     }}
                   >
                     Are you the photographer?
                   </p>
-                  <a
-                    href="/admin"
-                    style={{
-                      display: "inline-block",
-                      padding: "0.6rem 1.4rem",
-                      fontSize: "0.68rem",
-                      letterSpacing: "0.12em",
-                      textTransform: "uppercase",
-                      color: "var(--charcoal)",
-                      border: "0.5px solid var(--border-strong)",
-                      textDecoration: "none",
-                      marginRight: "0.5rem",
-                    }}
-                  >
-                    Admin Access
-                  </a>
-                  <a
-                    href="/gallery"
-                    style={{
-                      display: "inline-block",
-                      padding: "0.6rem 1.4rem",
-                      fontSize: "0.68rem",
-                      letterSpacing: "0.12em",
-                      textTransform: "uppercase",
-                      color: "var(--charcoal)",
-                      border: "0.5px solid var(--border-strong)",
-                      textDecoration: "none",
-                    }}
-                  >
-                    Demo Client View
-                  </a>
+                  <a href="/admin" style={devLink}>Admin Access</a>
+                  &nbsp;
+                  <a href="/gallery" style={devLink}>Demo Client View</a>
                 </div>
               )}
             </>
@@ -209,3 +186,15 @@ export default async function LoginPage({
     </div>
   );
 }
+
+const devLink: React.CSSProperties = {
+  display: "inline-block",
+  padding: "0.55rem 1.2rem",
+  fontSize: "0.67rem",
+  letterSpacing: "0.12em",
+  textTransform: "uppercase",
+  color: "var(--charcoal)",
+  border: "0.5px solid var(--border-strong)",
+  textDecoration: "none",
+  marginBottom: "0.25rem",
+};

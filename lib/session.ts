@@ -1,108 +1,60 @@
 // lib/session.ts
-// Server-side session helpers. Used in Server Components, layouts, and API routes.
+// Firebase session-cookie helpers (server-side only).
 //
 // Flow:
-//   1. Client signs in with Firebase email link → gets ID token
-//   2. Client POSTs ID token to /api/auth/session
-//   3. Server verifies token, creates a Firebase session cookie (14-day expiry)
-//   4. Server components call getSession() to read + verify that cookie
-//
-// The session cookie is an HttpOnly, Secure, SameSite=Lax cookie named "session".
+//   1. User signs in client-side with Firebase Auth.
+//   2. Client POSTs the short-lived ID token to /api/auth/session.
+//   3. Server calls createSessionCookie() → sets a 14-day httpOnly cookie.
+//   4. Every server component / API route calls getSessionUser() to
+//      verify the cookie and get the decoded claims (uid, email, role).
 
 import { cookies } from "next/headers";
-import { adminAuth, adminDb } from "@/lib/firebase-admin";
+import { adminAuth } from "@/lib/firebase-admin";
+import type { DecodedIdToken } from "firebase-admin/auth";
 
-export type SessionUser = {
-  uid:   string;
-  email: string;
-  role:  "ADMIN" | "CLIENT";
-};
+const SESSION_COOKIE_NAME = "__session";
+const SESSION_MAX_AGE     = 60 * 60 * 24 * 14; // 14 days (seconds)
 
-/**
- * Reads the session cookie and verifies it with Firebase Admin.
- * Returns null if the cookie is missing, expired, or invalid.
- * Safe to call from any Server Component or Route Handler.
- */
-export async function getSession(): Promise<SessionUser | null> {
+// ─── Create ───────────────────────────────────────────────────────────────────
+export async function createSession(idToken: string): Promise<void> {
+  const expiresIn = SESSION_MAX_AGE * 1000; // Firebase expects ms
+
+  const sessionCookie = await adminAuth.createSessionCookie(idToken, {
+    expiresIn,
+  });
+
   const cookieStore = await cookies();
-  const sessionCookie = cookieStore.get("session")?.value;
+  cookieStore.set(SESSION_COOKIE_NAME, sessionCookie, {
+    maxAge:   SESSION_MAX_AGE,
+    httpOnly: true,
+    secure:   process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path:     "/",
+  });
+}
 
-  if (!sessionCookie) return null;
-
+// ─── Verify & read ────────────────────────────────────────────────────────────
+export async function getSessionUser(): Promise<DecodedIdToken | null> {
   try {
-    // checkRevoked: true — also fails if the user's session was explicitly revoked
-    const decoded = await adminAuth.verifySessionCookie(sessionCookie, true);
+    const cookieStore = await cookies();
+    const cookie      = cookieStore.get(SESSION_COOKIE_NAME);
+    if (!cookie?.value) return null;
 
-    return {
-      uid:   decoded.uid,
-      email: decoded.email ?? "",
-      // Role is stored as a custom claim so we don't need a Firestore round-trip
-      role:  (decoded.role as "ADMIN" | "CLIENT") ?? "CLIENT",
-    };
+    // checkRevoked: true → invalidates cookies when user is deleted / signs out server-side
+    const decoded = await adminAuth.verifySessionCookie(cookie.value, true);
+    return decoded;
   } catch {
-    // Cookie is invalid or expired — treat as signed out
     return null;
   }
 }
 
-/**
- * Like getSession() but throws a redirect to /login if there's no valid session.
- * Use this in protected layouts instead of getSession() + manual redirect.
- */
-export async function requireSession(): Promise<SessionUser> {
-  const session = await getSession();
-  if (!session) {
-    const { redirect } = await import("next/navigation");
-    redirect("/login");
-  }
-  // Tell TypeScript we guarantee this is not null if we reach this point
-  return session as SessionUser; 
+// ─── Delete ───────────────────────────────────────────────────────────────────
+export async function clearSession(): Promise<void> {
+  const cookieStore = await cookies();
+  cookieStore.delete(SESSION_COOKIE_NAME);
 }
 
-/**
- * Like requireSession() but also enforces ADMIN role.
- */
-export async function requireAdmin(): Promise<SessionUser> {
-  const session = await requireSession();
-  if (session.role !== "ADMIN") {
-    const { redirect } = await import("next/navigation");
-    redirect("/login");
-  }
-  return session;
-}
-
-/**
- * Promotes a user to ADMIN by setting a custom Firebase Auth claim.
- * Custom claims are included in all future ID tokens and session cookies.
- * Called once during the first sign-in of the designated admin email.
- */
-export async function promoteToAdmin(uid: string): Promise<void> {
-  await adminAuth.setCustomUserClaims(uid, { role: "ADMIN" });
-  // Mirror the role in Firestore so admin pages can display it in tables
-  await adminDb.collection("users").doc(uid).set(
-    { role: "ADMIN" },
-    { merge: true }
-  );
-}
-
-/**
- * Ensures a Firestore /users/{uid} document exists after first sign-in.
- * Creates it with role CLIENT unless the email matches ADMIN_EMAIL.
- */
-export async function upsertUser(uid: string, email: string): Promise<void> {
-  const userRef = adminDb.collection("users").doc(uid);
-  const snap = await userRef.get();
-
-  if (!snap.exists) {
-    await userRef.set({
-      email,
-      role: "CLIENT",
-      createdAt: new Date(),
-    });
-  }
-
-  // Promote to admin on first sign-in if this is the designated admin email
-  if (email === process.env.ADMIN_EMAIL) {
-    await promoteToAdmin(uid);
-  }
+// ─── Role helpers ─────────────────────────────────────────────────────────────
+export function isAdmin(decoded: DecodedIdToken): boolean {
+  return decoded["role"] === "ADMIN";
 }
