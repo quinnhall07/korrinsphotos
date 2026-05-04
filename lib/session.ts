@@ -8,6 +8,7 @@
 //   4. Every server component / API route calls getSessionUser() to
 //      verify the cookie and get the decoded claims (uid, email, role).
 
+import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { adminAuth } from "@/lib/firebase-admin";
 import type { DecodedIdToken } from "firebase-admin/auth";
@@ -57,4 +58,15 @@ export async function clearSession(): Promise<void> {
 // ─── Role helpers ─────────────────────────────────────────────────────────────
 export function isAdmin(decoded: DecodedIdToken): boolean {
   return decoded["role"] === "ADMIN";
+}
+
+// ─── Route Protection ────────────────────────────────────────────────────────
+export async function requireAdmin(): Promise<DecodedIdToken> {
+  const decoded = await getSessionUser();
+  
+  if (!decoded || !isAdmin(decoded)) {
+    redirect("/login"); // Kick unauthorized users out
+  }
+  
+  return decoded;
 }
