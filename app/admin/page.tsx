@@ -1,9 +1,8 @@
 // app/admin/page.tsx
-// Admin dashboard — Server Component. Fetches real counts and recent rows
-// from the DB to populate the stat cards and preview tables.
+// Admin dashboard — Server Component. Currently using mock data until
+// the database layer is implemented.
 
 import Link from "next/link";
-import { prisma } from "@/lib/prisma";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "Admin Dashboard" };
@@ -12,50 +11,9 @@ export const metadata: Metadata = { title: "Admin Dashboard" };
 export const dynamic = "force-dynamic";
 
 async function getDashboardData() {
-  const [
-    activeEventsCount,
-    totalPhotosCount,
-    pendingInquiriesCount,
-    activeClientsCount,
-    recentInquiries,
-    recentEvents,
-  ] = await Promise.all([
-    prisma.event.count(),
-    prisma.photo.count(),
-    prisma.bookingInquiry.count({ where: { status: "PENDING" } }),
-    prisma.user.count({ where: { role: "CLIENT" } }),
-    prisma.bookingInquiry.findMany({
-      orderBy: { createdAt: "desc" },
-      take: 4,
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        sessionType: true,
-        preferredDate: true,
-        status: true,
-      },
-    }),
-    prisma.event.findMany({
-      orderBy: { createdAt: "desc" },
-      take: 4,
-      select: {
-        id: true,
-        title: true,
-        createdAt: true,
-        _count: { select: { photos: true, access: true } },
-      },
-    }),
-  ]);
-
-  return {
-    activeEventsCount,
-    totalPhotosCount,
-    pendingInquiriesCount,
-    activeClientsCount,
-    recentInquiries,
-    recentEvents,
-  };
+  // TODO: Replace with your actual database fetching logic (e.g., Firebase)
+  // Throwing an error here so the try/catch block below falls back to MOCK_DATA
+  throw new Error("Database not connected yet");
 }
 
 // ─── Placeholder data for pre-DB state ───────────────────────────────────────
@@ -79,7 +37,8 @@ const MOCK_DATA = {
 export default async function AdminDashboard() {
   let data = MOCK_DATA;
   try {
-    data = await getDashboardData() as typeof MOCK_DATA;
+    // Add "unknown" here to satisfy TypeScript's strict casting rules
+    data = (await getDashboardData()) as unknown as typeof MOCK_DATA;
   } catch {
     // DB not available — use mock data
   }
