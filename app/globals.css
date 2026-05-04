@@ -1,0 +1,237 @@
+/* app/globals.css
+   All design tokens and global styles extracted from the prototype.
+   Tailwind base layers are imported first, then custom rules follow. */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Google Fonts ────────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400;1,500&family=Jost:wght@300;400;500&display=swap');
+
+/* ─── Design Tokens ──────────────────────────────────────────────────────── */
+:root {
+  --white: #FAF9F6;
+  --charcoal: #2A2A28;
+  --charcoal-light: #4A4A47;
+  --charcoal-muted: #8A8A85;
+  --olive: #6B7845;
+  --olive-light: #8A9A5A;
+  --olive-dim: #E8EBD8;
+  --border: rgba(42, 42, 40, 0.12);
+  --border-strong: rgba(42, 42, 40, 0.22);
+  --transition: 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+/* ─── Reset ──────────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: 'Jost', sans-serif;
+  background: var(--white);
+  color: var(--charcoal);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Grain texture overlay — sits above everything, pointer-events disabled */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.035'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.6;
+}
+
+/* ─── Page Animations ─────────────────────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes heroReveal {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scrollBob {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50%       { transform: translateX(-50%) translateY(6px); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ─── Utility Classes ─────────────────────────────────────────────────────── */
+.page-fade-in {
+  animation: fadeIn 0.5s ease forwards;
+}
+
+.hero-animate {
+  animation: heroReveal 1.2s 0.4s both;
+}
+
+.scroll-bob {
+  animation: scrollBob 2s ease-in-out infinite;
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(42, 42, 40, 0.06) 25%,
+    rgba(42, 42, 40, 0.10) 50%,
+    rgba(42, 42, 40, 0.06) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* ─── Image Protection ────────────────────────────────────────────────────── */
+img {
+  -webkit-user-drag: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ─── Masonry Layout ─────────────────────────────────────────────────────── */
+.masonry {
+  columns: 3;
+  column-gap: 1rem;
+}
+
+.masonry-item {
+  break-inside: avoid;
+  margin-bottom: 1rem;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.masonry-item img {
+  width: 100%;
+  display: block;
+  transition: transform 0.6s var(--transition);
+}
+
+.masonry-item:hover img {
+  transform: scale(1.03);
+}
+
+.masonry-item .overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(42, 42, 40, 0);
+  transition: background 0.4s;
+  display: flex;
+  align-items: flex-end;
+  padding: 1.2rem;
+}
+
+.masonry-item:hover .overlay {
+  background: rgba(42, 42, 40, 0.28);
+}
+
+.masonry-item .photo-label {
+  color: var(--white);
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: all 0.3s;
+}
+
+.masonry-item:hover .photo-label {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ─── Nav Link Underline ─────────────────────────────────────────────────── */
+.nav-link-underline {
+  position: relative;
+}
+
+.nav-link-underline::after {
+  content: '';
+  position: absolute;
+  bottom: -3px;
+  left: 0;
+  right: 0;
+  height: 0.5px;
+  background: var(--olive);
+  transform: scaleX(0);
+  transition: transform 0.3s;
+}
+
+.nav-link-underline:hover::after,
+.nav-link-underline.active::after {
+  transform: scaleX(1);
+}
+
+/* ─── Form Styles ─────────────────────────────────────────────────────────── */
+.form-input {
+  width: 100%;
+  border: 0.5px solid var(--border-strong);
+  background: transparent;
+  padding: 0.85rem 1rem;
+  font-family: 'Jost', sans-serif;
+  font-size: 0.92rem;
+  color: var(--charcoal);
+  outline: none;
+  transition: border-color 0.2s;
+  border-radius: 0;
+  appearance: none;
+}
+
+.form-input:focus {
+  border-color: var(--olive);
+}
+
+.form-input::placeholder {
+  color: var(--charcoal-muted);
+}
+
+textarea.form-input {
+  resize: vertical;
+  min-height: 120px;
+  line-height: 1.7;
+}
+
+/* ─── Lightbox ────────────────────────────────────────────────────────────── */
+.lightbox-open {
+  overflow: hidden;
+}
+
+/* ─── Admin Sidebar Active ───────────────────────────────────────────────── */
+.sidebar-link-active {
+  color: var(--charcoal);
+  border-left-color: var(--olive) !important;
+  background: rgba(107, 120, 69, 0.06);
+}
+
+/* ─── Upload Zone ─────────────────────────────────────────────────────────── */
+.upload-zone-hover {
+  border-color: var(--olive) !important;
+  background: rgba(107, 120, 69, 0.04);
+}
+
+/* ─── Toast ───────────────────────────────────────────────────────────────── */
+.toast-enter {
+  opacity: 0;
+  transform: translateX(-50%) translateY(20px);
+}
+
+.toast-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
