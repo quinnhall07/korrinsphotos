@@ -70,3 +70,14 @@ export async function requireAdmin(): Promise<DecodedIdToken> {
   
   return decoded;
 }
+
+export async function requireSession(): Promise<DecodedIdToken> {
+  const decoded = await getSessionUser();
+  
+  // If no valid session cookie exists, redirect to login
+  if (!decoded) {
+    redirect("/login"); 
+  }
+  
+  return decoded;
+}

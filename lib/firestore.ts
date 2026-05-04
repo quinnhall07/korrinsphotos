@@ -20,8 +20,8 @@ export type Role = "ADMIN" | "CLIENT";
 export interface UserDoc {
   uid:         string;
   email:       string;
-  displayName?: string;
-  photoURL?:   string;
+  displayName?: string | null; // <-- Add | null
+  photoURL?:   string | null;  // <-- Add | null
   role:        Role;
   createdAt:   Timestamp;
 }

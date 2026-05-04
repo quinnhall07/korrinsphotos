@@ -14,7 +14,7 @@
 
 import { NextRequest, NextResponse }        from "next/server";
 import { adminAuth, adminDb }               from "@/lib/firebase-admin";
-import { getSession }                       from "@/lib/session";
+import { getSessionUser }                       from "@/lib/session";
 import { sendFirebaseSignInLink, buildContinueUrl } from "@/lib/firebase-email";
 import { FieldValue }                       from "firebase-admin/firestore";
 import { z }                                from "zod";
@@ -26,7 +26,7 @@ const InviteSchema = z.object({
 
 export async function POST(req: NextRequest) {
   // ── Auth guard ──────────────────────────────────────────────────────────────
-  const session = await getSession();
+  const session = await getSessionUser();
   if (!session || session.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
