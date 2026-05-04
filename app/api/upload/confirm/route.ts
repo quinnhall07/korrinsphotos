@@ -3,7 +3,7 @@
 // Ingests the image into Cloudflare Images, then writes a Photo doc to Firestore.
 
 import { NextRequest, NextResponse }          from "next/server";
-import { getSession }                         from "@/lib/session";
+import { getSessionUser }                         from "@/lib/session";
 import { uploadToCloudflareImages }           from "@/lib/cloudflare";
 import { adminDb }                            from "@/lib/firebase-admin";
 import { FieldValue }                         from "firebase-admin/firestore";
@@ -17,7 +17,7 @@ const ConfirmSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const session = await getSession();
+  const session = await getSessionUser();
   if (!session || session.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
