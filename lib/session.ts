@@ -55,7 +55,8 @@ export async function requireSession(): Promise<SessionUser> {
     const { redirect } = await import("next/navigation");
     redirect("/login");
   }
-  return session;
+  // Tell TypeScript we guarantee this is not null if we reach this point
+  return session as SessionUser; 
 }
 
 /**
