@@ -7,6 +7,7 @@ import {
   S3Client,
   PutObjectCommand,
   DeleteObjectCommand,
+  GetObjectCommand, // Add this import
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -165,4 +166,18 @@ export function buildCdnUrl(
 ): string {
   const base = process.env.NEXT_PUBLIC_CLOUDFLARE_IMAGES_URL;
   return `${base}/${cloudflareImageId}/${variant}`;
+}
+
+/**
+ * Generates a pre-signed GET URL to temporarily allow secure read access 
+ * to a private R2 object.
+ */
+export async function generatePresignedGetUrl(key: string): Promise<string> {
+  const command = new GetObjectCommand({
+    Bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME!,
+    Key: key,
+  });
+
+  // URL expires in 5 minutes (300 seconds) — just enough time for Cloudflare Images to fetch it
+  return await getSignedUrl(r2, command, { expiresIn: 300 });
 }

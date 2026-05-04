@@ -1,29 +1,23 @@
 // app/admin/layout.tsx
-// Admin layout with server-side auth guard.
-// Any non-ADMIN request is redirected to /login before the page renders.
+// Admin layout with server-side auth guard using Firebase session cookie.
+// Non-admins are redirected to /login before anything renders.
 
-import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
-import { AdminSidebar } from "./AdminSidebar";
+import { redirect }      from "next/navigation";
+import { requireAdmin }  from "@/lib/session";
+import { AdminSidebar }  from "./AdminSidebar";
 
-export default async function AdminLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  const session = await auth();
-
-  if (!session || session.user.role !== "ADMIN") {
-    redirect("/login");
-  }
+export default async function AdminLayout({ children }: { children: React.ReactNode }) {
+  // requireAdmin() reads the session cookie and verifies it server-side.
+  // Redirects to /login if the cookie is missing, expired, or not ADMIN role.
+  await requireAdmin();
 
   return (
     <div style={{ paddingTop: "72px" }}>
       <div
         style={{
-          display: "grid",
-          gridTemplateColumns: "260px 1fr",
-          minHeight: "calc(100vh - 72px)",
+          display:               "grid",
+          gridTemplateColumns:   "260px 1fr",
+          minHeight:             "calc(100vh - 72px)",
         }}
       >
         <AdminSidebar />

@@ -1,24 +1,30 @@
 "use client";
 
 // components/Navbar.tsx
-// Role-aware navigation. Renders different links for public, client, and admin views.
-// Active route highlighting uses usePathname() from next/navigation.
+// Role-aware navigation using Firebase Auth context.
+// Role is determined by the server session (stored in cookie),
+// but for client-side nav rendering we read it from the AuthProvider.
 
-import Link from "next/link";
+import Link        from "next/link";
 import { usePathname } from "next/navigation";
-import { signOut } from "next-auth/react";
-import type { Session } from "next-auth";
+import { useAuth } from "@/components/AuthProvider";
+import { useState, useEffect } from "react";
 
-interface NavbarProps {
-  session: Session | null;
-}
+export function Navbar() {
+  const pathname       = usePathname();
+  const { user, signOut } = useAuth();
+  const [role, setRole]   = useState<"ADMIN" | "CLIENT" | null>(null);
 
-export function Navbar({ session }: NavbarProps) {
-  const pathname = usePathname();
-  const isAdmin = session?.user?.role === "ADMIN";
-  const isAdminRoute = pathname.startsWith("/admin");
-  const isClientRoute =
-    pathname.startsWith("/gallery") || pathname === "/gallery";
+  // Fetch role from the server session (custom claims) once the Firebase user loads
+  useEffect(() => {
+    if (!user) { setRole(null); return; }
+    user.getIdTokenResult().then((result) => {
+      setRole((result.claims.role as "ADMIN" | "CLIENT") ?? "CLIENT");
+    });
+  }, [user]);
+
+  const isAdminRoute  = pathname.startsWith("/admin");
+  const isClientRoute = pathname.startsWith("/gallery");
 
   const isActive = (path: string) =>
     pathname === path || pathname.startsWith(path + "/");
@@ -26,123 +32,61 @@ export function Navbar({ session }: NavbarProps) {
   return (
     <nav
       style={{
-        position: "fixed",
-        top: 0,
-        left: 0,
-        right: 0,
-        zIndex: 100,
-        display: "flex",
-        alignItems: "center",
+        position:       "fixed",
+        top: 0, left: 0, right: 0,
+        zIndex:         100,
+        display:        "flex",
+        alignItems:     "center",
         justifyContent: "space-between",
-        padding: "0 3rem",
-        height: "72px",
-        background: "rgba(250,249,246,0.88)",
+        padding:        "0 3rem",
+        height:         "72px",
+        background:     "rgba(250,249,246,0.88)",
         backdropFilter: "blur(12px)",
-        borderBottom: "0.5px solid var(--border)",
+        borderBottom:   "0.5px solid var(--border)",
       }}
     >
       {/* Logo */}
-      <Link
-        href="/"
-        style={{
-          fontFamily: "'Cormorant Garamond', serif",
-          fontSize: "1.35rem",
-          fontWeight: 500,
-          letterSpacing: "0.04em",
-          color: "var(--charcoal)",
-          textDecoration: "none",
-        }}
-      >
-        Korrin&apos;s Photos<span style={{ color: "var(--olive)" }}>.</span>
+      <Link href="/" style={logoStyle}>
+        Korrin&apos;s<span style={{ color: "var(--olive)" }}>.</span>
       </Link>
 
-      {/* Nav Links — context-aware */}
-      <ul
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "2.5rem",
-          listStyle: "none",
-        }}
-      >
+      <ul style={{ display: "flex", alignItems: "center", gap: "2.5rem", listStyle: "none" }}>
         {isAdminRoute ? (
-          // Admin nav
-          <li>
-            <Link href="/" style={navLinkStyle}>
-              ← Public Site
-            </Link>
-          </li>
+          <li><Link href="/" style={navLinkStyle}>← Public Site</Link></li>
         ) : isClientRoute ? (
-          // Client gallery nav
           <>
             <li>
-              <Link
-                href="/gallery"
-                className="nav-link-underline"
-                style={{
-                  ...navLinkStyle,
-                  color: isActive("/gallery")
-                    ? "var(--charcoal)"
-                    : "var(--charcoal-light)",
-                }}
-              >
+              <Link href="/gallery" style={{ ...navLinkStyle, color: isActive("/gallery") ? "var(--charcoal)" : "var(--charcoal-light)" }}>
                 My Galleries
               </Link>
             </li>
             <li>
-              <button
-                onClick={() => signOut({ callbackUrl: "/" })}
-                style={{ ...navLinkStyle, background: "none", border: "none", cursor: "pointer" }}
-              >
+              <button onClick={signOut} style={{ ...navLinkStyle, background: "none", border: "none", cursor: "pointer" }}>
                 Sign Out
               </button>
             </li>
           </>
         ) : (
-          // Public nav
           <>
             <li>
-              <Link
-                href="/portfolio"
-                className={`nav-link-underline${isActive("/portfolio") ? " active" : ""}`}
-                style={{
-                  ...navLinkStyle,
-                  color: isActive("/portfolio")
-                    ? "var(--charcoal)"
-                    : "var(--charcoal-light)",
-                }}
-              >
+              <Link href="/portfolio" style={{ ...navLinkStyle, color: isActive("/portfolio") ? "var(--charcoal)" : "var(--charcoal-light)" }}>
                 Portfolio
               </Link>
             </li>
             <li>
-              <Link
-                href="/booking"
-                className={`nav-link-underline${isActive("/booking") ? " active" : ""}`}
-                style={{
-                  ...navLinkStyle,
-                  color: isActive("/booking")
-                    ? "var(--charcoal)"
-                    : "var(--charcoal-light)",
-                }}
-              >
+              <Link href="/booking" style={{ ...navLinkStyle, color: isActive("/booking") ? "var(--charcoal)" : "var(--charcoal-light)" }}>
                 Booking
               </Link>
             </li>
-            {session ? (
+            {user ? (
               <li>
-                <Link
-                  href={isAdmin ? "/admin" : "/gallery"}
-                  style={ctaStyle}
-                >
-                  {isAdmin ? "Admin" : "My Gallery"}
+                <Link href={role === "ADMIN" ? "/admin" : "/gallery"} style={ctaStyle}>
+                  {role === "ADMIN" ? "Admin" : "My Gallery"}
                 </Link>
               </li>
             ) : (
               <li>
-                <Link href="/login" style={ctaStyle}>
-                  Client Login
-                </Link>
+                <Link href="/login" style={ctaStyle}>Client Login</Link>
               </li>
             )}
           </>
@@ -152,23 +96,32 @@ export function Navbar({ session }: NavbarProps) {
   );
 }
 
-const navLinkStyle: React.CSSProperties = {
-  fontSize: "0.72rem",
-  fontWeight: 400,
-  letterSpacing: "0.14em",
-  textTransform: "uppercase",
-  color: "var(--charcoal-light)",
+const logoStyle: React.CSSProperties = {
+  fontFamily:     "'Cormorant Garamond', serif",
+  fontSize:       "1.35rem",
+  fontWeight:     500,
+  letterSpacing:  "0.04em",
+  color:          "var(--charcoal)",
   textDecoration: "none",
-  transition: "color 0.2s",
+};
+
+const navLinkStyle: React.CSSProperties = {
+  fontSize:       "0.72rem",
+  fontWeight:     400,
+  letterSpacing:  "0.14em",
+  textTransform:  "uppercase",
+  color:          "var(--charcoal-light)",
+  textDecoration: "none",
+  transition:     "color 0.2s",
 };
 
 const ctaStyle: React.CSSProperties = {
-  fontSize: "0.7rem",
-  letterSpacing: "0.12em",
-  textTransform: "uppercase",
-  color: "var(--olive)",
-  border: "0.5px solid var(--olive)",
-  padding: "0.45rem 1.1rem",
+  fontSize:       "0.7rem",
+  letterSpacing:  "0.12em",
+  textTransform:  "uppercase",
+  color:          "var(--olive)",
+  border:         "0.5px solid var(--olive)",
+  padding:        "0.45rem 1.1rem",
   textDecoration: "none",
-  transition: "background 0.2s, color 0.2s",
+  transition:     "background 0.2s, color 0.2s",
 };

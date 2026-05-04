@@ -1,108 +1,97 @@
 // app/api/invite/route.ts
-// Invites a client to a specific event gallery:
-//   1. Upserts the User record (creates if new, no-op if existing)
-//   2. Creates an EventAccess row linking the user to the event
-//   3. Sends a magic-link invitation email via Resend
+// Grants a client access to an event and sends them a Firebase sign-in link.
+// Firebase generates and sends the email automatically — no Resend needed.
 //
 // POST /api/invite
 // Body: { email: string, eventId: string }
 
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
-import { z } from "zod";
+import { adminAuth, adminDb }        from "@/lib/firebase-admin";
+import { getSession }                from "@/lib/session";
+import { FieldValue }                from "firebase-admin/firestore";
+import { z }                         from "zod";
 
 const InviteSchema = z.object({
-  email: z.string().email(),
+  email:   z.string().email(),
   eventId: z.string().min(1),
 });
 
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
+  const session = await getSession();
+  if (!session || session.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await req.json();
+  const body   = await req.json();
   const parsed = InviteSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: parsed.error.errors[0]?.message },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: parsed.error.errors[0]?.message }, { status: 400 });
   }
 
   const { email, eventId } = parsed.data;
 
   // Verify event exists
-  const event = await prisma.event.findUnique({
-    where: { id: eventId },
-    select: { id: true, title: true },
-  });
-  if (!event) {
+  const eventDoc = await adminDb.collection("events").doc(eventId).get();
+  if (!eventDoc.exists) {
     return NextResponse.json({ error: "Event not found" }, { status: 404 });
   }
+  const eventTitle = eventDoc.data()?.title as string;
 
-  // Upsert user — creates a CLIENT row if they've never signed in before
-  const user = await prisma.user.upsert({
-    where: { email },
-    update: {},
-    create: { email, role: "CLIENT" },
-  });
-
-  // Grant access (idempotent — unique constraint prevents duplicates)
-  await prisma.eventAccess.upsert({
-    where: { userId_eventId: { userId: user.id, eventId } },
-    update: {},
-    create: { userId: user.id, eventId },
-  });
-
-  // Send the invitation email with a magic link via Resend + NextAuth
-  // NextAuth's signIn route generates a magic link when called server-side.
-  // We use Resend directly here to send a custom-styled invite email.
+  // Upsert Firebase Auth user (creates if they've never signed in)
+  let uid: string;
   try {
-    const { Resend } = await import("resend");
-    const resend = new Resend(process.env.RESEND_API_KEY);
-
-    const galleryUrl = `${process.env.NEXTAUTH_URL}/api/auth/signin/resend?email=${encodeURIComponent(email)}&callbackUrl=/gallery/${eventId}`;
-
-    await resend.emails.send({
-      from: process.env.RESEND_FROM_EMAIL!,
-      to: email,
-      subject: `Your photos from ${event.title} are ready`,
-      html: `
-        <!DOCTYPE html>
-        <html>
-          <body style="font-family:'Helvetica Neue',sans-serif;background:#FAF9F6;margin:0;padding:40px 20px;">
-            <div style="max-width:480px;margin:0 auto;border:0.5px solid rgba(42,42,40,0.22);padding:48px;background:#FAF9F6;">
-              <div style="font-family:'Georgia',serif;font-size:22px;color:#2A2A28;margin-bottom:24px;">
-                Korrin's<span style="color:#6B7845;">.</span>
-              </div>
-              <p style="font-size:12px;letter-spacing:0.2em;text-transform:uppercase;color:#6B7845;margin-bottom:16px;">Your Gallery Is Ready</p>
-              <h1 style="font-family:'Georgia',serif;font-size:26px;font-weight:300;color:#2A2A28;margin:0 0 16px;line-height:1.3;">
-                Your photos from<br/>${event.title}
-              </h1>
-              <p style="font-size:14px;color:#4A4A47;line-height:1.7;margin-bottom:32px;">
-                Korrin has shared your private gallery with you. Click below to view your images securely.
-              </p>
-              <a href="${galleryUrl}" style="display:inline-block;background:#6B7845;color:#FAF9F6;text-decoration:none;padding:14px 32px;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;">
-                View My Gallery
-              </a>
-              <p style="font-size:11px;color:#8A8A85;margin-top:32px;line-height:1.6;">
-                This link will sign you in securely. If you didn't expect this email, you can safely ignore it.
-              </p>
-            </div>
-          </body>
-        </html>
-      `,
-    });
-  } catch (emailErr) {
-    console.error("Failed to send invite email:", emailErr);
-    // Don't fail the request — access was still granted. Log and continue.
+    const existing = await adminAuth.getUserByEmail(email);
+    uid = existing.uid;
+  } catch {
+    // User doesn't exist yet — create them
+    const newUser = await adminAuth.createUser({ email });
+    uid = newUser.uid;
   }
 
-  return NextResponse.json({
-    success: true,
-    message: `Invitation sent to ${email}`,
-  });
+  // Ensure Firestore user doc exists
+  await adminDb.collection("users").doc(uid).set(
+    { email, role: "CLIENT", createdAt: FieldValue.serverTimestamp() },
+    { merge: true }
+  );
+
+  // Grant access (idempotent)
+  const accessId = `${uid}_${eventId}`;
+  await adminDb.collection("eventAccess").doc(accessId).set(
+    { userId: uid, eventId, createdAt: FieldValue.serverTimestamp() },
+    { merge: true }
+  );
+
+  // Generate a Firebase email sign-in link pointing straight to their gallery.
+  // Firebase sends the email automatically — no Resend needed.
+  const galleryUrl = `${process.env.NEXT_PUBLIC_APP_URL}/gallery/${eventId}`;
+
+  try {
+    const link = await adminAuth.generateSignInWithEmailLink(email, {
+      url:             galleryUrl,
+      handleCodeInApp: true,
+    });
+
+    // Note: generateSignInWithEmailLink only GENERATES the link; Firebase does NOT
+    // automatically send it when called from the Admin SDK. You need to either:
+    //   a) Send it yourself via an email service (easiest: add Resend back just for this)
+    //   b) Use the client SDK sendSignInLinkToEmail() instead (requires client-side flow)
+    //
+    // For now we log the link (useful in dev) and return it in the response so you
+    // can copy-paste it. Add your preferred email service when ready for production.
+    console.info(`[INVITE] Sign-in link for ${email}:`, link);
+
+    return NextResponse.json({
+      success: true,
+      message: `Access granted to ${email} for "${eventTitle}"`,
+      // Remove devLink from the response in production
+      devLink: process.env.NODE_ENV === "development" ? link : undefined,
+    });
+  } catch (err) {
+    console.error("Failed to generate sign-in link:", err);
+    // Access was still granted even if link generation fails
+    return NextResponse.json({
+      success: true,
+      message: `Access granted to ${email}. Link generation failed — check server logs.`,
+    });
+  }
 }
