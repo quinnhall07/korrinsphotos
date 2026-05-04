@@ -22,7 +22,7 @@ import {
   signOut as firebaseSignOut,
   type User,
 } from "firebase/auth";
-import { auth } from "@/lib/firebase";
+import { firebaseAuth as auth } from "@/lib/firebase";
 import { useRouter } from "next/navigation";
 
 type AuthContextValue = {
