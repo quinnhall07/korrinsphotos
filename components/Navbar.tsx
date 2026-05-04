@@ -60,6 +60,16 @@ export function Navbar() {
                 My Galleries
               </Link>
             </li>
+            
+            {/* NEW: Display the logged-in user's email */}
+            {user && (
+              <li>
+                <span style={{ ...navLinkStyle, color: "var(--charcoal-muted)", textTransform: "none", letterSpacing: "0.05em" }}>
+                  {user.email}
+                </span>
+              </li>
+            )}
+
             <li>
               <button onClick={signOut} style={{ ...navLinkStyle, background: "none", border: "none", cursor: "pointer" }}>
                 Sign Out
