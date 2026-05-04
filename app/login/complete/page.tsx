@@ -3,7 +3,7 @@
 // app/login/complete/page.tsx (or wherever you handle the email link)
 import { isSignInWithEmailLink, signInWithEmailLink } from "firebase/auth";
 import { firebaseAuth } from "@/lib/firebase";
-import { useAuth } from "@/components/FirebaseAuthProvider";
+import { useAuth } from "@/components/AuthProvider";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 

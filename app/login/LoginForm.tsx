@@ -18,7 +18,7 @@ import {
   type AuthProvider,
 } from "firebase/auth";
 import { firebaseAuth } from "@/lib/firebase";
-import { useAuth }      from "@/components/FirebaseAuthProvider";
+import { useAuth } from "@/components/AuthProvider";
 
 const googleProvider    = new GoogleAuthProvider();
 const microsoftProvider = new OAuthProvider("microsoft.com");

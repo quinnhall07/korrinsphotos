@@ -29,12 +29,14 @@ type AuthContextValue = {
   user:        User | null;
   loading:     boolean;
   signOut:     () => Promise<void>;
+  afterSignIn: () => Promise<{ role: string }>;
 };
 
 const AuthContext = createContext<AuthContextValue>({
-  user:    null,
-  loading: true,
-  signOut: async () => {},
+  user:        null,
+  loading:     true,
+  signOut:     async () => {},
+  afterSignIn: async () => ({ role: "CLIENT" }),
 });
 
 export function useAuth() {
@@ -46,34 +48,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const router                = useRouter();
 
+  // Exchange Firebase ID token for a server-side session cookie.
+  // Called after any Firebase sign-in (OAuth popup or magic link).
+  const afterSignIn = useCallback(async (): Promise<{ role: string }> => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) throw new Error("No user signed in");
+
+    const idToken = await currentUser.getIdToken();
+    const res = await fetch("/api/auth/session", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ idToken }),
+    });
+
+    if (!res.ok) throw new Error("Session creation failed");
+    return res.json();
+  }, []);
+
   // Complete the email-link sign-in when the user lands back on the page
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!isSignInWithEmailLink(auth, window.location.href)) return;
 
-    // Retrieve the email we saved before sending the link
     const email = window.localStorage.getItem("emailForSignIn");
     if (!email) return;
 
     signInWithEmailLink(auth, email, window.location.href)
-      .then(async (result) => {
+      .then(async () => {
         window.localStorage.removeItem("emailForSignIn");
-        const idToken = await result.user.getIdToken();
-
-        // Exchange the ID token for a server-side session cookie
-        await fetch("/api/auth/session", {
-          method:  "POST",
-          headers: { "Content-Type": "application/json" },
-          body:    JSON.stringify({ idToken }),
-        });
-
-        // Redirect to gallery (or admin if the server recognises them as admin)
+        await afterSignIn();
         router.replace("/gallery");
       })
       .catch((err) => {
         console.error("Email link sign-in failed:", err);
       });
-  }, [router]);
+  }, [router, afterSignIn]);
 
   // Keep local state in sync with Firebase Auth
   useEffect(() => {
@@ -86,12 +95,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     await firebaseSignOut(auth);
-    await fetch("/api/auth/session", { method: "DELETE" });
+    await fetch("/api/auth/signout", { method: "POST" });
+    setUser(null);
+    setLoading(false);
     router.push("/");
   }, [router]);
 
   return (
-    <AuthContext.Provider value={{ user, loading, signOut }}>
+    <AuthContext.Provider value={{ user, loading, signOut, afterSignIn }}>
       {children}
     </AuthContext.Provider>
   );
