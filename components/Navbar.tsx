@@ -1,7 +1,10 @@
 "use client";
 
 // components/Navbar.tsx
-// Role-aware navigation with profile avatar dropdown for authenticated users.
+// Consistent navigation across all pages.
+// - Portfolio + Booking always visible
+// - My Galleries in the top nav bar (not dropdown) when logged in
+// - Profile avatar dropdown: Settings + Sign Out only
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -22,7 +25,7 @@ export function Navbar() {
     });
   }, [user]);
 
-  // Close dropdown when clicking outside
+  // Close dropdown on outside click
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
@@ -33,235 +36,216 @@ export function Navbar() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const isAdminRoute  = pathname.startsWith("/admin");
-  const isClientRoute = pathname.startsWith("/gallery");
-
   const isActive = (path: string) =>
     pathname === path || pathname.startsWith(path + "/");
 
+  const isAdminRoute = pathname.startsWith("/admin");
+
+  // Get user initials for avatar
   const initials = user?.displayName
     ? user.displayName.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
     : user?.email?.[0]?.toUpperCase() ?? "?";
 
-  const AvatarButton = () => (
-    <button
-      onClick={() => setDropdownOpen((o) => !o)}
-      style={{
-        display:    "flex",
-        alignItems: "center",
-        gap:        "0.5rem",
-        background: "none",
-        border:     "none",
-        cursor:     "pointer",
-        padding:    "0.25rem",
-      }}
-      aria-label="Account menu"
-    >
-      {user?.photoURL ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={user.photoURL}
-          alt={user.displayName ?? "Profile"}
-          referrerPolicy="no-referrer"
-          style={{
-            width:        "34px",
-            height:       "34px",
-            borderRadius: "50%",
-            objectFit:    "cover",
-            border:       "1.5px solid var(--border-strong)",
-            display:      "block",
-          }}
-        />
-      ) : (
-        <div style={{
-          width:          "34px",
-          height:         "34px",
-          borderRadius:   "50%",
-          background:     "var(--olive-dim)",
-          border:         "1.5px solid var(--border-strong)",
-          display:        "flex",
-          alignItems:     "center",
-          justifyContent: "center",
-          fontSize:       "0.7rem",
-          fontWeight:     500,
-          color:          "var(--olive)",
-          fontFamily:     "'Jost', sans-serif",
-        }}>
-          {initials}
-        </div>
-      )}
-      <svg
-        viewBox="0 0 10 6"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.2"
-        style={{
-          width:      "10px",
-          height:     "10px",
-          color:      "var(--charcoal-muted)",
-          transition: "transform 0.2s",
-          transform:  dropdownOpen ? "rotate(180deg)" : "rotate(0deg)",
-        }}
-      >
-        <path d="M1 1l4 4 4-4" />
-      </svg>
-    </button>
-  );
-
-  const DropdownPanel = () => (
-    <div
-      style={{
-        position:       "absolute",
-        top:            "calc(100% + 0.75rem)",
-        right:          0,
-        minWidth:       "220px",
-        background:     "rgba(250,249,246,0.98)",
-        border:         "0.5px solid var(--border-strong)",
-        backdropFilter: "blur(12px)",
-        boxShadow:      "0 8px 32px rgba(42,42,40,0.10)",
-        zIndex:         200,
-        animation:      "fadeIn 0.15s ease",
-      }}
-    >
-      {/* User info header */}
-      <div style={{ padding: "1rem 1.2rem 0.85rem", borderBottom: "0.5px solid var(--border)" }}>
-        <p style={{
-          fontSize:     "0.78rem",
-          fontWeight:   500,
-          color:        "var(--charcoal)",
-          marginBottom: "0.15rem",
-          whiteSpace:   "nowrap",
-          overflow:     "hidden",
-          textOverflow: "ellipsis",
-        }}>
-          {user?.displayName ?? "Client"}
-        </p>
-        <p style={{
-          fontSize:     "0.7rem",
-          color:        "var(--charcoal-muted)",
-          whiteSpace:   "nowrap",
-          overflow:     "hidden",
-          textOverflow: "ellipsis",
-        }}>
-          {user?.email}
-        </p>
-      </div>
-
-      {/* Links */}
-      <div style={{ padding: "0.4rem 0" }}>
-        <Link
-          href={role === "ADMIN" ? "/admin" : "/gallery"}
-          onClick={() => setDropdownOpen(false)}
-          style={dropdownItemStyle}
-        >
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="14" height="14">
-            <rect x="1" y="1" width="6" height="6" rx="1" />
-            <rect x="9" y="1" width="6" height="6" rx="1" />
-            <rect x="1" y="9" width="6" height="6" rx="1" />
-            <rect x="9" y="9" width="6" height="6" rx="1" />
-          </svg>
-          {role === "ADMIN" ? "Admin Dashboard" : "My Galleries"}
-        </Link>
-
-        {role === "ADMIN" && (
-          <Link href="/gallery" onClick={() => setDropdownOpen(false)} style={dropdownItemStyle}>
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="14" height="14">
-              <rect x="1" y="1" width="14" height="11" rx="1" />
-              <path d="M1 9l4-4 3 3 3-4 4 5" />
-            </svg>
-            Client Gallery
-          </Link>
-        )}
-      </div>
-
-      {/* Sign out */}
-      <div style={{ borderTop: "0.5px solid var(--border)", padding: "0.4rem 0" }}>
-        <button
-          onClick={() => { setDropdownOpen(false); signOut(); }}
-          style={{
-            ...dropdownItemStyle,
-            width:      "100%",
-            background: "none",
-            border:     "none",
-            textAlign:  "left",
-            cursor:     "pointer",
-            color:      "var(--charcoal-muted)",
-          }}
-        >
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="14" height="14">
-            <path d="M6 2H3a1 1 0 00-1 1v10a1 1 0 001 1h3M10 11l3-3-3-3M13 8H6" />
-          </svg>
-          Sign Out
-        </button>
-      </div>
-    </div>
-  );
-
   return (
     <nav
       style={{
-        position:       "fixed",
+        position: "fixed",
         top: 0, left: 0, right: 0,
-        zIndex:         100,
-        display:        "flex",
-        alignItems:     "center",
+        zIndex: 100,
+        display: "flex",
+        alignItems: "center",
         justifyContent: "space-between",
-        padding:        "0 3rem",
-        height:         "72px",
-        background:     "rgba(250,249,246,0.88)",
+        padding: "0 3rem",
+        height: "72px",
+        background: "rgba(250,249,246,0.88)",
         backdropFilter: "blur(12px)",
-        borderBottom:   "0.5px solid var(--border)",
+        borderBottom: "0.5px solid var(--border)",
       }}
     >
+      {/* Logo */}
       <Link href="/" style={logoStyle}>
         Korrin&apos;s<span style={{ color: "var(--olive)" }}>.</span>
       </Link>
 
+      {/* Center / Right nav links */}
       <ul style={{ display: "flex", alignItems: "center", gap: "2.5rem", listStyle: "none" }}>
         {isAdminRoute ? (
           <li><Link href="/" style={navLinkStyle}>← Public Site</Link></li>
-
-        ) : isClientRoute ? (
-          <>
-            <li>
-              <Link href="/gallery" style={{
-                ...navLinkStyle,
-                color: isActive("/gallery") ? "var(--charcoal)" : "var(--charcoal-light)",
-              }}>
-                My Galleries
-              </Link>
-            </li>
-            {user && (
-              <li style={{ position: "relative" }} ref={dropdownRef}>
-                <AvatarButton />
-                {dropdownOpen && <DropdownPanel />}
-              </li>
-            )}
-          </>
-
         ) : (
           <>
+            {/* Always-visible public links */}
             <li>
-              <Link href="/portfolio" style={{
-                ...navLinkStyle,
-                color: isActive("/portfolio") ? "var(--charcoal)" : "var(--charcoal-light)",
-              }}>
+              <Link
+                href="/portfolio"
+                style={{
+                  ...navLinkStyle,
+                  color: isActive("/portfolio") ? "var(--charcoal)" : "var(--charcoal-light)",
+                  borderBottom: isActive("/portfolio") ? "0.5px solid var(--olive)" : "none",
+                  paddingBottom: "2px",
+                }}
+              >
                 Portfolio
               </Link>
             </li>
             <li>
-              <Link href="/booking" style={{
-                ...navLinkStyle,
-                color: isActive("/booking") ? "var(--charcoal)" : "var(--charcoal-light)",
-              }}>
+              <Link
+                href="/booking"
+                style={{
+                  ...navLinkStyle,
+                  color: isActive("/booking") ? "var(--charcoal)" : "var(--charcoal-light)",
+                  borderBottom: isActive("/booking") ? "0.5px solid var(--olive)" : "none",
+                  paddingBottom: "2px",
+                }}
+              >
                 Booking
               </Link>
             </li>
+
             {user ? (
-              <li style={{ position: "relative" }} ref={dropdownRef}>
-                <AvatarButton />
-                {dropdownOpen && <DropdownPanel />}
-              </li>
+              <>
+                {/* My Galleries in the nav bar */}
+                <li>
+                  <Link
+                    href={role === "ADMIN" ? "/admin" : "/gallery"}
+                    style={{
+                      ...navLinkStyle,
+                      color: (isActive("/gallery") || isActive("/admin")) ? "var(--charcoal)" : "var(--charcoal-light)",
+                      borderBottom: (isActive("/gallery") || isActive("/admin")) ? "0.5px solid var(--olive)" : "none",
+                      paddingBottom: "2px",
+                    }}
+                  >
+                    {role === "ADMIN" ? "Admin" : "My Galleries"}
+                  </Link>
+                </li>
+
+                {/* Profile avatar + dropdown */}
+                <li style={{ position: "relative" }} ref={dropdownRef}>
+                  <button
+                    onClick={() => setDropdownOpen((o) => !o)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.4rem",
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      padding: 0,
+                    }}
+                    aria-label="Account menu"
+                  >
+                    {/* Avatar circle */}
+                    <div
+                      style={{
+                        width: "34px",
+                        height: "34px",
+                        borderRadius: "50%",
+                        background: "var(--olive)",
+                        color: "var(--white)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "0.72rem",
+                        fontWeight: 500,
+                        letterSpacing: "0.04em",
+                        fontFamily: "'Jost', sans-serif",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {initials}
+                    </div>
+                    {/* Chevron */}
+                    <svg
+                      width="10"
+                      height="6"
+                      viewBox="0 0 10 6"
+                      fill="none"
+                      style={{
+                        transition: "transform 0.2s",
+                        transform: dropdownOpen ? "rotate(180deg)" : "rotate(0deg)",
+                        color: "var(--charcoal-muted)",
+                      }}
+                    >
+                      <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+
+                  {/* Dropdown panel */}
+                  {dropdownOpen && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: "calc(100% + 12px)",
+                        right: 0,
+                        width: "220px",
+                        background: "rgba(250,249,246,0.98)",
+                        backdropFilter: "blur(12px)",
+                        border: "0.5px solid var(--border-strong)",
+                        boxShadow: "0 8px 32px rgba(42,42,40,0.12)",
+                        zIndex: 200,
+                        overflow: "hidden",
+                      }}
+                    >
+                      {/* User info header */}
+                      <div
+                        style={{
+                          padding: "1rem 1.2rem",
+                          borderBottom: "0.5px solid var(--border)",
+                        }}
+                      >
+                        {user.displayName && (
+                          <p
+                            style={{
+                              fontSize: "0.85rem",
+                              fontWeight: 500,
+                              color: "var(--charcoal)",
+                              marginBottom: "0.2rem",
+                            }}
+                          >
+                            {user.displayName}
+                          </p>
+                        )}
+                        <p
+                          style={{
+                            fontSize: "0.75rem",
+                            color: "var(--charcoal-muted)",
+                            letterSpacing: "0.02em",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {user.email}
+                        </p>
+                      </div>
+
+                      {/* Menu items */}
+                      <div style={{ padding: "0.4rem 0" }}>
+                        <Link
+                          href="/settings"
+                          onClick={() => setDropdownOpen(false)}
+                          style={dropdownItemStyle}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
+                            <circle cx="7" cy="7" r="2.5" />
+                            <path d="M7 1v1.5M7 11.5V13M1 7h1.5M11.5 7H13M2.6 2.6l1.1 1.1M10.3 10.3l1.1 1.1M2.6 11.4l1.1-1.1M10.3 3.7l1.1-1.1" />
+                          </svg>
+                          Settings
+                        </Link>
+
+                        <button
+                          onClick={() => { setDropdownOpen(false); signOut(); }}
+                          style={{ ...dropdownItemStyle, background: "none", border: "none", cursor: "pointer", width: "100%", textAlign: "left" }}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
+                            <path d="M5 2H2a1 1 0 00-1 1v8a1 1 0 001 1h3M9 10l3-3-3-3M12 7H5" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                          Sign Out
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </li>
+              </>
             ) : (
               <li>
                 <Link href="/login" style={ctaStyle}>Client Login</Link>
@@ -275,44 +259,44 @@ export function Navbar() {
 }
 
 const logoStyle: React.CSSProperties = {
-  fontFamily:     "'Cormorant Garamond', serif",
-  fontSize:       "1.35rem",
-  fontWeight:     500,
-  letterSpacing:  "0.04em",
-  color:          "var(--charcoal)",
+  fontFamily: "'Cormorant Garamond', serif",
+  fontSize: "1.35rem",
+  fontWeight: 500,
+  letterSpacing: "0.04em",
+  color: "var(--charcoal)",
   textDecoration: "none",
 };
 
 const navLinkStyle: React.CSSProperties = {
-  fontSize:       "0.72rem",
-  fontWeight:     400,
-  letterSpacing:  "0.14em",
-  textTransform:  "uppercase",
-  color:          "var(--charcoal-light)",
+  fontSize: "0.72rem",
+  fontWeight: 400,
+  letterSpacing: "0.14em",
+  textTransform: "uppercase",
+  color: "var(--charcoal-light)",
   textDecoration: "none",
-  transition:     "color 0.2s",
+  transition: "color 0.2s",
 };
 
 const ctaStyle: React.CSSProperties = {
-  fontSize:       "0.7rem",
-  letterSpacing:  "0.12em",
-  textTransform:  "uppercase",
-  color:          "var(--olive)",
-  border:         "0.5px solid var(--olive)",
-  padding:        "0.45rem 1.1rem",
+  fontSize: "0.7rem",
+  letterSpacing: "0.12em",
+  textTransform: "uppercase",
+  color: "var(--olive)",
+  border: "0.5px solid var(--olive)",
+  padding: "0.45rem 1.1rem",
   textDecoration: "none",
-  transition:     "background 0.2s, color 0.2s",
+  transition: "background 0.2s, color 0.2s",
 };
 
 const dropdownItemStyle: React.CSSProperties = {
-  display:        "flex",
-  alignItems:     "center",
-  gap:            "0.65rem",
-  padding:        "0.6rem 1.2rem",
-  fontSize:       "0.78rem",
-  color:          "var(--charcoal)",
+  display: "flex",
+  alignItems: "center",
+  gap: "0.6rem",
+  padding: "0.65rem 1.2rem",
+  fontSize: "0.78rem",
+  letterSpacing: "0.04em",
+  color: "var(--charcoal-light)",
   textDecoration: "none",
-  fontFamily:     "'Jost', sans-serif",
-  letterSpacing:  "0.03em",
-  transition:     "background 0.15s",
+  transition: "background 0.15s, color 0.15s",
+  fontFamily: "'Jost', sans-serif",
 };

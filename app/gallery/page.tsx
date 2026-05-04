@@ -25,60 +25,75 @@ type EventCard = {
 };
 
 async function getClientEvents(userId: string): Promise<EventCard[]> {
-  const accessSnap = await adminDb
-    .collection("eventAccess")
-    .where("userId", "==", userId)
-    .orderBy("createdAt", "desc")
-    .get();
+  try {
+    // Use a simple where query without orderBy to avoid needing a composite index
+    const accessSnap = await adminDb
+      .collection("eventAccess")
+      .where("userId", "==", userId)
+      .get();
 
-  if (accessSnap.empty) return [];
+    if (accessSnap.empty) return [];
 
-  const eventIds = accessSnap.docs.map((d) => d.data().eventId as string);
+    const eventIds = accessSnap.docs.map((d) => d.data().eventId as string);
 
-  const events = await Promise.all(
-    eventIds.map(async (eventId) => {
-      const [eventDoc, photosCountSnap, firstPhotoSnap] = await Promise.all([
-        adminDb.collection("events").doc(eventId).get(),
-        adminDb
-          .collection("events")
-          .doc(eventId)
-          .collection("photos")
-          .count()
-          .get(),
-        adminDb
-          .collection("events")
-          .doc(eventId)
-          .collection("photos")
-          .orderBy("uploadedAt", "asc")
-          .limit(1)
-          .get(),
-      ]);
+    const events = await Promise.all(
+      eventIds.map(async (eventId) => {
+        try {
+          const [eventDoc, photosCountSnap, firstPhotoSnap] = await Promise.all([
+            adminDb.collection("events").doc(eventId).get(),
+            adminDb
+              .collection("events")
+              .doc(eventId)
+              .collection("photos")
+              .count()
+              .get(),
+            adminDb
+              .collection("events")
+              .doc(eventId)
+              .collection("photos")
+              .orderBy("uploadedAt", "asc")
+              .limit(1)
+              .get(),
+          ]);
 
-      if (!eventDoc.exists) return null;
+          if (!eventDoc.exists) return null;
 
-      const data = eventDoc.data()!;
-      const coverPhoto = firstPhotoSnap.empty
-        ? null
-        : firstPhotoSnap.docs[0].data();
+          const data = eventDoc.data()!;
+          const coverPhoto = firstPhotoSnap.empty
+            ? null
+            : firstPhotoSnap.docs[0].data();
 
-      return {
-        id: eventId,
-        title: data.title as string,
-        photoCount: photosCountSnap.data().count,
-        createdAt: data.createdAt?.toDate() ?? new Date(),
-        coverUrl: coverPhoto?.cloudflareImageId
-          ? buildCdnUrl(coverPhoto.cloudflareImageId, "thumbnail")
-          : null,
-      };
-    })
-  );
+          return {
+            id: eventId,
+            title: data.title as string,
+            photoCount: photosCountSnap.data().count,
+            createdAt: data.createdAt?.toDate() ?? new Date(),
+            coverUrl: coverPhoto?.cloudflareImageId
+              ? buildCdnUrl(coverPhoto.cloudflareImageId, "thumbnail")
+              : null,
+          };
+        } catch {
+          return null;
+        }
+      })
+    );
 
-  return events.filter(Boolean) as EventCard[];
+    return events.filter(Boolean) as EventCard[];
+  } catch {
+    // Return empty array on any Firestore error (missing index, etc.)
+    return [];
+  }
 }
 
 export default async function GalleryPage() {
   const session = await requireSession();
-  const events = await getClientEvents(session.uid);
+  
+  let events: EventCard[] = [];
+  try {
+    events = await getClientEvents(session.uid);
+  } catch {
+    // Silently fall through to empty state
+  }
 
   return (
     <div style={{ paddingTop: "72px" }} className="page-fade-in">
@@ -112,7 +127,7 @@ export default async function GalleryPage() {
           Your <em>galleries</em>
         </h1>
         <p style={{ fontSize: "0.82rem", color: "var(--charcoal-muted)" }}>
-          Logged in as {session.email}
+          {session.email}
         </p>
       </div>
 
@@ -128,8 +143,8 @@ export default async function GalleryPage() {
         >
           <div
             style={{
-              width: "48px",
-              height: "48px",
+              width: "56px",
+              height: "56px",
               borderRadius: "50%",
               background: "var(--olive-dim)",
               display: "flex",
@@ -137,7 +152,7 @@ export default async function GalleryPage() {
               justifyContent: "center",
               margin: "0 auto 1.5rem",
               color: "var(--olive)",
-              fontSize: "1.3rem",
+              fontSize: "1.4rem",
             }}
           >
             ◎
@@ -145,7 +160,7 @@ export default async function GalleryPage() {
           <h2
             style={{
               fontFamily: "'Cormorant Garamond', serif",
-              fontSize: "1.8rem",
+              fontSize: "2rem",
               fontWeight: 300,
               marginBottom: "0.75rem",
             }}
@@ -157,12 +172,29 @@ export default async function GalleryPage() {
               fontSize: "0.88rem",
               color: "var(--charcoal-muted)",
               lineHeight: 1.8,
+              marginBottom: "2rem",
             }}
           >
             Your photos will appear here once Korrin finishes editing and shares
             your gallery. You&apos;ll receive an email notification when
             they&apos;re ready.
           </p>
+          <Link
+            href="/"
+            style={{
+              display: "inline-block",
+              padding: "0.75rem 2rem",
+              fontSize: "0.72rem",
+              letterSpacing: "0.14em",
+              textTransform: "uppercase",
+              background: "transparent",
+              color: "var(--charcoal)",
+              border: "0.5px solid var(--border-strong)",
+              textDecoration: "none",
+            }}
+          >
+            Return Home
+          </Link>
         </div>
       ) : (
         <div
