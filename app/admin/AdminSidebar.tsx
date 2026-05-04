@@ -92,7 +92,7 @@ export function AdminSidebar() {
             fontWeight: 500,
           }}
         >
-          Korrin's<span style={{ color: "var(--olive)" }}>.</span>
+          Korrin&apos;s<span style={{ color: "var(--olive)" }}>.</span>
         </div>
         <p
           style={{

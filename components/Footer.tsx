@@ -23,7 +23,7 @@ export function Footer() {
           letterSpacing: "0.03em",
         }}
       >
-        Korrin's<span style={{ color: "var(--olive)" }}>.</span>
+        Korrin&apos;s<span style={{ color: "var(--olive)" }}>.</span>
       </div>
 
       <div
