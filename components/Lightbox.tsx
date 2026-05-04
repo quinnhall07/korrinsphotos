@@ -64,13 +64,11 @@ export function Lightbox({
       }}
       onClick={onClose}
     >
-      {/* Close */}
       <button
         onClick={onClose}
-        style={navButtonStyle}
+        style={{ ...navButtonStyle, position: "fixed", top: "1.5rem", right: "2rem" }}
         aria-label="Close lightbox"
         onContextMenu={(e) => e.preventDefault()}
-        {...{ style: { ...navButtonStyle, position: "fixed", top: "1.5rem", right: "2rem" } }}
       >
         ✕
       </button>
