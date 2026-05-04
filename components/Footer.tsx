@@ -23,7 +23,7 @@ export function Footer() {
           letterSpacing: "0.03em",
         }}
       >
-        Korrin&apos;s<span style={{ color: "var(--olive)" }}>.</span>
+        Korrin&apos;s Photos<span style={{ color: "var(--olive)" }}>.</span>
       </div>
 
       <div
@@ -33,7 +33,7 @@ export function Footer() {
           letterSpacing: "0.06em",
         }}
       >
-        © {new Date().getFullYear()} Korrin&apos;s Photos. All rights reserved.
+        © {new Date().getFullYear()}  Korrin&apos;s Photos. All rights reserved.
       </div>
 
       <ul style={{ display: "flex", gap: "2rem", listStyle: "none" }}>

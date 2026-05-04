@@ -53,7 +53,7 @@ export function Navbar({ session }: NavbarProps) {
           textDecoration: "none",
         }}
       >
-        Korrin&apos;s<span style={{ color: "var(--olive)" }}>.</span>
+        Korrin&apos;s Photos<span style={{ color: "var(--olive)" }}>.</span>
       </Link>
 
       {/* Nav Links — context-aware */}
