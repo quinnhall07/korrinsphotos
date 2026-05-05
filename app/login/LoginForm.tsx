@@ -3,13 +3,10 @@
 // app/login/LoginForm.tsx
 // Multi-provider Firebase Auth login:
 //   • Google, Microsoft (Outlook/work/school)
-//   • Email magic link via Firebase sendSignInLinkToEmail
 //   • Email + Password sign-up / sign-in
 //
-// Fixes:
-//   - OAuth popup cancellation now immediately resets loading state
-//   - Email provider conflicts surface a helpful message
-//   - Toggle between Sign In and Create Account for email/password flow
+// Magic links are an admin-only feature sent from the dashboard.
+// Role-aware redirect: ADMIN → /admin, CLIENT → /gallery
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -17,7 +14,6 @@ import {
   GoogleAuthProvider,
   OAuthProvider,
   signInWithPopup,
-  sendSignInLinkToEmail,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   fetchSignInMethodsForEmail,
@@ -68,8 +64,7 @@ const POPUP_CANCEL_CODES = new Set([
   "auth/user-cancelled",
 ]);
 
-// Map Firebase error codes to human-readable messages
-function parseFirebaseError(code: string | undefined, email?: string): string {
+function parseFirebaseError(code: string | undefined): string {
   switch (code) {
     case "auth/account-exists-with-different-credential":
     case "auth/email-already-in-use":
@@ -106,25 +101,27 @@ const inputStyle: React.CSSProperties = {
   transition: "border-color 0.2s",
 };
 
-type EmailMode = "magic" | "password-signin" | "password-signup";
+type EmailMode = "password-signin" | "password-signup";
 
 export function LoginForm() {
   const { afterSignIn } = useAuth();
   const router = useRouter();
 
-  // Shared state
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [emailMode, setEmailMode] = useState<EmailMode>("magic");
+  const [emailMode, setEmailMode] = useState<EmailMode>("password-signin");
 
-  // UI feedback
   const [emailError, setEmailError] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [globalError, setGlobalError] = useState<string | null>(null);
-  const [linkSent, setLinkSent] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [activeProvider, setActiveProvider] = useState<string | null>(null);
+
+  // Role-aware redirect helper
+  function redirectForRole(role: string) {
+    router.push(role === "ADMIN" ? "/admin" : "/gallery");
+  }
 
   // ── OAuth (Google / Microsoft) ─────────────────────────────────────────────
   async function handleOAuth(id: string, provider: AuthProvider) {
@@ -134,8 +131,8 @@ export function LoginForm() {
 
     try {
       await signInWithPopup(firebaseAuth, provider);
-      await afterSignIn();
-      router.push("/gallery");
+      const { role } = await afterSignIn();
+      redirectForRole(role);
     } catch (err: unknown) {
       const code = (err as { code?: string }).code;
 
@@ -147,52 +144,6 @@ export function LoginForm() {
         console.error("OAuth error:", err);
         setGlobalError("Sign-in failed. Please try again.");
       }
-    } finally {
-      // Always reset immediately — this was the root cause of the stuck state
-      setActiveProvider(null);
-      setIsLoading(false);
-    }
-  }
-
-  // ── Email Magic Link ───────────────────────────────────────────────────────
-  async function handleMagicLink(e: React.FormEvent) {
-    e.preventDefault();
-    if (!email || !email.includes("@")) {
-      setEmailError("Please enter a valid email address.");
-      return;
-    }
-
-    setEmailError(null);
-    setGlobalError(null);
-    setActiveProvider("email-magic");
-    setIsLoading(true);
-
-    try {
-      // Check if this email already has a provider so we can give a better hint
-      const methods = await fetchSignInMethodsForEmail(firebaseAuth, email).catch(() => [] as string[]);
-      if (methods.includes("google.com")) {
-        setGlobalError(
-          "This email is linked to a Google account. Use 'Continue with Google' above to sign in."
-        );
-        return;
-      }
-      if (methods.includes("microsoft.com")) {
-        setGlobalError(
-          "This email is linked to a Microsoft account. Use 'Continue with Microsoft' above to sign in."
-        );
-        return;
-      }
-
-      await sendSignInLinkToEmail(firebaseAuth, email, {
-        url: `${window.location.origin}/login/complete`,
-        handleCodeInApp: true,
-      });
-      window.localStorage.setItem("emailForSignIn", email);
-      setLinkSent(true);
-    } catch (err: unknown) {
-      const code = (err as { code?: string }).code;
-      console.error("Magic link error:", err);
-      setGlobalError(parseFirebaseError(code));
     } finally {
       setActiveProvider(null);
       setIsLoading(false);
@@ -214,13 +165,13 @@ export function LoginForm() {
 
     try {
       await signInWithEmailAndPassword(firebaseAuth, email, password);
-      await afterSignIn();
-      router.push("/gallery");
+      const { role } = await afterSignIn();
+      redirectForRole(role);
     } catch (err: unknown) {
       const code = (err as { code?: string }).code;
 
-      if (code === "auth/account-exists-with-different-credential" || code === "auth/wrong-password") {
-        // Check what providers this email actually uses
+      // Check what providers this email actually uses for a better hint
+      if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
         const methods = await fetchSignInMethodsForEmail(firebaseAuth, email).catch(() => [] as string[]);
         if (methods.includes("google.com")) {
           setGlobalError("This email is linked to a Google account. Use 'Continue with Google' above.");
@@ -254,7 +205,6 @@ export function LoginForm() {
     setIsLoading(true);
 
     try {
-      // Check if the email already exists with a different provider
       const methods = await fetchSignInMethodsForEmail(firebaseAuth, email).catch(() => [] as string[]);
       if (methods.includes("google.com")) {
         setGlobalError("This email is already linked to a Google account. Sign in with Google instead.");
@@ -266,8 +216,8 @@ export function LoginForm() {
       }
 
       await createUserWithEmailAndPassword(firebaseAuth, email, password);
-      await afterSignIn();
-      router.push("/gallery");
+      const { role } = await afterSignIn();
+      redirectForRole(role);
     } catch (err: unknown) {
       const code = (err as { code?: string }).code;
       setGlobalError(parseFirebaseError(code));
@@ -277,38 +227,8 @@ export function LoginForm() {
     }
   }
 
-  // ── Magic link sent confirmation ───────────────────────────────────────────
-  if (linkSent) {
-    return (
-      <div style={{ textAlign: "center", padding: "1rem 0" }}>
-        <div style={{ width: 52, height: 52, borderRadius: "50%", background: "var(--olive-dim)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 1.2rem", fontSize: "1.4rem", color: "var(--olive)" }}>
-          ✓
-        </div>
-        <h3 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.5rem", fontWeight: 400, marginBottom: "0.5rem" }}>
-          Check your inbox
-        </h3>
-        <p style={{ fontSize: "0.88rem", color: "var(--charcoal-muted)", lineHeight: 1.7 }}>
-          A sign-in link was sent to <strong>{email}</strong>.<br />Click it to access your gallery.
-        </p>
-        <button
-          onClick={() => { setLinkSent(false); setEmail(""); }}
-          style={{ marginTop: "1.5rem", background: "none", border: "none", fontSize: "0.75rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--charcoal-muted)", cursor: "pointer" }}
-        >
-          Use a different email
-        </button>
-      </div>
-    );
-  }
-
-  const isEmailPasswordMode = emailMode === "password-signin" || emailMode === "password-signup";
   const isSignUp = emailMode === "password-signup";
-  const isMagicMode = emailMode === "magic";
-
-  const handleEmailSubmit = isSignUp
-    ? handlePasswordSignUp
-    : isEmailPasswordMode
-    ? handlePasswordSignIn
-    : handleMagicLink;
+  const handleEmailSubmit = isSignUp ? handlePasswordSignUp : handlePasswordSignIn;
 
   return (
     <div>
@@ -354,16 +274,15 @@ export function LoginForm() {
       <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginBottom: "1.75rem" }}>
         <div style={{ flex: 1, height: "0.5px", background: "var(--border)" }} />
         <span style={{ fontSize: "0.67rem", letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--charcoal-muted)", whiteSpace: "nowrap" }}>
-          or use email
+          or use email & password
         </span>
         <div style={{ flex: 1, height: "0.5px", background: "var(--border)" }} />
       </div>
 
-      {/* Email mode toggle tabs */}
+      {/* Email mode toggle */}
       <div style={{ display: "flex", marginBottom: "1.4rem", border: "0.5px solid var(--border-strong)" }}>
-        {(["magic", "password-signin", "password-signup"] as EmailMode[]).map((mode) => {
+        {(["password-signin", "password-signup"] as EmailMode[]).map((mode) => {
           const labels: Record<EmailMode, string> = {
-            "magic": "Magic Link",
             "password-signin": "Sign In",
             "password-signup": "Create Account",
           };
@@ -379,13 +298,13 @@ export function LoginForm() {
               }}
               style={{
                 flex: 1,
-                padding: "0.55rem 0.5rem",
-                fontSize: "0.65rem",
+                padding: "0.6rem 0.5rem",
+                fontSize: "0.68rem",
                 letterSpacing: "0.1em",
                 textTransform: "uppercase",
                 fontFamily: "'Jost', sans-serif",
                 border: "none",
-                borderRight: mode !== "password-signup" ? "0.5px solid var(--border-strong)" : "none",
+                borderRight: mode === "password-signin" ? "0.5px solid var(--border-strong)" : "none",
                 background: active ? "var(--charcoal)" : "transparent",
                 color: active ? "var(--white)" : "var(--charcoal-muted)",
                 cursor: "pointer",
@@ -400,7 +319,6 @@ export function LoginForm() {
 
       {/* Email form */}
       <form onSubmit={handleEmailSubmit}>
-        {/* Email field */}
         <div style={{ marginBottom: "1rem" }}>
           <label style={{ display: "block", fontSize: "0.68rem", letterSpacing: "0.14em", textTransform: "uppercase" as const, color: "var(--charcoal-muted)", marginBottom: "0.5rem" }}>
             Email Address
@@ -418,60 +336,46 @@ export function LoginForm() {
           )}
         </div>
 
-        {/* Password fields (only for password modes) */}
-        {isEmailPasswordMode && (
-          <>
-            <div style={{ marginBottom: "1rem" }}>
-              <label style={{ display: "block", fontSize: "0.68rem", letterSpacing: "0.14em", textTransform: "uppercase" as const, color: "var(--charcoal-muted)", marginBottom: "0.5rem" }}>
-                Password
-              </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => { setPassword(e.target.value); setPasswordError(null); }}
-                placeholder={isSignUp ? "Create a password (6+ characters)" : "Your password"}
-                disabled={isLoading}
-                style={{ ...inputStyle, borderColor: passwordError ? "#B45309" : "var(--border-strong)" }}
-              />
-            </div>
+        <div style={{ marginBottom: "1rem" }}>
+          <label style={{ display: "block", fontSize: "0.68rem", letterSpacing: "0.14em", textTransform: "uppercase" as const, color: "var(--charcoal-muted)", marginBottom: "0.5rem" }}>
+            Password
+          </label>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => { setPassword(e.target.value); setPasswordError(null); }}
+            placeholder={isSignUp ? "Create a password (6+ characters)" : "Your password"}
+            disabled={isLoading}
+            style={{ ...inputStyle, borderColor: passwordError ? "#B45309" : "var(--border-strong)" }}
+          />
+        </div>
 
-            {isSignUp && (
-              <div style={{ marginBottom: "1rem" }}>
-                <label style={{ display: "block", fontSize: "0.68rem", letterSpacing: "0.14em", textTransform: "uppercase" as const, color: "var(--charcoal-muted)", marginBottom: "0.5rem" }}>
-                  Confirm Password
-                </label>
-                <input
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => { setConfirmPassword(e.target.value); setPasswordError(null); }}
-                  placeholder="Repeat your password"
-                  disabled={isLoading}
-                  style={{ ...inputStyle, borderColor: passwordError ? "#B45309" : "var(--border-strong)" }}
-                />
-              </div>
-            )}
-
-            {passwordError && (
-              <p style={{ color: "#B45309", fontSize: "0.75rem", marginBottom: "0.75rem" }}>{passwordError}</p>
-            )}
-          </>
+        {isSignUp && (
+          <div style={{ marginBottom: "1rem" }}>
+            <label style={{ display: "block", fontSize: "0.68rem", letterSpacing: "0.14em", textTransform: "uppercase" as const, color: "var(--charcoal-muted)", marginBottom: "0.5rem" }}>
+              Confirm Password
+            </label>
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => { setConfirmPassword(e.target.value); setPasswordError(null); }}
+              placeholder="Repeat your password"
+              disabled={isLoading}
+              style={{ ...inputStyle, borderColor: passwordError ? "#B45309" : "var(--border-strong)" }}
+            />
+          </div>
         )}
 
-        {/* Magic link description */}
-        {isMagicMode && (
-          <p style={{ fontSize: "0.75rem", color: "var(--charcoal-muted)", marginBottom: "1rem", lineHeight: 1.6 }}>
-            We&apos;ll email you a secure link — no password needed.
-          </p>
+        {passwordError && (
+          <p style={{ color: "#B45309", fontSize: "0.75rem", marginBottom: "0.75rem" }}>{passwordError}</p>
         )}
 
-        {/* Global error */}
         {globalError && (
           <div style={{ padding: "0.75rem 1rem", background: "#FEF3C7", borderLeft: "2px solid #F59E0B", fontSize: "0.82rem", color: "#92400E", marginBottom: "1rem", lineHeight: 1.6 }}>
             {globalError}
           </div>
         )}
 
-        {/* Submit button */}
         <button
           type="submit"
           disabled={isLoading}
@@ -481,7 +385,7 @@ export function LoginForm() {
             fontSize: "0.72rem",
             letterSpacing: "0.14em",
             textTransform: "uppercase",
-            background: isLoading && (activeProvider === "email-magic" || activeProvider === "email-password" || activeProvider === "email-signup") ? "var(--charcoal-muted)" : "var(--olive)",
+            background: "var(--olive)",
             color: "var(--white)",
             border: "none",
             cursor: isLoading ? "not-allowed" : "pointer",
@@ -489,13 +393,12 @@ export function LoginForm() {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
+            opacity: isLoading ? 0.7 : 1,
             transition: "background 0.2s",
           }}
         >
-          {isLoading && (activeProvider === "email-magic" || activeProvider === "email-password" || activeProvider === "email-signup") ? (
+          {isLoading && (activeProvider === "email-password" || activeProvider === "email-signup") ? (
             <Dots light />
-          ) : isMagicMode ? (
-            "Send Magic Link"
           ) : isSignUp ? (
             "Create Account"
           ) : (
@@ -505,7 +408,9 @@ export function LoginForm() {
       </form>
 
       <p style={{ fontSize: "0.71rem", color: "var(--charcoal-muted)", marginTop: "1rem", textAlign: "center", lineHeight: 1.6 }}>
-        Works with Gmail, Outlook, iCloud, or any email.
+        {isSignUp
+          ? "Already have an account? Switch to Sign In above."
+          : "New here? Switch to Create Account above."}
       </p>
     </div>
   );

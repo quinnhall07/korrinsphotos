@@ -3,8 +3,9 @@
 // components/Navbar.tsx
 // Consistent navigation across all pages.
 // - Portfolio + Booking always visible
-// - My Galleries in the top nav bar (not dropdown) when logged in
-// - Profile avatar dropdown: Settings + Sign Out only
+// - My Galleries in the top nav for all logged-in users
+// - Admin link in the top nav ONLY for admin users (in addition to My Galleries)
+// - Profile avatar dropdown: Settings + Sign Out
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -41,7 +42,6 @@ export function Navbar() {
 
   const isAdminRoute = pathname.startsWith("/admin");
 
-  // Get user initials for avatar
   const initials = user?.displayName
     ? user.displayName.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
     : user?.email?.[0]?.toUpperCase() ?? "?";
@@ -67,10 +67,20 @@ export function Navbar() {
         Korrin&apos;s<span style={{ color: "var(--olive)" }}>.</span>
       </Link>
 
-      {/* Center / Right nav links */}
+      {/* Nav links */}
       <ul style={{ display: "flex", alignItems: "center", gap: "2.5rem", listStyle: "none" }}>
         {isAdminRoute ? (
-          <li><Link href="/" style={navLinkStyle}>← Public Site</Link></li>
+          // Inside admin — minimal nav
+          <>
+            <li>
+              <Link href="/gallery" style={navLinkStyle}>
+                My Galleries
+              </Link>
+            </li>
+            <li>
+              <Link href="/" style={navLinkStyle}>← Public Site</Link>
+            </li>
+          </>
         ) : (
           <>
             {/* Always-visible public links */}
@@ -103,20 +113,40 @@ export function Navbar() {
 
             {user ? (
               <>
-                {/* My Galleries in the nav bar */}
+                {/* My Galleries — visible to ALL logged-in users */}
                 <li>
                   <Link
-                    href={role === "ADMIN" ? "/admin" : "/gallery"}
+                    href="/gallery"
                     style={{
                       ...navLinkStyle,
-                      color: (isActive("/gallery") || isActive("/admin")) ? "var(--charcoal)" : "var(--charcoal-light)",
-                      borderBottom: (isActive("/gallery") || isActive("/admin")) ? "0.5px solid var(--olive)" : "none",
+                      color: isActive("/gallery") ? "var(--charcoal)" : "var(--charcoal-light)",
+                      borderBottom: isActive("/gallery") ? "0.5px solid var(--olive)" : "none",
                       paddingBottom: "2px",
                     }}
                   >
-                    {role === "ADMIN" ? "Admin" : "My Galleries"}
+                    My Galleries
                   </Link>
                 </li>
+
+                {/* Admin Dashboard — visible ONLY to admins */}
+                {role === "ADMIN" && (
+                  <li>
+                    <Link
+                      href="/admin"
+                      style={{
+                        ...navLinkStyle,
+                        fontSize: "0.68rem",
+                        letterSpacing: "0.12em",
+                        color: "var(--olive)",
+                        border: "0.5px solid var(--olive)",
+                        padding: "0.4rem 1rem",
+                        transition: "background 0.2s, color 0.2s",
+                      }}
+                    >
+                      Admin
+                    </Link>
+                  </li>
+                )}
 
                 {/* Profile avatar + dropdown */}
                 <li style={{ position: "relative" }} ref={dropdownRef}>
@@ -133,7 +163,6 @@ export function Navbar() {
                     }}
                     aria-label="Account menu"
                   >
-                    {/* Avatar circle */}
                     <div
                       style={{
                         width: "34px",
@@ -153,7 +182,6 @@ export function Navbar() {
                     >
                       {initials}
                     </div>
-                    {/* Chevron */}
                     <svg
                       width="10"
                       height="6"
@@ -186,40 +214,52 @@ export function Navbar() {
                       }}
                     >
                       {/* User info header */}
-                      <div
-                        style={{
-                          padding: "1rem 1.2rem",
-                          borderBottom: "0.5px solid var(--border)",
-                        }}
-                      >
+                      <div style={{ padding: "1rem 1.2rem", borderBottom: "0.5px solid var(--border)" }}>
                         {user.displayName && (
-                          <p
-                            style={{
-                              fontSize: "0.85rem",
-                              fontWeight: 500,
-                              color: "var(--charcoal)",
-                              marginBottom: "0.2rem",
-                            }}
-                          >
+                          <p style={{ fontSize: "0.85rem", fontWeight: 500, color: "var(--charcoal)", marginBottom: "0.2rem" }}>
                             {user.displayName}
                           </p>
                         )}
-                        <p
-                          style={{
-                            fontSize: "0.75rem",
-                            color: "var(--charcoal-muted)",
-                            letterSpacing: "0.02em",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
+                        <p style={{ fontSize: "0.75rem", color: "var(--charcoal-muted)", letterSpacing: "0.02em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {user.email}
                         </p>
+                        {role === "ADMIN" && (
+                          <span style={{ display: "inline-block", marginTop: "0.4rem", padding: "0.15rem 0.55rem", fontSize: "0.6rem", letterSpacing: "0.1em", textTransform: "uppercase", background: "#D1FAE5", color: "#065F46" }}>
+                            Admin
+                          </span>
+                        )}
                       </div>
 
                       {/* Menu items */}
                       <div style={{ padding: "0.4rem 0" }}>
+                        {role === "ADMIN" && (
+                          <Link
+                            href="/admin"
+                            onClick={() => setDropdownOpen(false)}
+                            style={dropdownItemStyle}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2">
+                              <rect x="1" y="1" width="6" height="6" rx="1"/>
+                              <rect x="9" y="1" width="6" height="6" rx="1"/>
+                              <rect x="1" y="9" width="6" height="6" rx="1"/>
+                              <rect x="9" y="9" width="6" height="6" rx="1"/>
+                            </svg>
+                            Admin Dashboard
+                          </Link>
+                        )}
+
+                        <Link
+                          href="/gallery"
+                          onClick={() => setDropdownOpen(false)}
+                          style={dropdownItemStyle}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
+                            <rect x="1" y="1" width="12" height="10" rx="1"/>
+                            <path d="M1 8l3-3 3 3 2-2 4 4"/>
+                          </svg>
+                          My Galleries
+                        </Link>
+
                         <Link
                           href="/settings"
                           onClick={() => setDropdownOpen(false)}
@@ -231,6 +271,8 @@ export function Navbar() {
                           </svg>
                           Settings
                         </Link>
+
+                        <div style={{ height: "0.5px", background: "var(--border)", margin: "0.4rem 0" }} />
 
                         <button
                           onClick={() => { setDropdownOpen(false); signOut(); }}

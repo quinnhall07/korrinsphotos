@@ -1,15 +1,18 @@
 // app/admin/bookings/page.tsx
-// Booking inquiries management — fetches all from Firestore, grouped by status.
+// Booking inquiries management — fetched from Firestore.
+// Filter tabs include Archived. Each row expands to show the BookingDetailPanel.
 
 import { requireAdmin } from "@/lib/session";
 import { adminDb } from "@/lib/firebase-admin";
 import { BookingActions } from "./BookingActions";
+import { BookingTable } from "./BookingTable";
 import type { Metadata } from "next";
+import Link from "next/link";
 
 export const metadata: Metadata = { title: "Booking Inquiries | Admin" };
 export const dynamic = "force-dynamic";
 
-type Inquiry = {
+export type Inquiry = {
   id: string;
   firstName: string;
   lastName: string;
@@ -17,8 +20,11 @@ type Inquiry = {
   sessionType: string;
   preferredDate: string | null;
   message: string;
+  notes: string;
+  pricing: string;
   status: string;
   createdAt: string;
+  lastRespondedAt: string | null;
 };
 
 async function getInquiries(status?: string): Promise<Inquiry[]> {
@@ -41,30 +47,35 @@ async function getInquiries(status?: string): Promise<Inquiry[]> {
       email: data.email as string,
       sessionType: data.sessionType as string,
       preferredDate: data.preferredDate
-        ? data.preferredDate.toDate().toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          })
+        ? data.preferredDate.toDate().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
         : null,
       message: data.message as string,
+      notes: (data.notes as string) ?? "",
+      pricing: (data.pricing as string) ?? "",
       status: data.status as string,
       createdAt: data.createdAt?.toDate
-        ? data.createdAt.toDate().toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          })
+        ? data.createdAt.toDate().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
         : "—",
+      lastRespondedAt: data.lastRespondedAt?.toDate
+        ? data.lastRespondedAt.toDate().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+        : null,
     };
   });
 }
 
-const STATUS_COLORS: Record<string, React.CSSProperties> = {
-  PENDING: { background: "#FEF3C7", color: "#92400E" },
-  REVIEWED: { background: "var(--olive-dim)", color: "var(--olive)" },
-  BOOKED: { background: "#D1FAE5", color: "#065F46" },
-  ARCHIVED: { background: "rgba(42,42,40,0.06)", color: "var(--charcoal-muted)" },
+const filterTabs = [
+  { label: "All", value: "" },
+  { label: "Pending", value: "pending" },
+  { label: "Reviewed", value: "reviewed" },
+  { label: "Booked", value: "booked" },
+  { label: "Archived", value: "archived" },
+];
+
+const STATUS_FILTER_MAP: Record<string, string> = {
+  pending: "PENDING",
+  reviewed: "REVIEWED",
+  booked: "BOOKED",
+  archived: "ARCHIVED",
 };
 
 export default async function BookingsPage({
@@ -74,10 +85,14 @@ export default async function BookingsPage({
 }) {
   await requireAdmin();
   const { status } = await searchParams;
-  const inquiries = await getInquiries(status?.toUpperCase());
+  const activeStatus = status?.toLowerCase() ?? "";
+  const firestoreStatus = STATUS_FILTER_MAP[activeStatus];
 
+  const inquiries = await getInquiries(firestoreStatus);
+
+  // Counts for each tab
   const counts = await Promise.all(
-    ["", "PENDING", "REVIEWED", "BOOKED"].map(async (s) => {
+    ["", "PENDING", "REVIEWED", "BOOKED", "ARCHIVED"].map(async (s) => {
       const q = s
         ? adminDb.collection("bookingInquiries").where("status", "==", s)
         : adminDb.collection("bookingInquiries");
@@ -86,64 +101,38 @@ export default async function BookingsPage({
     })
   );
 
-  const filterTabs = [
-    { label: "All", value: "" },
-    { label: "Pending", value: "pending" },
-    { label: "Reviewed", value: "reviewed" },
-    { label: "Booked", value: "booked" },
-  ];
+  function tabCount(tabValue: string) {
+    if (!tabValue) return counts.find((c) => c.status === "")?.count ?? 0;
+    return counts.find((c) => c.status === STATUS_FILTER_MAP[tabValue])?.count ?? 0;
+  }
 
   return (
     <div className="page-fade-in">
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: "2rem",
-        }}
-      >
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "2rem", gap: "1rem", flexWrap: "wrap" }}>
         <div>
-          <p
-            style={{
-              fontSize: "0.65rem",
-              letterSpacing: "0.2em",
-              textTransform: "uppercase",
-              color: "var(--olive)",
-              marginBottom: "0.3rem",
-            }}
-          >
+          <p style={{ fontSize: "0.65rem", letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--olive)", marginBottom: "0.3rem" }}>
             Clients
           </p>
-          <h2
-            style={{
-              fontFamily: "'Cormorant Garamond', serif",
-              fontSize: "2rem",
-              fontWeight: 300,
-            }}
-          >
+          <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "2rem", fontWeight: 300 }}>
             Booking Inquiries
           </h2>
+          <p style={{ fontSize: "0.78rem", color: "var(--charcoal-muted)", marginTop: "0.25rem" }}>
+            Click any row to expand notes, pricing, and email response tools.
+          </p>
         </div>
 
         {/* Filter tabs */}
-        <div style={{ display: "flex", gap: "0.5rem" }}>
+        <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
           {filterTabs.map((tab) => {
-            const count =
-              counts.find(
-                (c) => c.status === tab.value.toUpperCase()
-              )?.count ?? counts[0]?.count;
-            const isActive = (status ?? "") === tab.value;
+            const isActive = activeStatus === tab.value;
             return (
-              <a
+              <Link
                 key={tab.value}
-                href={
-                  tab.value ? `/admin/bookings?status=${tab.value}` : "/admin/bookings"
-                }
+                href={tab.value ? `/admin/bookings?status=${tab.value}` : "/admin/bookings"}
                 style={{
                   display: "inline-block",
-                  padding: "0.5rem 1rem",
-                  fontSize: "0.68rem",
+                  padding: "0.45rem 0.9rem",
+                  fontSize: "0.65rem",
                   letterSpacing: "0.1em",
                   textTransform: "uppercase",
                   color: isActive ? "var(--white)" : "var(--charcoal)",
@@ -154,110 +143,22 @@ export default async function BookingsPage({
                   fontFamily: "'Jost', sans-serif",
                 }}
               >
-                {tab.label} ({count})
-              </a>
+                {tab.label} ({tabCount(tab.value)})
+              </Link>
             );
           })}
         </div>
       </div>
 
-      <div style={{ border: "0.5px solid var(--border)", background: "var(--white)" }}>
-        <table
-          style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}
-        >
-          <thead>
-            <tr>
-              {["Name", "Email", "Session", "Date", "Message", "Received", "Status", ""].map(
-                (h) => (
-                  <th
-                    key={h}
-                    style={{
-                      textAlign: "left",
-                      padding: "0.75rem 1rem",
-                      fontSize: "0.65rem",
-                      letterSpacing: "0.14em",
-                      textTransform: "uppercase",
-                      color: "var(--charcoal-muted)",
-                      borderBottom: "0.5px solid var(--border-strong)",
-                      fontWeight: 400,
-                    }}
-                  >
-                    {h}
-                  </th>
-                )
-              )}
-            </tr>
-          </thead>
-          <tbody>
-            {inquiries.length === 0 && (
-              <tr>
-                <td
-                  colSpan={8}
-                  style={{
-                    padding: "3rem",
-                    textAlign: "center",
-                    color: "var(--charcoal-muted)",
-                    fontSize: "0.88rem",
-                  }}
-                >
-                  No inquiries{status ? ` with status "${status}"` : ""} yet.
-                </td>
-              </tr>
-            )}
-            {inquiries.map((inq) => (
-              <tr key={inq.id}>
-                <td style={tdStyle}>
-                  <strong style={{ fontWeight: 500 }}>
-                    {inq.firstName} {inq.lastName}
-                  </strong>
-                </td>
-                <td style={tdStyle}>{inq.email}</td>
-                <td style={tdStyle}>{inq.sessionType}</td>
-                <td style={tdStyle}>{inq.preferredDate ?? "—"}</td>
-                <td
-                  style={{
-                    ...tdStyle,
-                    maxWidth: "180px",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                  title={inq.message}
-                >
-                  {inq.message}
-                </td>
-                <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
-                  {inq.createdAt}
-                </td>
-                <td style={tdStyle}>
-                  <span
-                    style={{
-                      display: "inline-block",
-                      padding: "0.25rem 0.65rem",
-                      fontSize: "0.62rem",
-                      letterSpacing: "0.1em",
-                      textTransform: "uppercase",
-                      ...(STATUS_COLORS[inq.status] ?? {}),
-                    }}
-                  >
-                    {inq.status}
-                  </span>
-                </td>
-                <td style={tdStyle}>
-                  <BookingActions id={inq.id} currentStatus={inq.status} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {/* Info bar for archived */}
+      {activeStatus === "archived" && (
+        <div style={{ padding: "0.85rem 1.2rem", background: "rgba(42,42,40,0.04)", border: "0.5px solid var(--border)", marginBottom: "1.5rem", fontSize: "0.82rem", color: "var(--charcoal-muted)" }}>
+          Archived inquiries are stored indefinitely and can be restored to Pending at any time.
+        </div>
+      )}
+
+      {/* Table with expandable rows (client component) */}
+      <BookingTable inquiries={inquiries} />
     </div>
   );
 }
-
-const tdStyle: React.CSSProperties = {
-  padding: "0.9rem 1rem",
-  borderBottom: "0.5px solid var(--border)",
-  color: "var(--charcoal-light)",
-  verticalAlign: "middle",
-};
