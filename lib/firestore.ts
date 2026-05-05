@@ -60,7 +60,25 @@ export interface BookingInquiryDoc {
   sessionType:   string;
   preferredDate?: string;
   message:       string;
-  status:        "PENDING" | "REVIEWED" | "BOOKED" | "ARCHIVED";
+  
+  // UPDATED: Kanban status pipeline
+  status:        "PENDING" | "QUALIFIED" | "SENT_PROPOSAL" | "CONTRACT_SENT" | "BOOKED" | "ARCHIVED";
+  
+  // NEW: CRM & Lead Tracking Fields
+  leadSource?:      "WEBSITE" | "INSTAGRAM" | "REFERRAL" | "GOOGLE" | "OTHER";
+  leadScore?:       number; // 0-100 automated scoring
+  internalNotes?:   string;
+  tags?:            string[]; // e.g., ["VIP", "Rush", "Budget-Conscious"]
+  lastContactedAt?: Timestamp;
+  followUpDate?:    Timestamp;
+  estimatedValue?:  number; // Projected package price
+  communicationLog?: {
+    timestamp: Timestamp;
+    channel: "EMAIL" | "PHONE" | "SMS" | "IN_PERSON";
+    summary: string;
+    userId: string; // Who logged it
+  }[];
+
   createdAt:     Timestamp;
   updatedAt:     Timestamp;
 }
@@ -233,6 +251,37 @@ export async function countBookingInquiries(status?: string): Promise<number> {
   if (status) query = query.where("status", "==", status);
   const snap = await query.count().get();
   return snap.data().count;
+}
+
+// Update general CRM fields (tags, notes, expected value, etc.)
+export async function updateBookingCRM(
+  id: string, 
+  data: Partial<Omit<BookingInquiryDoc, "id" | "createdAt" | "updatedAt">>
+): Promise<void> {
+  await bookingCol().doc(id).update({ 
+    ...data, 
+    updatedAt: FieldValue.serverTimestamp() 
+  });
+}
+
+// Append a new log to the communication history using arrayUnion
+export async function logCommunication(
+  id: string, 
+  logEntry: {
+    channel: "EMAIL" | "PHONE" | "SMS" | "IN_PERSON";
+    summary: string;
+    userId: string;
+  }
+): Promise<void> {
+  const now = Timestamp.now();
+  await bookingCol().doc(id).update({
+    communicationLog: FieldValue.arrayUnion({
+      ...logEntry,
+      timestamp: now
+    }),
+    lastContactedAt: now, // Automatically update the last contacted timestamp
+    updatedAt: FieldValue.serverTimestamp()
+  });
 }
 
 // ─── Email (Trigger Email extension) ─────────────────────────────────────────
