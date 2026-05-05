@@ -1,10 +1,16 @@
 // app/login/page.tsx
-// Client portal login — magic link + Google, Microsoft, Apple OAuth.
-// ?verify=1  → "Check your inbox" confirmation state
-// ?error=1   → expired / invalid link error
+// Client portal login — email/password + Google/Microsoft OAuth.
+// ?error=1   → expired / invalid invite link error
+//
+// Logged-in users are immediately redirected:
+//   ADMIN  → /admin
+//   CLIENT → /gallery
 
 import type { Metadata } from "next";
-import { LoginForm } from "./LoginForm";
+import { redirect }      from "next/navigation";
+import { getSessionUser } from "@/lib/session";
+import { adminDb }        from "@/lib/firebase-admin";
+import { LoginForm }      from "./LoginForm";
 
 export const metadata: Metadata = {
   title: "Client Login",
@@ -14,11 +20,25 @@ export const metadata: Metadata = {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ verify?: string; error?: string }>;
+  searchParams: Promise<{ error?: string }>;
 }) {
-  const { verify, error } = await searchParams;
-  const showVerify = verify === "1";
-  const hasError = error === "1";
+  // ── Redirect already-authenticated users ──────────────────────────────────
+  // Check the server-side session cookie. If valid, look up the role in
+  // Firestore (more reliable than relying solely on JWT claims) and redirect.
+  const session = await getSessionUser();
+  if (session) {
+    try {
+      const userDoc = await adminDb.collection("users").doc(session.uid).get();
+      const role = userDoc.exists ? (userDoc.data()?.role as string) : null;
+      redirect(role === "ADMIN" ? "/admin" : "/gallery");
+    } catch {
+      // Firestore unavailable — fall back to JWT claim
+      redirect(session["role"] === "ADMIN" ? "/admin" : "/gallery");
+    }
+  }
+
+  const { error } = await searchParams;
+  const hasError  = error === "1";
 
   return (
     <div style={{ paddingTop: "72px" }} className="page-fade-in">
@@ -67,119 +87,72 @@ export default async function LoginPage({
             Client Portal
           </p>
 
-          {showVerify ? (
-            /* ── Magic link sent ───────────────────────────────────────── */
-            <div style={{ textAlign: "center", paddingTop: "1rem" }}>
-              <div
+          <h2
+            style={{
+              fontFamily: "'Cormorant Garamond', serif",
+              fontSize: "2.2rem",
+              fontWeight: 300,
+              lineHeight: 1.2,
+              marginBottom: "0.5rem",
+            }}
+          >
+            Welcome
+            <br />
+            <em>back</em>
+          </h2>
+          <p
+            style={{
+              fontSize: "0.88rem",
+              color: "var(--charcoal-muted)",
+              lineHeight: 1.7,
+              marginBottom: "2rem",
+            }}
+          >
+            Sign in to access your private gallery.
+          </p>
+
+          {hasError && (
+            <div
+              style={{
+                padding: "0.9rem 1rem",
+                background: "#FEF3C7",
+                borderLeft: "2px solid #F59E0B",
+                fontSize: "0.82rem",
+                color: "#92400E",
+                marginBottom: "1.5rem",
+                lineHeight: 1.6,
+              }}
+            >
+              That invite link has expired or is invalid. Please sign in below
+              or ask Korrin to resend your invitation.
+            </div>
+          )}
+
+          <LoginForm />
+
+          {/* Admin shortcut — dev only */}
+          {process.env.NODE_ENV === "development" && (
+            <div
+              style={{
+                borderTop: "0.5px solid var(--border)",
+                marginTop: "2rem",
+                paddingTop: "1.5rem",
+                textAlign: "center",
+              }}
+            >
+              <p
                 style={{
-                  width: "52px",
-                  height: "52px",
-                  borderRadius: "50%",
-                  background: "var(--olive-dim)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  margin: "0 auto 1.4rem",
-                  fontSize: "1.4rem",
-                  color: "var(--olive)",
-                }}
-              >
-                ✓
-              </div>
-              <h2
-                style={{
-                  fontFamily: "'Cormorant Garamond', serif",
-                  fontSize: "2rem",
-                  fontWeight: 300,
-                  lineHeight: 1.2,
+                  fontSize: "0.75rem",
+                  color: "var(--charcoal-muted)",
                   marginBottom: "0.75rem",
                 }}
               >
-                Check your inbox
-              </h2>
-              <p
-                style={{
-                  fontSize: "0.88rem",
-                  color: "var(--charcoal-muted)",
-                  lineHeight: 1.8,
-                  maxWidth: "300px",
-                  margin: "0 auto",
-                }}
-              >
-                A magic link has been sent to your email address. The link
-                expires in 15 minutes.
+                Are you the photographer?
               </p>
+              <a href="/admin" style={devLink}>Admin Access</a>
+              &nbsp;
+              <a href="/gallery" style={devLink}>Demo Client View</a>
             </div>
-          ) : (
-            /* ── Login form ───────────────────────────────────────────── */
-            <>
-              <h2
-                style={{
-                  fontFamily: "'Cormorant Garamond', serif",
-                  fontSize: "2.2rem",
-                  fontWeight: 300,
-                  lineHeight: 1.2,
-                  marginBottom: "0.5rem",
-                }}
-              >
-                Welcome
-                <br />
-                <em>back</em>
-              </h2>
-              <p
-                style={{
-                  fontSize: "0.88rem",
-                  color: "var(--charcoal-muted)",
-                  lineHeight: 1.7,
-                  marginBottom: "2rem",
-                }}
-              >
-                Sign in to access your private gallery.
-              </p>
-
-              {hasError && (
-                <div
-                  style={{
-                    padding: "0.9rem 1rem",
-                    background: "#FEF3C7",
-                    borderLeft: "2px solid #F59E0B",
-                    fontSize: "0.82rem",
-                    color: "#92400E",
-                    marginBottom: "1.5rem",
-                    lineHeight: 1.6,
-                  }}
-                >
-                  That link has expired or is invalid. Please sign in again.
-                </div>
-              )}
-
-              <LoginForm />
-
-              {/* Admin / demo links — dev only */}
-              {process.env.NODE_ENV === "development" && (
-                <div
-                  style={{
-                    borderTop: "0.5px solid var(--border)",
-                    marginTop: "2rem",
-                    paddingTop: "1.5rem",
-                    textAlign: "center",
-                  }}
-                >
-                  <p
-                    style={{
-                      fontSize: "0.75rem",
-                      color: "var(--charcoal-muted)",
-                      marginBottom: "0.75rem",
-                    }}
-                  >
-                    Are you the photographer?
-                  </p>
-                  <a href="/admin" style={devLink}>Admin Access</a>
-                  &nbsp;
-                  <a href="/gallery" style={devLink}>Demo Client View</a>
-                </div>
-              )}
-            </>
           )}
         </div>
       </div>

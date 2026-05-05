@@ -8,9 +8,10 @@
 //   4. Every server component / API route calls getSessionUser() to
 //      verify the cookie and get the decoded claims (uid, email, role).
 
-import { redirect } from "next/navigation";
-import { cookies } from "next/headers";
-import { adminAuth } from "@/lib/firebase-admin";
+import { redirect }   from "next/navigation";
+import { cookies }    from "next/headers";
+import { adminAuth }  from "@/lib/firebase-admin";
+import { adminDb }    from "@/lib/firebase-admin";
 import type { DecodedIdToken } from "firebase-admin/auth";
 
 const SESSION_COOKIE_NAME = "__session";
@@ -61,23 +62,48 @@ export function isAdmin(decoded: DecodedIdToken): boolean {
 }
 
 // ─── Route Protection ────────────────────────────────────────────────────────
+
+/**
+ * requireAdmin — enforces that the current user is an ADMIN.
+ *
+ * Checks the JWT claim first (fast path). Falls back to a Firestore lookup
+ * to handle sessions that were created before the ADMIN custom claim was set
+ * (e.g. the very first Google sign-in before the two-step refresh completes,
+ * or any legacy session cookie issued before this logic existed).
+ */
 export async function requireAdmin(): Promise<DecodedIdToken> {
   const decoded = await getSessionUser();
-  
-  if (!decoded || !isAdmin(decoded)) {
-    redirect("/login"); // Kick unauthorized users out
+
+  if (!decoded) {
+    redirect("/login");
   }
-  
-  return decoded;
+
+  // Fast path: role claim is embedded in the session cookie JWT.
+  if (decoded["role"] === "ADMIN") {
+    return decoded;
+  }
+
+  // Fallback: look the role up in Firestore. This handles sessions whose
+  // cookies were minted before the admin claim was applied.
+  try {
+    const userDoc = await adminDb.collection("users").doc(decoded.uid).get();
+    if (userDoc.exists && userDoc.data()?.role === "ADMIN") {
+      return decoded;
+    }
+  } catch (err) {
+    console.error("[requireAdmin] Firestore role lookup failed:", err);
+  }
+
+  redirect("/login");
 }
 
 export async function requireSession(): Promise<DecodedIdToken> {
   const decoded = await getSessionUser();
-  
+
   // If no valid session cookie exists, redirect to login
   if (!decoded) {
-    redirect("/login"); 
+    redirect("/login");
   }
-  
+
   return decoded;
 }

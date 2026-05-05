@@ -5,7 +5,11 @@
 // useAuth() to get the current user without prop drilling.
 //
 // Also handles the "complete sign-in" step when a user lands back on the
-// site after clicking their magic link email.
+// site after clicking their magic link invite email.
+//
+// Two-step admin session flow:
+//   afterSignIn() → POST idToken → if needsRefresh, force-refresh token
+//   → POST fresh token → session cookie now contains role:"ADMIN".
 
 import {
   createContext,
@@ -49,11 +53,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const router                = useRouter();
 
   // Exchange Firebase ID token for a server-side session cookie.
-  // Called after any Firebase sign-in (OAuth popup or magic link).
+  // Handles the two-step flow needed when admin claims are set for the
+  // first time so that the resulting cookie embeds role:"ADMIN".
   const afterSignIn = useCallback(async (): Promise<{ role: string }> => {
     const currentUser = auth.currentUser;
     if (!currentUser) throw new Error("No user signed in");
 
+    // ── Step 1: send the current token ────────────────────────────────────
     const idToken = await currentUser.getIdToken();
     const res = await fetch("/api/auth/session", {
       method:  "POST",
@@ -62,10 +68,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     if (!res.ok) throw new Error("Session creation failed");
-    return res.json();
+    const data: { ok: boolean; role: string; needsRefresh?: boolean } = await res.json();
+
+    // ── Step 2 (admin first login only): refresh token & re-create session ─
+    // The server just set the ADMIN custom claim. The current token doesn't
+    // carry it yet, so the session cookie would be missing the role.
+    // Force Firebase to issue a fresh token, then create a proper session.
+    if (data.needsRefresh) {
+      // Bust the client-side token cache — next getIdToken() hits Firebase.
+      await currentUser.getIdToken(/* forceRefresh= */ true);
+      const freshToken = await currentUser.getIdToken();
+
+      const res2 = await fetch("/api/auth/session", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ idToken: freshToken }),
+      });
+
+      if (!res2.ok) throw new Error("Session refresh failed");
+      return res2.json() as Promise<{ role: string }>;
+    }
+
+    return data;
   }, []);
 
-  // Complete the email-link sign-in when the user lands back on the page
+  // Complete the email-link sign-in when the user lands back from an invite.
+  // This only runs on the /login/complete page (or if AuthProvider detects
+  // a magic-link URL before the complete page mounts).
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!isSignInWithEmailLink(auth, window.location.href)) return;
@@ -81,6 +110,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       .catch((err) => {
         console.error("Email link sign-in failed:", err);
+        router.replace("/login?error=1");
       });
   }, [router, afterSignIn]);
 
