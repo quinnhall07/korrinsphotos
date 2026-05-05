@@ -7,6 +7,8 @@
 import { adminDb }    from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { z }          from "zod";
+import { calculateLeadScore } from "@/lib/lead-scoring";
+import { logActivity } from "@/lib/firestore";
 
 const BookingSchema = z.object({
   firstName:     z.string().min(1, "First name is required").max(100),
@@ -38,20 +40,42 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
   const { firstName, lastName, email, sessionType, preferredDate, message } = parsed.data;
 
   try {
-    // Write the inquiry
-    await adminDb.collection("bookingInquiries").add({
+    // Build initial doc data so we can compute lead score before writing
+    const inquiryData = {
       firstName,
       lastName,
       email,
       sessionType,
       preferredDate: preferredDate ? new Date(preferredDate) : null,
       message,
-      status:    "PENDING",
+      status:    "PENDING" as const,
       notes:     "",
       pricing:   null,
+      tags:      [] as string[],
+      communicationLog: [] as unknown[],
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
+    };
+
+    // Calculate initial lead score
+    const leadScore = calculateLeadScore({
+      sessionType,
+      message,
+      preferredDate: preferredDate ?? undefined,
     });
+
+    // Write the inquiry
+    const docRef = await adminDb.collection("bookingInquiries").add({
+      ...inquiryData,
+      leadScore,
+    });
+
+    // Log to activity feed (best-effort)
+    await logActivity(
+      "LEAD_RECEIVED",
+      `New ${sessionType.toLowerCase()} inquiry from ${firstName} ${lastName}`,
+      { inquiryId: docRef.id, sessionType, email }
+    ).catch(() => {});
 
     // Auto-responder: write to `mail` collection for Firebase Trigger Email extension
     await adminDb.collection("mail").add({

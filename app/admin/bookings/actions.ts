@@ -10,6 +10,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { requireAdmin } from "@/lib/session";
 import { FieldValue } from "firebase-admin/firestore";
 import { calculateLeadScore } from "@/lib/lead-scoring";
+import { logActivity } from "@/lib/firestore";
 import type { LeadStatus, LeadSource, CommunicationChannel } from "@/lib/firestore";
 import { randomUUID } from "crypto";
 import { z } from "zod";
@@ -21,10 +22,24 @@ export async function updateBookingStatus(
   status: LeadStatus
 ): Promise<void> {
   await requireAdmin();
+
+  const doc = await adminDb.collection("bookingInquiries").doc(id).get();
+  const name = doc.exists
+    ? `${doc.data()?.firstName ?? ""} ${doc.data()?.lastName ?? ""}`.trim()
+    : "Unknown";
+
   await adminDb.collection("bookingInquiries").doc(id).update({
     status,
     updatedAt: FieldValue.serverTimestamp(),
   });
+
+  // Log to activity feed
+  await logActivity(
+    "STATUS_CHANGED",
+    `${name} moved to ${status.replace(/_/g, " ").toLowerCase()}`,
+    { inquiryId: id, status }
+  ).catch(() => {}); // best-effort
+
   revalidatePath("/admin/bookings");
   revalidatePath("/admin");
 }
@@ -47,6 +62,13 @@ export async function bulkUpdateStatus(
       });
     });
     await batch.commit();
+
+    await logActivity(
+      "STATUS_CHANGED",
+      `${ids.length} inquir${ids.length === 1 ? "y" : "ies"} bulk-moved to ${status.replace(/_/g, " ").toLowerCase()}`,
+      { ids, status }
+    ).catch(() => {});
+
     revalidatePath("/admin/bookings");
     revalidatePath("/admin");
     return { success: true };
@@ -82,10 +104,18 @@ export async function updateBookingDetails(
     await adminDb.collection("bookingInquiries").doc(id).update({
       ...(details.notes !== undefined ? { notes: details.notes } : {}),
       ...(details.pricing !== undefined ? { pricing: details.pricing } : {}),
-      ...(details.estimatedValue !== undefined ? { estimatedValue: details.estimatedValue } : {}),
+      ...(details.estimatedValue !== undefined
+        ? { estimatedValue: details.estimatedValue }
+        : {}),
       ...scoreUpdate,
       updatedAt: FieldValue.serverTimestamp(),
     });
+
+    if (details.notes !== undefined) {
+      await logActivity("NOTE_ADDED", `Internal note updated`, {
+        inquiryId: id,
+      }).catch(() => {});
+    }
 
     revalidatePath("/admin/bookings");
     return { success: true };
@@ -114,8 +144,13 @@ export async function addTag(
 
     // Recalculate score with new tag
     const freshDoc = await adminDb.collection("bookingInquiries").doc(id).get();
-    const newScore = calculateLeadScore(freshDoc.data() as Parameters<typeof calculateLeadScore>[0]);
-    await adminDb.collection("bookingInquiries").doc(id).update({ leadScore: newScore });
+    const newScore = calculateLeadScore(
+      freshDoc.data() as Parameters<typeof calculateLeadScore>[0]
+    );
+    await adminDb
+      .collection("bookingInquiries")
+      .doc(id)
+      .update({ leadScore: newScore });
 
     revalidatePath("/admin/bookings");
     return { success: true };
@@ -138,8 +173,13 @@ export async function removeTag(
     });
 
     const freshDoc = await adminDb.collection("bookingInquiries").doc(id).get();
-    const newScore = calculateLeadScore(freshDoc.data() as Parameters<typeof calculateLeadScore>[0]);
-    await adminDb.collection("bookingInquiries").doc(id).update({ leadScore: newScore });
+    const newScore = calculateLeadScore(
+      freshDoc.data() as Parameters<typeof calculateLeadScore>[0]
+    );
+    await adminDb
+      .collection("bookingInquiries")
+      .doc(id)
+      .update({ leadScore: newScore });
 
     revalidatePath("/admin/bookings");
     return { success: true };
@@ -164,8 +204,13 @@ export async function updateLeadSource(
     });
 
     const freshDoc = await adminDb.collection("bookingInquiries").doc(id).get();
-    const newScore = calculateLeadScore(freshDoc.data() as Parameters<typeof calculateLeadScore>[0]);
-    await adminDb.collection("bookingInquiries").doc(id).update({ leadScore: newScore });
+    const newScore = calculateLeadScore(
+      freshDoc.data() as Parameters<typeof calculateLeadScore>[0]
+    );
+    await adminDb
+      .collection("bookingInquiries")
+      .doc(id)
+      .update({ leadScore: newScore });
 
     revalidatePath("/admin/bookings");
     return { success: true };
@@ -227,6 +272,12 @@ export async function logCommunication(
       updatedAt: FieldValue.serverTimestamp(),
     });
 
+    await logActivity(
+      "NOTE_ADDED",
+      `${entry.channel.toLowerCase()} interaction logged`,
+      { inquiryId: id, channel: entry.channel }
+    ).catch(() => {});
+
     revalidatePath("/admin/bookings");
     return { success: true };
   } catch (err) {
@@ -262,7 +313,12 @@ export async function deleteCommunicationLog(
 
 export async function sendBookingResponse(
   id: string,
-  { to, name, subject, message }: {
+  {
+    to,
+    name,
+    subject,
+    message,
+  }: {
     to: string;
     name: string;
     subject: string;
@@ -284,12 +340,23 @@ export async function sendBookingResponse(
       createdAt: FieldValue.serverTimestamp(),
     });
 
+    const currentStatus = doc.data()?.status as LeadStatus | undefined;
+    // Advance PENDING leads to QUALIFIED when an email is sent; leave others unchanged
+    const nextStatus: LeadStatus =
+      currentStatus === "PENDING" ? "QUALIFIED" : (currentStatus ?? "QUALIFIED");
+
     await adminDb.collection("bookingInquiries").doc(id).update({
       lastRespondedAt: FieldValue.serverTimestamp(),
       lastContactedAt: FieldValue.serverTimestamp(),
-      status: doc.data()?.status === "PENDING" ? "QUALIFIED" : doc.data()?.status,
+      status: nextStatus,
       updatedAt: FieldValue.serverTimestamp(),
     });
+
+    await logActivity(
+      "EMAIL_SENT",
+      `Email sent to ${name} (${to})`,
+      { inquiryId: id, subject }
+    ).catch(() => {});
 
     revalidatePath("/admin/bookings");
     return { success: true };
@@ -310,7 +377,9 @@ export async function recalculateLeadScore(
     const doc = await adminDb.collection("bookingInquiries").doc(id).get();
     if (!doc.exists) return { success: false, error: "Not found." };
 
-    const score = calculateLeadScore(doc.data() as Parameters<typeof calculateLeadScore>[0]);
+    const score = calculateLeadScore(
+      doc.data() as Parameters<typeof calculateLeadScore>[0]
+    );
     await adminDb.collection("bookingInquiries").doc(id).update({
       leadScore: score,
       updatedAt: FieldValue.serverTimestamp(),
@@ -335,7 +404,10 @@ function buildResponseHtml({
 }): string {
   const messageHtml = message
     .split("\n")
-    .map((line) => `<p style="margin:0 0 12px;font-size:15px;color:#4A4A47;line-height:1.8;">${line}</p>`)
+    .map(
+      (line) =>
+        `<p style="margin:0 0 12px;font-size:15px;color:#4A4A47;line-height:1.8;">${line}</p>`
+    )
     .join("");
 
   return `

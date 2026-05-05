@@ -1,16 +1,20 @@
+"use client";
+
 // app/admin/bookings/page.tsx
-// Booking inquiries management — fetched from Firestore.
-// Filter tabs include Archived. Each row expands to show the BookingDetailPanel.
+// Booking inquiries management — Kanban pipeline + Table view.
+// Smart filters, bulk actions, lead scoring, and expandable detail drawer.
 
-import { requireAdmin } from "@/lib/session";
-import { adminDb } from "@/lib/firebase-admin";
-import { BookingActions } from "./BookingActions";
+import { useState, useEffect, useMemo } from "react";
+import { ViewToggle } from "./ViewToggle";
 import { BookingTable } from "./BookingTable";
-import type { Metadata } from "next";
-import Link from "next/link";
+import { KanbanBoard } from "./KanbanBoard";
+import { SmartFilters, applySmartFilter } from "./SmartFilters";
+import { BulkActions } from "./BulkActions";
+import { LeadDetailDrawer } from "./LeadDetailDrawer";
+import type { SmartFilter } from "./SmartFilters";
+import type { KanbanInquiry } from "./KanbanCard";
 
-export const metadata: Metadata = { title: "Booking Inquiries | Admin" };
-export const dynamic = "force-dynamic";
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 export type Inquiry = {
   id: string;
@@ -25,140 +29,147 @@ export type Inquiry = {
   status: string;
   createdAt: string;
   lastRespondedAt: string | null;
+  // Phase 1 CRM fields
+  leadScore: number;
+  tags: string[];
+  leadSource: string | null;
+  estimatedValue: number | null;
+  followUpDate: string | null;
+  lastContactedAt: string | null;
+  communicationLog: {
+    id: string;
+    channel: string;
+    summary: string;
+    timestamp: string;
+    adminUid: string;
+  }[];
 };
 
-async function getInquiries(status?: string): Promise<Inquiry[]> {
-  let query = adminDb
-    .collection("bookingInquiries")
-    .orderBy("createdAt", "desc") as FirebaseFirestore.Query;
+type View = "kanban" | "table";
 
-  if (status) {
-    query = query.where("status", "==", status);
-  }
+// ─── Client Page Component ────────────────────────────────────────────────────
 
-  const snap = await query.get();
-
-  return snap.docs.map((doc) => {
-    const data = doc.data();
-    return {
-      id: doc.id,
-      firstName: data.firstName as string,
-      lastName: data.lastName as string,
-      email: data.email as string,
-      sessionType: data.sessionType as string,
-      preferredDate: data.preferredDate
-        ? data.preferredDate.toDate().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-        : null,
-      message: data.message as string,
-      notes: (data.notes as string) ?? "",
-      pricing: (data.pricing as string) ?? "",
-      status: data.status as string,
-      createdAt: data.createdAt?.toDate
-        ? data.createdAt.toDate().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-        : "—",
-      lastRespondedAt: data.lastRespondedAt?.toDate
-        ? data.lastRespondedAt.toDate().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-        : null,
-    };
-  });
+interface BookingsClientPageProps {
+  inquiries: Inquiry[];
 }
 
-const filterTabs = [
-  { label: "All", value: "" },
-  { label: "Pending", value: "pending" },
-  { label: "Reviewed", value: "reviewed" },
-  { label: "Booked", value: "booked" },
-  { label: "Archived", value: "archived" },
-];
+export function BookingsClientPage({ inquiries }: BookingsClientPageProps) {
+  const [view, setView] = useState<View>("kanban");
+  const [smartFilter, setSmartFilter] = useState<SmartFilter>("all");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [drawerInquiry, setDrawerInquiry] = useState<KanbanInquiry | null>(null);
 
-const STATUS_FILTER_MAP: Record<string, string> = {
-  pending: "PENDING",
-  reviewed: "REVIEWED",
-  booked: "BOOKED",
-  archived: "ARCHIVED",
-};
+  // Persist view preference
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("bookings_view") as View | null;
+      if (saved === "kanban" || saved === "table") setView(saved);
+    } catch {}
+  }, []);
 
-export default async function BookingsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ status?: string }>;
-}) {
-  await requireAdmin();
-  const { status } = await searchParams;
-  const activeStatus = status?.toLowerCase() ?? "";
-  const firestoreStatus = STATUS_FILTER_MAP[activeStatus];
-
-  const inquiries = await getInquiries(firestoreStatus);
-
-  // Counts for each tab
-  const counts = await Promise.all(
-    ["", "PENDING", "REVIEWED", "BOOKED", "ARCHIVED"].map(async (s) => {
-      const q = s
-        ? adminDb.collection("bookingInquiries").where("status", "==", s)
-        : adminDb.collection("bookingInquiries");
-      const snap = await q.count().get();
-      return { status: s, count: snap.data().count };
-    })
+  // Apply smart filter across all inquiries (client-side)
+  const filtered = useMemo(
+    () => applySmartFilter(inquiries as KanbanInquiry[], smartFilter),
+    [inquiries, smartFilter]
   );
 
-  function tabCount(tabValue: string) {
-    if (!tabValue) return counts.find((c) => c.status === "")?.count ?? 0;
-    return counts.find((c) => c.status === STATUS_FILTER_MAP[tabValue])?.count ?? 0;
+  // Smart filter counts
+  const counts = useMemo(() => {
+    const allFilters: SmartFilter[] = [
+      "all", "hot-leads", "needs-follow-up", "high-value", "this-week", "weddings",
+    ];
+    return Object.fromEntries(
+      allFilters.map((f) => [
+        f,
+        applySmartFilter(inquiries as KanbanInquiry[], f).length,
+      ])
+    ) as Record<SmartFilter, number>;
+  }, [inquiries]);
+
+  function handleOpenDrawer(inq: KanbanInquiry) {
+    setDrawerInquiry(inq);
+  }
+
+  function handleClearSelection() {
+    setSelectedIds([]);
   }
 
   return (
     <div className="page-fade-in">
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "2rem", gap: "1rem", flexWrap: "wrap" }}>
+      {/* Header */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          marginBottom: "1rem",
+          gap: "1rem",
+          flexWrap: "wrap",
+        }}
+      >
         <div>
-          <p style={{ fontSize: "0.65rem", letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--olive)", marginBottom: "0.3rem" }}>
+          <p
+            style={{
+              fontSize: "0.65rem",
+              letterSpacing: "0.2em",
+              textTransform: "uppercase",
+              color: "var(--olive)",
+              marginBottom: "0.3rem",
+            }}
+          >
             Clients
           </p>
-          <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "2rem", fontWeight: 300 }}>
+          <h2
+            style={{
+              fontFamily: "'Cormorant Garamond', serif",
+              fontSize: "2rem",
+              fontWeight: 300,
+            }}
+          >
             Booking Inquiries
           </h2>
-          <p style={{ fontSize: "0.78rem", color: "var(--charcoal-muted)", marginTop: "0.25rem" }}>
-            Click any row to expand notes, pricing, and email response tools.
+          <p
+            style={{
+              fontSize: "0.78rem",
+              color: "var(--charcoal-muted)",
+              marginTop: "0.25rem",
+            }}
+          >
+            {view === "kanban"
+              ? "Drag cards between columns to update status."
+              : "Click any row to expand notes, pricing, and email tools."}
           </p>
         </div>
 
-        {/* Filter tabs */}
-        <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
-          {filterTabs.map((tab) => {
-            const isActive = activeStatus === tab.value;
-            return (
-              <Link
-                key={tab.value}
-                href={tab.value ? `/admin/bookings?status=${tab.value}` : "/admin/bookings"}
-                style={{
-                  display: "inline-block",
-                  padding: "0.45rem 0.9rem",
-                  fontSize: "0.65rem",
-                  letterSpacing: "0.1em",
-                  textTransform: "uppercase",
-                  color: isActive ? "var(--white)" : "var(--charcoal)",
-                  background: isActive ? "var(--charcoal)" : "transparent",
-                  border: "0.5px solid var(--border-strong)",
-                  textDecoration: "none",
-                  transition: "all 0.2s",
-                  fontFamily: "'Jost', sans-serif",
-                }}
-              >
-                {tab.label} ({tabCount(tab.value)})
-              </Link>
-            );
-          })}
-        </div>
+        <ViewToggle value={view} onChange={setView} />
       </div>
 
-      {/* Info bar for archived */}
-      {activeStatus === "archived" && (
-        <div style={{ padding: "0.85rem 1.2rem", background: "rgba(42,42,40,0.04)", border: "0.5px solid var(--border)", marginBottom: "1.5rem", fontSize: "0.82rem", color: "var(--charcoal-muted)" }}>
-          Archived inquiries are stored indefinitely and can be restored to Pending at any time.
-        </div>
+      {/* Smart filters */}
+      <SmartFilters active={smartFilter} onChange={setSmartFilter} counts={counts} />
+
+      {/* Main content */}
+      {view === "kanban" ? (
+        <KanbanBoard
+          inquiries={filtered as KanbanInquiry[]}
+          onOpenDrawer={handleOpenDrawer}
+        />
+      ) : (
+        <BookingTable
+          inquiries={filtered as Inquiry[]}
+          selectedIds={selectedIds}
+          onSelectionChange={setSelectedIds}
+          onOpenDrawer={handleOpenDrawer}
+        />
       )}
 
-      {/* Table with expandable rows (client component) */}
-      <BookingTable inquiries={inquiries} />
+      {/* Bulk actions bar */}
+      <BulkActions selectedIds={selectedIds} onClearSelection={handleClearSelection} />
+
+      {/* Lead detail drawer */}
+      <LeadDetailDrawer
+        inquiry={drawerInquiry}
+        onClose={() => setDrawerInquiry(null)}
+      />
     </div>
   );
 }

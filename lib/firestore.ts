@@ -9,6 +9,7 @@
 //   eventAccess/{docId}       — links userId ↔ eventId
 //   bookingInquiries/{id}     — public booking form submissions
 //   mail/{id}                 — picked up by Firebase "Trigger Email" extension
+//   activityFeed/{id}         — admin activity log
 
 import { adminDb } from "@/lib/firebase-admin";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
@@ -29,12 +30,26 @@ export type LeadSource = "WEBSITE" | "INSTAGRAM" | "REFERRAL" | "GOOGLE" | "OTHE
 
 export type CommunicationChannel = "EMAIL" | "PHONE" | "SMS" | "IN_PERSON";
 
+export type ActivityAction =
+  | "LEAD_RECEIVED"
+  | "STATUS_CHANGED"
+  | "EMAIL_SENT"
+  | "NOTE_ADDED";
+
 export interface CommunicationLogEntry {
   id: string;
   timestamp: Timestamp;
   channel: CommunicationChannel;
   summary: string;
   adminUid: string;
+}
+
+export interface ActivityDoc {
+  id: string;
+  action: ActivityAction;
+  message: string;
+  timestamp: Timestamp;
+  metadata?: Record<string, unknown>;
 }
 
 export interface UserDoc {
@@ -163,6 +178,7 @@ export const photosCol        = () => adminDb.collection("photos");
 export const eventAccessCol   = () => adminDb.collection("eventAccess");
 export const bookingCol       = () => adminDb.collection("bookingInquiries");
 export const mailCol          = () => adminDb.collection("mail");
+export const activityCol      = () => adminDb.collection("activityFeed");
 
 // ─── Users ────────────────────────────────────────────────────────────────────
 
@@ -330,6 +346,41 @@ export async function countBookingInquiries(status?: string): Promise<number> {
   if (status) query = query.where("status", "==", status);
   const snap = await query.count().get();
   return snap.data().count;
+}
+
+// ─── Activity Feed ────────────────────────────────────────────────────────────
+
+/**
+ * Logs an event to the activityFeed collection for display in the admin
+ * dashboard's Recent Activity widget.
+ */
+export async function logActivity(
+  action: ActivityAction,
+  message: string,
+  metadata?: Record<string, unknown>
+): Promise<void> {
+  await activityCol().add({
+    action,
+    message,
+    timestamp: FieldValue.serverTimestamp(),
+    ...(metadata ? { metadata } : {}),
+  });
+}
+
+/**
+ * Returns the most recent activity entries for the admin dashboard feed.
+ */
+export async function listRecentActivity(limit = 8): Promise<ActivityDoc[]> {
+  try {
+    const snap = await activityCol()
+      .orderBy("timestamp", "desc")
+      .limit(limit)
+      .get();
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() } as ActivityDoc));
+  } catch {
+    // Collection may not exist yet on a fresh project
+    return [];
+  }
 }
 
 // ─── Email (Trigger Email extension) ─────────────────────────────────────────
