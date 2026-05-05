@@ -13,7 +13,7 @@ import { adminDb }        from "@/lib/firebase-admin";
 import { LoginForm }      from "./LoginForm";
 
 export const metadata: Metadata = {
-  title: "Client Login",
+  title: "Login",
   description: "Access your private photo gallery.",
 };
 
@@ -84,7 +84,7 @@ export default async function LoginPage({
               marginBottom: "1rem",
             }}
           >
-            Client Portal
+            Login Portal
           </p>
 
           <h2

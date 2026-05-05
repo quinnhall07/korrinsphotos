@@ -248,7 +248,7 @@ export function Navbar() {
               </>
             ) : (
               <li>
-                <Link href="/login" style={ctaStyle}>Client Login</Link>
+                <Link href="/login" style={ctaStyle}>Login</Link>
               </li>
             )}
           </>
