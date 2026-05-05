@@ -2,11 +2,8 @@
 
 // app/admin/bookings/BookingTable.tsx
 // Client component: renders the bookings table with row selection (for bulk
-// actions), expandable detail rows, and drawer integration.
+// actions) and opens the LeadDetailDrawer on row click.
 
-import { useState } from "react";
-import { BookingActions } from "./BookingActions";
-import { BookingDetailPanel } from "./BookingDetailPanel";
 import type { Inquiry } from "./page";
 import type { KanbanInquiry } from "./KanbanCard";
 
@@ -32,8 +29,6 @@ export function BookingTable({
   onSelectionChange,
   onOpenDrawer,
 }: BookingTableProps) {
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-
   const allSelected =
     inquiries.length > 0 && selectedIds.length === inquiries.length;
 
@@ -47,10 +42,6 @@ export function BookingTable({
         ? selectedIds.filter((s) => s !== id)
         : [...selectedIds, id]
     );
-  }
-
-  function toggleRow(id: string) {
-    setExpandedId((prev) => (prev === id ? null : id));
   }
 
   if (inquiries.length === 0) {
@@ -87,7 +78,6 @@ export function BookingTable({
                 aria-label="Select all"
               />
             </th>
-            <th style={{ ...thStyle, width: "28px" }} />
             {["Name", "Email", "Session", "Date", "Score", "Received", "Status", ""].map((h) => (
               <th key={h} style={thStyle}>
                 {h}
@@ -97,170 +87,105 @@ export function BookingTable({
         </thead>
         <tbody>
           {inquiries.map((inq) => {
-            const isExpanded = expandedId === inq.id;
             const isSelected = selectedIds.includes(inq.id);
 
             return (
-              <>
-                <tr
-                  key={inq.id}
-                  style={{
-                    cursor: "pointer",
-                    background: isSelected
-                      ? "rgba(107,120,69,0.06)"
-                      : isExpanded
-                      ? "rgba(42,42,40,0.02)"
-                      : "transparent",
-                    transition: "background 0.15s",
-                  }}
+              <tr
+                key={inq.id}
+                onClick={() => onOpenDrawer(inq as unknown as KanbanInquiry)}
+                style={{
+                  cursor: "pointer",
+                  background: isSelected ? "rgba(107,120,69,0.06)" : "transparent",
+                  transition: "background 0.15s",
+                }}
+              >
+                {/* Checkbox */}
+                <td
+                  style={{ ...tdStyle, paddingLeft: "1rem", width: "40px" }}
+                  onClick={(e) => e.stopPropagation()}
                 >
-                  {/* Checkbox */}
-                  <td
-                    style={{ ...tdStyle, paddingLeft: "1rem", width: "40px" }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={() => toggleOne(inq.id)}
-                      style={{ cursor: "pointer" }}
-                      aria-label={`Select ${inq.firstName} ${inq.lastName}`}
-                    />
-                  </td>
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => toggleOne(inq.id)}
+                    style={{ cursor: "pointer" }}
+                    aria-label={`Select ${inq.firstName} ${inq.lastName}`}
+                  />
+                </td>
 
-                  {/* Expand chevron */}
-                  <td
-                    style={{ ...tdStyle, width: "28px", paddingRight: 0 }}
-                    onClick={() => toggleRow(inq.id)}
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 12 12"
-                      fill="none"
-                      style={{
-                        transition: "transform 0.2s",
-                        transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
-                        color: "var(--charcoal-muted)",
-                      }}
-                    >
-                      <path
-                        d="M4 2l4 4-4 4"
-                        stroke="currentColor"
-                        strokeWidth="1.2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </td>
-
-                  {/* Name — opens drawer on click */}
-                  <td
-                    style={tdStyle}
-                    onClick={() => onOpenDrawer(inq as unknown as KanbanInquiry)}
-                  >
-                    <strong style={{ fontWeight: 500 }}>
-                      {inq.firstName} {inq.lastName}
-                    </strong>
-                    {inq.notes && (
-                      <span
-                        title="Has notes"
-                        style={{ marginLeft: "0.4rem", fontSize: "0.65rem", color: "var(--olive)" }}
-                      >
-                        ●
-                      </span>
-                    )}
-                  </td>
-                  <td style={tdStyle} onClick={() => toggleRow(inq.id)}>
-                    {inq.email}
-                  </td>
-                  <td style={tdStyle} onClick={() => toggleRow(inq.id)}>
-                    {inq.sessionType}
-                  </td>
-                  <td style={tdStyle} onClick={() => toggleRow(inq.id)}>
-                    {inq.preferredDate ?? "—"}
-                  </td>
-                  {/* Lead score badge */}
-                  <td style={tdStyle} onClick={() => toggleRow(inq.id)}>
+                <td style={tdStyle}>
+                  <strong style={{ fontWeight: 500 }}>
+                    {inq.firstName} {inq.lastName}
+                  </strong>
+                  {inq.notes && (
                     <span
-                      style={{
-                        display: "inline-block",
-                        padding: "0.15rem 0.5rem",
-                        fontSize: "0.62rem",
-                        fontWeight: 600,
-                        letterSpacing: "0.06em",
-                        fontFamily: "'Jost', sans-serif",
-                        background:
-                          inq.leadScore >= 80
-                            ? "#D1FAE5"
-                            : inq.leadScore >= 60
-                            ? "#FEF3C7"
-                            : inq.leadScore >= 40
-                            ? "#E8EBD8"
-                            : "rgba(42,42,40,0.06)",
-                        color:
-                          inq.leadScore >= 80
-                            ? "#059669"
-                            : inq.leadScore >= 60
-                            ? "#D97706"
-                            : inq.leadScore >= 40
-                            ? "#6B7845"
-                            : "#8A8A85",
-                      }}
+                      title="Has notes"
+                      style={{ marginLeft: "0.4rem", fontSize: "0.65rem", color: "var(--olive)" }}
                     >
-                      {inq.leadScore}
+                      ●
                     </span>
-                  </td>
-                  <td
-                    style={{ ...tdStyle, whiteSpace: "nowrap" }}
-                    onClick={() => toggleRow(inq.id)}
+                  )}
+                </td>
+                <td style={tdStyle}>{inq.email}</td>
+                <td style={tdStyle}>{inq.sessionType}</td>
+                <td style={tdStyle}>{inq.preferredDate ?? "—"}</td>
+                
+                {/* Lead score badge */}
+                <td style={tdStyle}>
+                  <span
+                    style={{
+                      display: "inline-block",
+                      padding: "0.15rem 0.5rem",
+                      fontSize: "0.62rem",
+                      fontWeight: 600,
+                      letterSpacing: "0.06em",
+                      fontFamily: "'Jost', sans-serif",
+                      background:
+                        inq.leadScore >= 80
+                          ? "#D1FAE5"
+                          : inq.leadScore >= 60
+                          ? "#FEF3C7"
+                          : inq.leadScore >= 40
+                          ? "#E8EBD8"
+                          : "rgba(42,42,40,0.06)",
+                      color:
+                        inq.leadScore >= 80
+                          ? "#059669"
+                          : inq.leadScore >= 60
+                          ? "#D97706"
+                          : inq.leadScore >= 40
+                          ? "#6B7845"
+                          : "#8A8A85",
+                    }}
                   >
-                    {inq.createdAt}
-                  </td>
-                  <td style={tdStyle} onClick={() => toggleRow(inq.id)}>
-                    <span
-                      style={{
-                        display: "inline-block",
-                        padding: "0.25rem 0.65rem",
-                        fontSize: "0.62rem",
-                        letterSpacing: "0.1em",
-                        textTransform: "uppercase",
-                        ...(STATUS_COLORS[inq.status] ?? {}),
-                      }}
-                    >
-                      {inq.status.replace("_", " ")}
-                    </span>
-                  </td>
-                  <td
-                    style={tdStyle}
-                    onClick={(e) => e.stopPropagation()}
+                    {inq.leadScore}
+                  </span>
+                </td>
+                
+                <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
+                  {inq.createdAt}
+                </td>
+                
+                <td style={tdStyle}>
+                  <span
+                    style={{
+                      display: "inline-block",
+                      padding: "0.25rem 0.65rem",
+                      fontSize: "0.62rem",
+                      letterSpacing: "0.1em",
+                      textTransform: "uppercase",
+                      ...(STATUS_COLORS[inq.status] ?? {}),
+                    }}
                   >
-                    <BookingActions id={inq.id} currentStatus={inq.status} />
-                  </td>
-                </tr>
-
-                {/* Expanded detail panel */}
-                {isExpanded && (
-                  <tr key={`${inq.id}-detail`}>
-                    <td
-                      colSpan={10}
-                      style={{ padding: 0, borderBottom: "0.5px solid var(--border)" }}
-                    >
-                      <BookingDetailPanel
-                        id={inq.id}
-                        firstName={inq.firstName}
-                        email={inq.email}
-                        sessionType={inq.sessionType}
-                        message={inq.message}
-                        notes={inq.notes}
-                        pricing={inq.pricing}
-                        status={inq.status}
-                        lastRespondedAt={inq.lastRespondedAt}
-                      />
-                    </td>
-                  </tr>
-                )}
-              </>
+                    {inq.status.replace("_", " ")}
+                  </span>
+                </td>
+                
+                {/* Replaced Actions with a generic View button */}
+                <td style={{ ...tdStyle, textAlign: "right", color: "var(--olive)", fontSize: "0.75rem" }}>
+                  View →
+                </td>
+              </tr>
             );
           })}
         </tbody>
