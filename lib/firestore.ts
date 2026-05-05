@@ -17,11 +17,31 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 
 export type Role = "ADMIN" | "CLIENT";
 
+export type LeadStatus =
+  | "PENDING"
+  | "QUALIFIED"
+  | "SENT_PROPOSAL"
+  | "CONTRACT_SENT"
+  | "BOOKED"
+  | "ARCHIVED";
+
+export type LeadSource = "WEBSITE" | "INSTAGRAM" | "REFERRAL" | "GOOGLE" | "OTHER";
+
+export type CommunicationChannel = "EMAIL" | "PHONE" | "SMS" | "IN_PERSON";
+
+export interface CommunicationLogEntry {
+  id: string;
+  timestamp: Timestamp;
+  channel: CommunicationChannel;
+  summary: string;
+  adminUid: string;
+}
+
 export interface UserDoc {
   uid:         string;
   email:       string;
-  displayName?: string | null; // <-- Add | null
-  photoURL?:   string | null;  // <-- Add | null
+  displayName?: string | null;
+  photoURL?:   string | null;
   role:        Role;
   createdAt:   Timestamp;
 }
@@ -40,7 +60,7 @@ export interface PhotoDoc {
   cloudflareUrl:      string;
   cloudflareImageId:  string;
   label?:             string;
-  category?:          string; // "wedding" | "portrait" | "editorial" | "landscape"
+  category?:          string;
   uploadedAt:         Timestamp;
 }
 
@@ -60,28 +80,80 @@ export interface BookingInquiryDoc {
   sessionType:   string;
   preferredDate?: string;
   message:       string;
-  
-  // UPDATED: Kanban status pipeline
-  status:        "PENDING" | "QUALIFIED" | "SENT_PROPOSAL" | "CONTRACT_SENT" | "BOOKED" | "ARCHIVED";
-  
-  // NEW: CRM & Lead Tracking Fields
-  leadSource?:      "WEBSITE" | "INSTAGRAM" | "REFERRAL" | "GOOGLE" | "OTHER";
-  leadScore?:       number; // 0-100 automated scoring
-  internalNotes?:   string;
-  tags?:            string[]; // e.g., ["VIP", "Rush", "Budget-Conscious"]
-  lastContactedAt?: Timestamp;
-  followUpDate?:    Timestamp;
-  estimatedValue?:  number; // Projected package price
-  communicationLog?: {
-    timestamp: Timestamp;
-    channel: "EMAIL" | "PHONE" | "SMS" | "IN_PERSON";
-    summary: string;
-    userId: string; // Who logged it
-  }[];
+
+  // ─── Status & workflow ────────────────────────────────────────────────────
+  status:        LeadStatus;
+  notes:         string;
+  pricing:       string | null;
+
+  // ─── Phase 1: CRM fields ──────────────────────────────────────────────────
+  leadSource?:       LeadSource;
+  leadScore?:        number;          // 0–100, recalculated on mutations
+  tags?:             string[];
+  estimatedValue?:   number;          // projected package price in USD
+  followUpDate?:     Timestamp | null;
+  lastContactedAt?:  Timestamp | null;
+  lastRespondedAt?:  Timestamp | null;
+  communicationLog?: CommunicationLogEntry[];
 
   createdAt:     Timestamp;
   updatedAt:     Timestamp;
 }
+
+// ─── Preset tags available in the tag editor ─────────────────────────────────
+export const PRESET_TAGS = [
+  "VIP",
+  "Rush",
+  "Return Client",
+  "Destination",
+  "High-Budget",
+  "Budget-Conscious",
+  "Referred",
+  "Social Media",
+  "Needs Follow-Up",
+] as const;
+
+// ─── Kanban columns (not including ARCHIVED) ──────────────────────────────────
+export const KANBAN_STATUSES: {
+  id: LeadStatus;
+  label: string;
+  badgeStyle: React.CSSProperties;
+}[] = [
+  {
+    id: "PENDING",
+    label: "New Leads",
+    badgeStyle: { background: "#FEF3C7", color: "#92400E" },
+  },
+  {
+    id: "QUALIFIED",
+    label: "Qualified",
+    badgeStyle: { background: "#E0E7FF", color: "#3730A3" },
+  },
+  {
+    id: "SENT_PROPOSAL",
+    label: "Proposal Sent",
+    badgeStyle: { background: "#DBEAFE", color: "#1D4ED8" },
+  },
+  {
+    id: "CONTRACT_SENT",
+    label: "Contract Out",
+    badgeStyle: { background: "#FED7AA", color: "#9A3412" },
+  },
+  {
+    id: "BOOKED",
+    label: "Booked ✓",
+    badgeStyle: { background: "#D1FAE5", color: "#065F46" },
+  },
+];
+
+export const ALL_STATUSES: LeadStatus[] = [
+  "PENDING",
+  "QUALIFIED",
+  "SENT_PROPOSAL",
+  "CONTRACT_SENT",
+  "BOOKED",
+  "ARCHIVED",
+];
 
 // ─── Collection refs ──────────────────────────────────────────────────────────
 
@@ -90,7 +162,7 @@ export const eventsCol        = () => adminDb.collection("events");
 export const photosCol        = () => adminDb.collection("photos");
 export const eventAccessCol   = () => adminDb.collection("eventAccess");
 export const bookingCol       = () => adminDb.collection("bookingInquiries");
-export const mailCol          = () => adminDb.collection("mail"); // Trigger Email
+export const mailCol          = () => adminDb.collection("mail");
 
 // ─── Users ────────────────────────────────────────────────────────────────────
 
@@ -181,7 +253,6 @@ export async function grantEventAccess(
   eventId: string,
   email: string
 ): Promise<void> {
-  // Idempotent: use a deterministic doc ID so duplicate grants are safe
   const docId = `${eventId}_${userId}`;
   await eventAccessCol().doc(docId).set(
     { userId, eventId, email, createdAt: Timestamp.now() },
@@ -221,11 +292,19 @@ export async function countEventAccess(eventId: string): Promise<number> {
 // ─── Booking Inquiries ────────────────────────────────────────────────────────
 
 export async function createBookingInquiry(
-  data: Omit<BookingInquiryDoc, "id" | "createdAt" | "updatedAt">
+  data: Omit<BookingInquiryDoc, "id" | "createdAt" | "updatedAt" | "leadScore">
 ): Promise<BookingInquiryDoc> {
   const ref = bookingCol().doc();
   const now = Timestamp.now();
-  const full = { ...data, status: "PENDING" as const, createdAt: now, updatedAt: now };
+  const full = {
+    ...data,
+    status: "PENDING" as const,
+    leadScore: 0, // calculated after creation
+    tags: [],
+    communicationLog: [],
+    createdAt: now,
+    updatedAt: now,
+  };
   await ref.set(full);
   return { id: ref.id, ...full };
 }
@@ -253,41 +332,7 @@ export async function countBookingInquiries(status?: string): Promise<number> {
   return snap.data().count;
 }
 
-// Update general CRM fields (tags, notes, expected value, etc.)
-export async function updateBookingCRM(
-  id: string, 
-  data: Partial<Omit<BookingInquiryDoc, "id" | "createdAt" | "updatedAt">>
-): Promise<void> {
-  await bookingCol().doc(id).update({ 
-    ...data, 
-    updatedAt: FieldValue.serverTimestamp() 
-  });
-}
-
-// Append a new log to the communication history using arrayUnion
-export async function logCommunication(
-  id: string, 
-  logEntry: {
-    channel: "EMAIL" | "PHONE" | "SMS" | "IN_PERSON";
-    summary: string;
-    userId: string;
-  }
-): Promise<void> {
-  const now = Timestamp.now();
-  await bookingCol().doc(id).update({
-    communicationLog: FieldValue.arrayUnion({
-      ...logEntry,
-      timestamp: now
-    }),
-    lastContactedAt: now, // Automatically update the last contacted timestamp
-    updatedAt: FieldValue.serverTimestamp()
-  });
-}
-
 // ─── Email (Trigger Email extension) ─────────────────────────────────────────
-// Write a document to the `mail` collection. The Firebase "Trigger Email"
-// Firestore extension automatically picks it up and dispatches it via the
-// SMTP provider you configure in the extension settings.
 
 export async function sendEmail(
   to: string,
@@ -312,9 +357,9 @@ export async function getDashboardCounts() {
   ]);
 
   return {
-    events:          eventsSnap.data().count,
-    photos:          photosSnap.data().count,
+    events:           eventsSnap.data().count,
+    photos:           photosSnap.data().count,
     pendingInquiries: pendingSnap.data().count,
-    clients:         clientsSnap.data().count,
+    clients:          clientsSnap.data().count,
   };
 }
