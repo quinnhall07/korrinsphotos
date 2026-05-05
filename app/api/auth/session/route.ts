@@ -26,7 +26,12 @@ export async function POST(req: NextRequest) {
     // Verify the ID token first
     const decoded = await adminAuth.verifyIdToken(idToken);
 
-    const isAdminEmail      = decoded.email === process.env.ADMIN_EMAIL;
+    const adminEmails = (process.env.ADMIN_EMAILS ?? process.env.ADMIN_EMAIL ?? "")
+      .split(",")
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
+
+    const isAdminEmail = adminEmails.includes((decoded.email ?? "").toLowerCase());
     const alreadyAdminClaim = decoded["role"] === "ADMIN";
 
     // ── First-time admin sign-in ───────────────────────────────────────────
