@@ -138,7 +138,7 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
   const statusStyle =
     ALL_STATUSES.includes(liveStatus)
       ? (KANBAN_STATUSES.find((s) => s.id === liveStatus)?.badgeStyle ??
-         (liveStatus === "ARCHIVED" ? { background: "rgba(42,42,40,0.06)", color: "var(--charcoal-muted)" } : {}))
+        (liveStatus === "ARCHIVED" ? { background: "rgba(42,42,40,0.06)", color: "var(--charcoal-muted)" } : {}))
       : {};
 
   function handleStatusChange(status: LeadStatus) {
@@ -255,8 +255,8 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
     {
       id: "comms",
       label: `Comms${inquiry.communicationLog.length > 0
-          ? ` (${inquiry.communicationLog.length})`
-          : ""
+        ? ` (${inquiry.communicationLog.length})`
+        : ""
         }`,
     },
     { id: "email", label: "Send Email" },
@@ -289,9 +289,9 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
           right: 0,
           bottom: 0,
           background: "rgba(42,42,40,0.35)",
-          zIndex: 90,
-          backdropFilter: "blur(4px)",
-          WebkitBackdropFilter: "blur(4px)",
+          zIndex: 400,
+          backdropFilter: "blur(2px)",
+          WebkitBackdropFilter: "blur(2px)",
           animation: "drawerFadeIn 0.2s ease",
         }}
       />
@@ -304,7 +304,7 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
           right: 0,
           bottom: 0,
           width: "min(560px, calc(100vw - 260px))",
-          zIndex: 91,
+          zIndex: 401,
           background: "var(--white)",
           boxShadow: "-16px 0 48px rgba(42,42,40,0.18)",
           display: "flex",
