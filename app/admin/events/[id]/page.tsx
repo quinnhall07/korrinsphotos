@@ -11,6 +11,9 @@ import { UploadZone } from "./UploadZone";
 import { InvitePanel } from "./InvitePanel";
 import { PhotoGrid } from "./PhotoGrid";
 import { AddToCalendarButton } from "./AddToCalendarButton";
+import { TitleEditor } from "./TitleEditor";
+import { ShootDateEditor } from "./ShootDateEditor";
+import { EventActions } from "./EventActions";
 import type { Metadata } from "next";
 
 export const dynamic = "force-dynamic";
@@ -42,7 +45,7 @@ async function getEventData(eventId: string) {
   const [eventDoc, photosSnap, accessSnap] = await Promise.all([
     adminDb.collection("events").doc(eventId).get(),
     adminDb.collection("events").doc(eventId).collection("photos").orderBy("uploadedAt", "asc").get(),
-    adminDb.collection("eventAccess").where("eventId", "==", eventId).orderBy("createdAt", "asc").get(),
+    adminDb.collection("eventAccess").where("eventId", "==", eventId).get(),
   ]);
 
   if (!eventDoc.exists) return null;
@@ -74,6 +77,11 @@ async function getEventData(eventId: string) {
 
   const eventData = eventDoc.data()!;
 
+  // Parse shoot dates
+  const shootDate = eventData.shootDate?.toDate?.() ?? null;
+  const shootEndDate = eventData.shootEndDate?.toDate?.() ?? null;
+  const calendarDate = shootDate ?? eventData.createdAt?.toDate?.() ?? new Date();
+
   return {
     event: {
       id: eventId,
@@ -82,6 +90,9 @@ async function getEventData(eventId: string) {
       createdAtFormatted: eventData.createdAt?.toDate?.()?.toLocaleDateString("en-US", {
         month: "long", day: "numeric", year: "numeric",
       }) ?? "—",
+      shootDate: shootDate ? shootDate.toISOString().slice(0, 10) : "",
+      shootEndDate: shootEndDate ? shootEndDate.toISOString().slice(0, 10) : "",
+      calendarDate: calendarDate.toISOString(),
     },
     photos,
     clients,
@@ -109,10 +120,13 @@ export default async function EventDetailPage({ params }: Props) {
             <span>/</span>
             <span style={{ color: "var(--charcoal)" }}>{event.title}</span>
           </div>
-          <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "2rem", fontWeight: 300, marginBottom: "0.25rem" }}>
-            {event.title}
-          </h2>
-          <p style={{ fontSize: "0.8rem", color: "var(--charcoal-muted)" }}>
+          <TitleEditor eventId={event.id} initialTitle={event.title} />
+          <ShootDateEditor
+            eventId={event.id}
+            initialShootDate={event.shootDate}
+            initialShootEndDate={event.shootEndDate}
+          />
+          <p style={{ fontSize: "0.8rem", color: "var(--charcoal-muted)", marginTop: "0.5rem" }}>
             {photos.length} photo{photos.length !== 1 ? "s" : ""} · {clients.length} client{clients.length !== 1 ? "s" : ""} · Created {event.createdAtFormatted}
           </p>
         </div>
@@ -120,7 +134,23 @@ export default async function EventDetailPage({ params }: Props) {
         {/* Action buttons */}
         <div style={{ display: "flex", gap: "0.75rem", flexShrink: 0, flexWrap: "wrap" }}>
           {/* Google Calendar button — client component */}
-          <AddToCalendarButton eventTitle={event.title} eventDate={event.createdAt.toISOString()} />
+          <AddToCalendarButton eventTitle={event.title} eventDate={event.calendarDate} />
+
+          <Link
+            href={`/admin/events/${event.id}/gallery`}
+            style={{
+              display: "inline-block",
+              padding: "0.6rem 1.4rem",
+              fontSize: "0.68rem",
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+              color: "var(--charcoal)",
+              border: "0.5px solid var(--border-strong)",
+              textDecoration: "none",
+            }}
+          >
+            Gallery Upload
+          </Link>
 
           <Link
             href={`/gallery/${event.id}`}
@@ -172,6 +202,14 @@ export default async function EventDetailPage({ params }: Props) {
           </div>
         </div>
       )}
+
+      {/* Danger zone — delete event / clear gallery */}
+      <EventActions
+        eventId={event.id}
+        eventTitle={event.title}
+        photoCount={photos.length}
+        clientCount={clients.length}
+      />
     </div>
   );
 }

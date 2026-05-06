@@ -4,6 +4,7 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/session";
 import { adminDb } from "@/lib/firebase-admin";
+import { listRecentActivity } from "@/lib/firestore";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "Dashboard | Admin" };
@@ -116,10 +117,19 @@ async function getDashboardData(): Promise<DashboardData> {
 }
 
 const STATUS_STYLES: Record<string, React.CSSProperties> = {
-  PENDING: { background: "#FEF3C7", color: "#92400E" },
-  REVIEWED: { background: "var(--olive-dim)", color: "var(--olive)" },
-  BOOKED: { background: "#D1FAE5", color: "#065F46" },
-  ARCHIVED: { background: "rgba(42,42,40,0.06)", color: "var(--charcoal-muted)" },
+  PENDING:       { background: "#FEF3C7", color: "#92400E" },
+  QUALIFIED:     { background: "#E0E7FF", color: "#3730A3" },
+  SENT_PROPOSAL: { background: "#DBEAFE", color: "#1D4ED8" },
+  CONTRACT_SENT: { background: "#FED7AA", color: "#9A3412" },
+  BOOKED:        { background: "#D1FAE5", color: "#065F46" },
+  ARCHIVED:      { background: "rgba(42,42,40,0.06)", color: "var(--charcoal-muted)" },
+};
+
+const ACTIVITY_ICONS: Record<string, string> = {
+  LEAD_RECEIVED:  "✉️",
+  STATUS_CHANGED: "⇄",
+  EMAIL_SENT:     "📤",
+  NOTE_ADDED:     "📝",
 };
 
 function getGreeting() {
@@ -137,7 +147,6 @@ export default async function AdminDashboard() {
     data = await getDashboardData();
   } catch (err) {
     console.error("Dashboard data error:", err);
-    // Safe zero-state fallback if Firestore isn't yet connected
     data = {
       activeEventsCount: 0,
       totalPhotosCount: 0,
@@ -147,6 +156,9 @@ export default async function AdminDashboard() {
       recentEvents: [],
     };
   }
+
+  // Activity feed (best-effort — silently empty on fresh projects)
+  const activities = await listRecentActivity(8).catch(() => []);
 
   const {
     activeEventsCount,
@@ -267,100 +279,206 @@ export default async function AdminDashboard() {
         ))}
       </div>
 
-      {/* Recent inquiries */}
+      {/* Two-column lower section */}
       <div
         style={{
-          border: "0.5px solid var(--border)",
-          background: "var(--white)",
+          display: "grid",
+          gridTemplateColumns: "1fr 320px",
+          gap: "1.5rem",
           marginBottom: "2rem",
         }}
       >
+        {/* Recent inquiries */}
         <div
           style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "1.2rem 1.5rem",
-            borderBottom: "0.5px solid var(--border)",
+            border: "0.5px solid var(--border)",
+            background: "var(--white)",
           }}
         >
-          <span
+          <div
             style={{
-              fontSize: "0.72rem",
-              letterSpacing: "0.14em",
-              textTransform: "uppercase",
-              color: "var(--charcoal)",
-              fontWeight: 500,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "1.2rem 1.5rem",
+              borderBottom: "0.5px solid var(--border)",
             }}
           >
-            Recent Booking Inquiries
-          </span>
-          <Link href="/admin/bookings" style={btnOutlineDark}>
-            View All
-          </Link>
+            <span
+              style={{
+                fontSize: "0.72rem",
+                letterSpacing: "0.14em",
+                textTransform: "uppercase",
+                color: "var(--charcoal)",
+                fontWeight: 500,
+              }}
+            >
+              Recent Booking Inquiries
+            </span>
+            <Link href="/admin/bookings" style={btnOutlineDark}>
+              View All
+            </Link>
+          </div>
+
+          {recentInquiries.length === 0 ? (
+            <p
+              style={{
+                padding: "2rem",
+                textAlign: "center",
+                color: "var(--charcoal-muted)",
+                fontSize: "0.85rem",
+              }}
+            >
+              No inquiries yet. They&apos;ll appear here after clients submit the
+              booking form.
+            </p>
+          ) : (
+            <table
+              style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                fontSize: "0.85rem",
+              }}
+            >
+              <thead>
+                <tr>
+                  {["Name", "Session Type", "Date Requested", "Status", ""].map(
+                    (h) => (
+                      <th key={h} style={thStyle}>
+                        {h}
+                      </th>
+                    )
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {recentInquiries.map((inq) => (
+                  <tr key={inq.id}>
+                    <td style={tdStyle}>{inq.name}</td>
+                    <td style={tdStyle}>{inq.sessionType}</td>
+                    <td style={tdStyle}>{inq.preferredDate ?? "—"}</td>
+                    <td style={tdStyle}>
+                      <span
+                        style={{
+                          display: "inline-block",
+                          padding: "0.25rem 0.65rem",
+                          fontSize: "0.62rem",
+                          letterSpacing: "0.1em",
+                          textTransform: "uppercase",
+                          ...(STATUS_STYLES[inq.status] ?? {}),
+                        }}
+                      >
+                        {inq.status.replace("_", " ")}
+                      </span>
+                    </td>
+                    <td style={tdStyle}>
+                      <Link href="/admin/bookings" style={btnOutlineDark}>
+                        Review
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
 
-        {recentInquiries.length === 0 ? (
-          <p
+        {/* Activity feed */}
+        <div
+          style={{
+            border: "0.5px solid var(--border)",
+            background: "var(--white)",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <div
             style={{
-              padding: "2rem",
-              textAlign: "center",
-              color: "var(--charcoal-muted)",
-              fontSize: "0.85rem",
+              padding: "1.2rem 1.5rem",
+              borderBottom: "0.5px solid var(--border)",
             }}
           >
-            No inquiries yet. They&apos;ll appear here after clients submit the
-            booking form.
-          </p>
-        ) : (
-          <table
-            style={{
-              width: "100%",
-              borderCollapse: "collapse",
-              fontSize: "0.85rem",
-            }}
-          >
-            <thead>
-              <tr>
-                {["Name", "Session Type", "Date Requested", "Status", ""].map(
-                  (h) => (
-                    <th key={h} style={thStyle}>
-                      {h}
-                    </th>
-                  )
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {recentInquiries.map((inq) => (
-                <tr key={inq.id}>
-                  <td style={tdStyle}>{inq.name}</td>
-                  <td style={tdStyle}>{inq.sessionType}</td>
-                  <td style={tdStyle}>{inq.preferredDate ?? "—"}</td>
-                  <td style={tdStyle}>
+            <span
+              style={{
+                fontSize: "0.72rem",
+                letterSpacing: "0.14em",
+                textTransform: "uppercase",
+                color: "var(--charcoal)",
+                fontWeight: 500,
+              }}
+            >
+              Recent Activity
+            </span>
+          </div>
+
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            {activities.length === 0 ? (
+              <p
+                style={{
+                  padding: "2rem",
+                  textAlign: "center",
+                  color: "var(--charcoal-muted)",
+                  fontSize: "0.82rem",
+                  fontStyle: "italic",
+                }}
+              >
+                Activity will appear here as you manage leads and galleries.
+              </p>
+            ) : (
+              <div style={{ padding: "0.5rem 0" }}>
+                {activities.map((activity) => (
+                  <div
+                    key={activity.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: "0.75rem",
+                      padding: "0.75rem 1.2rem",
+                      borderBottom: "0.5px solid var(--border)",
+                    }}
+                  >
                     <span
                       style={{
-                        display: "inline-block",
-                        padding: "0.25rem 0.65rem",
-                        fontSize: "0.62rem",
-                        letterSpacing: "0.1em",
-                        textTransform: "uppercase",
-                        ...(STATUS_STYLES[inq.status] ?? {}),
+                        fontSize: "1rem",
+                        flexShrink: 0,
+                        marginTop: "0.1rem",
+                        opacity: 0.8,
                       }}
                     >
-                      {inq.status}
+                      {ACTIVITY_ICONS[activity.action] ?? "•"}
                     </span>
-                  </td>
-                  <td style={tdStyle}>
-                    <Link href="/admin/bookings" style={btnOutlineDark}>
-                      Review
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p
+                        style={{
+                          fontSize: "0.78rem",
+                          color: "var(--charcoal)",
+                          lineHeight: 1.5,
+                          marginBottom: "0.2rem",
+                        }}
+                      >
+                        {activity.message}
+                      </p>
+                      <p
+                        style={{
+                          fontSize: "0.65rem",
+                          color: "var(--charcoal-muted)",
+                          letterSpacing: "0.04em",
+                        }}
+                      >
+                        {activity.timestamp?.toDate?.()?.toLocaleString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        }) ?? "—"}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Recent events */}
@@ -441,10 +559,7 @@ export default async function AdminDashboard() {
                   <td style={tdStyle}>{ev.clientCount}</td>
                   <td style={tdStyle}>{ev.createdAt}</td>
                   <td style={tdStyle}>
-                    <Link
-                      href={`/admin/events/${ev.id}`}
-                      style={btnOutlineDark}
-                    >
+                    <Link href={`/admin/events/${ev.id}`} style={btnOutlineDark}>
                       Manage
                     </Link>
                   </td>

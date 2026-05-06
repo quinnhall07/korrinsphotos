@@ -17,13 +17,14 @@ type UserRow = {
   createdAt: string;
 };
 
+// AFTER
 async function getUsers(): Promise<UserRow[]> {
-  const snap = await adminDb
-    .collection("users")
-    .orderBy("createdAt", "asc")
-    .get();
+  // Fetch all users without orderBy so documents missing createdAt
+  // are not silently excluded by Firestore (which omits docs that
+  // lack the field used in orderBy). Sort in memory instead.
+  const snap = await adminDb.collection("users").get();
 
-  return Promise.all(
+  const rows = await Promise.all(
     snap.docs.map(async (doc) => {
       const data = doc.data();
       const accessSnap = await adminDb
@@ -32,21 +33,29 @@ async function getUsers(): Promise<UserRow[]> {
         .count()
         .get();
 
+      const createdAtDate: Date | null = data.createdAt?.toDate?.() ?? null;
+
       return {
         uid: doc.id,
         email: data.email as string,
         role: data.role as string,
         eventCount: accessSnap.data().count,
-        createdAt: data.createdAt?.toDate
-          ? data.createdAt.toDate().toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            })
+        createdAt: createdAtDate
+          ? createdAtDate.toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          })
           : "—",
+        _createdAtMs: createdAtDate?.getTime() ?? 0,
       };
     })
   );
+
+  // Sort oldest-first in memory; users without createdAt sort to the top
+  return rows
+    .sort((a, b) => a._createdAtMs - b._createdAtMs)
+    .map(({ _createdAtMs: _, ...row }) => row);
 }
 
 const ROLE_STYLES: Record<string, React.CSSProperties> = {
@@ -56,8 +65,45 @@ const ROLE_STYLES: Record<string, React.CSSProperties> = {
 
 export default async function UsersPage() {
   const session = await requireAdmin();
-  const users = await getUsers();
 
+  let users: UserRow[] = [];
+  let error: string | null = null;
+
+  try {
+    users = await getUsers();
+  } catch (err: unknown) {
+    console.error("getUsers error:", err);
+    error = err instanceof Error ? err.message : "Failed to load users from Firestore.";
+  }
+
+  if (error) {
+    return (
+      <div className="page-fade-in">
+        <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "2rem", fontWeight: 300, marginBottom: "1rem" }}>
+          User Management
+        </h2>
+        <div
+          style={{
+            padding: "2rem",
+            border: "0.5px solid #FCA5A5",
+            background: "#FEF2F2",
+            color: "#991B1B",
+            fontSize: "0.88rem",
+            lineHeight: 1.7,
+          }}
+        >
+          <strong>Error loading users</strong>
+          <br />
+          {error}
+          <br />
+          <br />
+          <span style={{ fontSize: "0.78rem", color: "#B91C1C" }}>
+            Check that your Firestore indexes are configured and that FIREBASE_* environment variables are set correctly.
+          </span>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="page-fade-in">
       <div

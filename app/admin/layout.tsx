@@ -17,12 +17,12 @@ export default async function AdminLayout({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "260px 1fr",
+          gridTemplateColumns: "200px 1fr",
           minHeight: "calc(100vh - 72px)",
         }}
       >
         <AdminSidebar />
-        <div style={{ padding: "3rem 3.5rem", overflowX: "auto" }}>
+        <div style={{ padding: "1.5rem 2rem", overflowX: "auto" }}>
           {children}
         </div>
       </div>

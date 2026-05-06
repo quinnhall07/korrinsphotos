@@ -56,6 +56,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Handles the two-step flow needed when admin claims are set for the
   // first time so that the resulting cookie embeds role:"ADMIN".
   const afterSignIn = useCallback(async (): Promise<{ role: string }> => {
+    if (!auth) throw new Error("Firebase client auth is not configured.");
     const currentUser = auth.currentUser;
     if (!currentUser) throw new Error("No user signed in");
 
@@ -97,6 +98,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // a magic-link URL before the complete page mounts).
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (!auth) {
+      setLoading(false);
+      return;
+    }
     if (!isSignInWithEmailLink(auth, window.location.href)) return;
 
     const email = window.localStorage.getItem("emailForSignIn");
@@ -116,6 +121,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Keep local state in sync with Firebase Auth
   useEffect(() => {
+    if (!auth) {
+      setLoading(false);
+      return;
+    }
     const unsub = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
       setLoading(false);
@@ -124,7 +133,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
-    await firebaseSignOut(auth);
+    if (auth) await firebaseSignOut(auth);
     await fetch("/api/auth/signout", { method: "POST" });
     setUser(null);
     setLoading(false);

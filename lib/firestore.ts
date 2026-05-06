@@ -9,70 +9,114 @@
 //   eventAccess/{docId}       — links userId ↔ eventId
 //   bookingInquiries/{id}     — public booking form submissions
 //   mail/{id}                 — picked up by Firebase "Trigger Email" extension
+//   activityFeed/{id}         — admin activity log
 
 import { adminDb } from "@/lib/firebase-admin";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import type { LeadStatus, LeadSource, CommunicationChannel } from "@/lib/booking-kanban";
+
+export type { LeadStatus, LeadSource, CommunicationChannel } from "@/lib/booking-kanban";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type Role = "ADMIN" | "CLIENT";
 
+export type ActivityAction =
+  | "LEAD_RECEIVED"
+  | "STATUS_CHANGED"
+  | "EMAIL_SENT"
+  | "NOTE_ADDED";
+
+export interface CommunicationLogEntry {
+  id: string;
+  timestamp: Timestamp;
+  channel: CommunicationChannel;
+  summary: string;
+  adminUid: string;
+}
+
+export interface ActivityDoc {
+  id: string;
+  action: ActivityAction;
+  message: string;
+  timestamp: Timestamp;
+  metadata?: Record<string, unknown>;
+}
+
 export interface UserDoc {
-  uid:         string;
-  email:       string;
-  displayName?: string | null; // <-- Add | null
-  photoURL?:   string | null;  // <-- Add | null
-  role:        Role;
-  createdAt:   Timestamp;
+  uid: string;
+  email: string;
+  displayName?: string | null;
+  photoURL?: string | null;
+  role: Role;
+  createdAt: Timestamp;
 }
 
 export interface EventDoc {
-  id:            string;
-  title:         string;
+  id: string;
+  title: string;
   coverPhotoUrl?: string;
-  createdAt:     Timestamp;
-  updatedAt:     Timestamp;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
 }
 
 export interface PhotoDoc {
-  id:                 string;
-  eventId:            string;
-  cloudflareUrl:      string;
-  cloudflareImageId:  string;
-  label?:             string;
-  category?:          string; // "wedding" | "portrait" | "editorial" | "landscape"
-  uploadedAt:         Timestamp;
+  id: string;
+  eventId: string;
+  cloudflareUrl: string;
+  cloudflareImageId: string;
+  label?: string;
+  category?: string;
+  uploadedAt: Timestamp;
 }
 
 export interface EventAccessDoc {
-  id:        string;
-  userId:    string;
-  eventId:   string;
-  email:     string;
+  id: string;
+  userId: string;
+  eventId: string;
+  email: string;
   createdAt: Timestamp;
 }
 
 export interface BookingInquiryDoc {
-  id:            string;
-  firstName:     string;
-  lastName:      string;
-  email:         string;
-  sessionType:   string;
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  sessionType: string;
   preferredDate?: string;
-  message:       string;
-  status:        "PENDING" | "REVIEWED" | "BOOKED" | "ARCHIVED";
-  createdAt:     Timestamp;
-  updatedAt:     Timestamp;
+  message: string;
+
+  // ─── Status & workflow ────────────────────────────────────────────────────
+  status: LeadStatus;
+  notes: string;
+  pricing: string | null;
+
+  // ─── Phase 1: CRM fields ──────────────────────────────────────────────────
+  leadSource?: LeadSource;
+  leadScore?: number;          // 0–100, recalculated on mutations
+  tags?: string[];
+  estimatedValue?: number;          // projected package price in USD
+  followUpDate?: Timestamp | null;
+  lastContactedAt?: Timestamp | null;
+  lastRespondedAt?: Timestamp | null;
+  communicationLog?: CommunicationLogEntry[];
+
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
 }
+
+
 
 // ─── Collection refs ──────────────────────────────────────────────────────────
 
-export const usersCol         = () => adminDb.collection("users");
-export const eventsCol        = () => adminDb.collection("events");
-export const photosCol        = () => adminDb.collection("photos");
-export const eventAccessCol   = () => adminDb.collection("eventAccess");
-export const bookingCol       = () => adminDb.collection("bookingInquiries");
-export const mailCol          = () => adminDb.collection("mail"); // Trigger Email
+export const usersCol = () => adminDb.collection("users");
+export const eventsCol = () => adminDb.collection("events");
+export const photosCol = () => adminDb.collection("photos");
+export const eventAccessCol = () => adminDb.collection("eventAccess");
+export const bookingCol = () => adminDb.collection("bookingInquiries");
+export const mailCol = () => adminDb.collection("mail");
+export const activityCol = () => adminDb.collection("activityFeed");
 
 // ─── Users ────────────────────────────────────────────────────────────────────
 
@@ -81,11 +125,20 @@ export async function getUser(uid: string): Promise<UserDoc | null> {
   return snap.exists ? ({ uid, ...snap.data() } as UserDoc) : null;
 }
 
+// AFTER
 export async function upsertUser(uid: string, data: Partial<UserDoc>): Promise<void> {
-  await usersCol().doc(uid).set(
-    { ...data, updatedAt: FieldValue.serverTimestamp() },
-    { merge: true }
-  );
+  const ref = usersCol().doc(uid);
+  await adminDb.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const now = FieldValue.serverTimestamp();
+    if (!snap.exists) {
+      // First write — stamp both createdAt and updatedAt
+      tx.set(ref, { ...data, createdAt: now, updatedAt: now });
+    } else {
+      // Subsequent writes — never overwrite createdAt
+      tx.set(ref, { ...data, updatedAt: now }, { merge: true });
+    }
+  });
 }
 
 export async function listUsers(): Promise<UserDoc[]> {
@@ -163,7 +216,6 @@ export async function grantEventAccess(
   eventId: string,
   email: string
 ): Promise<void> {
-  // Idempotent: use a deterministic doc ID so duplicate grants are safe
   const docId = `${eventId}_${userId}`;
   await eventAccessCol().doc(docId).set(
     { userId, eventId, email, createdAt: Timestamp.now() },
@@ -178,7 +230,7 @@ export async function revokeEventAccess(userId: string, eventId: string): Promis
 
 export async function userHasEventAccess(userId: string, eventId: string): Promise<boolean> {
   const docId = `${eventId}_${userId}`;
-  const snap  = await eventAccessCol().doc(docId).get();
+  const snap = await eventAccessCol().doc(docId).get();
   return snap.exists;
 }
 
@@ -203,11 +255,19 @@ export async function countEventAccess(eventId: string): Promise<number> {
 // ─── Booking Inquiries ────────────────────────────────────────────────────────
 
 export async function createBookingInquiry(
-  data: Omit<BookingInquiryDoc, "id" | "createdAt" | "updatedAt">
+  data: Omit<BookingInquiryDoc, "id" | "createdAt" | "updatedAt" | "leadScore">
 ): Promise<BookingInquiryDoc> {
   const ref = bookingCol().doc();
   const now = Timestamp.now();
-  const full = { ...data, status: "PENDING" as const, createdAt: now, updatedAt: now };
+  const full = {
+    ...data,
+    status: "PENDING" as const,
+    leadScore: 0, // calculated after creation
+    tags: [],
+    communicationLog: [],
+    createdAt: now,
+    updatedAt: now,
+  };
   await ref.set(full);
   return { id: ref.id, ...full };
 }
@@ -235,10 +295,42 @@ export async function countBookingInquiries(status?: string): Promise<number> {
   return snap.data().count;
 }
 
+// ─── Activity Feed ────────────────────────────────────────────────────────────
+
+/**
+ * Logs an event to the activityFeed collection for display in the admin
+ * dashboard's Recent Activity widget.
+ */
+export async function logActivity(
+  action: ActivityAction,
+  message: string,
+  metadata?: Record<string, unknown>
+): Promise<void> {
+  await activityCol().add({
+    action,
+    message,
+    timestamp: FieldValue.serverTimestamp(),
+    ...(metadata ? { metadata } : {}),
+  });
+}
+
+/**
+ * Returns the most recent activity entries for the admin dashboard feed.
+ */
+export async function listRecentActivity(limit = 8): Promise<ActivityDoc[]> {
+  try {
+    const snap = await activityCol()
+      .orderBy("timestamp", "desc")
+      .limit(limit)
+      .get();
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() } as ActivityDoc));
+  } catch {
+    // Collection may not exist yet on a fresh project
+    return [];
+  }
+}
+
 // ─── Email (Trigger Email extension) ─────────────────────────────────────────
-// Write a document to the `mail` collection. The Firebase "Trigger Email"
-// Firestore extension automatically picks it up and dispatches it via the
-// SMTP provider you configure in the extension settings.
 
 export async function sendEmail(
   to: string,
@@ -263,9 +355,9 @@ export async function getDashboardCounts() {
   ]);
 
   return {
-    events:          eventsSnap.data().count,
-    photos:          photosSnap.data().count,
+    events: eventsSnap.data().count,
+    photos: photosSnap.data().count,
     pendingInquiries: pendingSnap.data().count,
-    clients:         clientsSnap.data().count,
+    clients: clientsSnap.data().count,
   };
 }

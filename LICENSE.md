@@ -1,8 +1,8 @@
 # PROPRIETARY LICENSE
 
-Copyright (c) 2026 Korrin and Daniel Quinn Hall. All Rights Reserved.
+Copyright (c) 2026 Korrin Green and Daniel Quinn Hall. All Rights Reserved.
 
-This repository, website, and all of its associated contents—including but not limited to source code, design assets, architecture, images, and documentation—are the exclusive property of Korrin ("Korrin's Photos") and the principal developer, Daniel Quinn Hall.
+This repository, website, and all of its associated contents—including but not limited to source code, design assets, architecture, images, and documentation—are the exclusive property of Korrin Green ("Korrin's Photography") and the principal developer, Daniel Quinn Hall.
 
 This is NOT open-source software. 
 

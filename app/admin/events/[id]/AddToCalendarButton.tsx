@@ -26,7 +26,7 @@ function buildGoogleCalendarUrl(title: string, dateIso: string): string {
     action: "TEMPLATE",
     text: title,
     dates: `${dateOnly}/${dateOnly}`,
-    details: `Photography session: ${title}. Managed via Korrin's Photos.`,
+    details: `Photography session: ${title}. Managed via Korrin's Photography.`,
   });
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
@@ -39,7 +39,7 @@ function buildOutlookUrl(title: string, dateIso: string): string {
     startdt: date.toISOString().split("T")[0],
     enddt: date.toISOString().split("T")[0],
     subject: title,
-    body: `Photography session: ${title}. Managed via Korrin's Photos.`,
+    body: `Photography session: ${title}. Managed via Korrin's Photography.`,
   });
   return `https://outlook.live.com/calendar/0/deeplink/compose?${params.toString()}`;
 }
@@ -147,12 +147,12 @@ export function AddToCalendarButton({ eventTitle, eventDate }: AddToCalendarButt
               const ics = [
                 "BEGIN:VCALENDAR",
                 "VERSION:2.0",
-                "PRODID:-//Korrin's Photos//EN",
+                "PRODID:-//Korrin's Photography//EN",
                 "BEGIN:VEVENT",
                 `DTSTART;VALUE=DATE:${dateStr}`,
                 `DTEND;VALUE=DATE:${dateStr}`,
                 `SUMMARY:${eventTitle}`,
-                `DESCRIPTION:Photography session managed via Korrin's Photos.`,
+                `DESCRIPTION:Photography session managed via Korrin's Photography.`,
                 "END:VEVENT",
                 "END:VCALENDAR",
               ].join("\r\n");

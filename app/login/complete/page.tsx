@@ -13,6 +13,10 @@ export default function CompleteLogin() {
 
   useEffect(() => {
     async function completeSignIn() {
+      if (!firebaseAuth) {
+        router.replace("/login?error=1");
+        return;
+      }
       if (isSignInWithEmailLink(firebaseAuth, window.location.href)) {
         const email = window.localStorage.getItem("emailForSignIn");
         if (email) {

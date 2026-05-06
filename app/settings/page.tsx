@@ -7,7 +7,7 @@ import { useState, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 import { updateProfile } from "firebase/auth";
-import { firebaseAuth } from "@/lib/firebase";
+import { requireFirebaseAuth } from "@/lib/firebase";
 
 type NotificationSettings = {
   galleryAlerts: boolean;
@@ -56,7 +56,9 @@ export default function SettingsPage() {
     setSaveStatus("saving");
     try {
       // Update Firebase Auth display name
-      await updateProfile(firebaseAuth.currentUser!, { displayName });
+      const auth = requireFirebaseAuth();
+      if (!auth.currentUser) throw new Error("No current Firebase user");
+      await updateProfile(auth.currentUser, { displayName });
 
       // Save extended settings to localStorage (in production, write to Firestore)
       localStorage.setItem(`settings_${user.uid}`, JSON.stringify({
@@ -285,7 +287,7 @@ export default function SettingsPage() {
             {/* ── Connected Accounts ── */}
             {activeSection === "connected" && (
               <div>
-                <SectionHeader title="Connected Accounts" subtitle="Manage the services linked to your Korrin's Photos account." />
+                <SectionHeader title="Connected Accounts" subtitle="Manage the services linked to your Korrin's Photography account." />
 
                 <div style={{ border: "0.5px solid var(--border)", overflow: "hidden" }}>
                   {Object.entries(PROVIDER_LABELS).map(([providerId, { label, icon }], i, arr) => {
