@@ -2,16 +2,16 @@
 
 // app/admin/bookings/LeadDetailDrawer.tsx
 // Slide-over panel that opens when a Kanban card (or table row) is clicked.
-// Shows all inquiry details, communication history, tag editor, notes, and email composer.
 //
-// Fixes applied:
-//   • Bug 2 — Move button label now reflects live local status (not stale prop)
-//   • Bug 3 — Backdrop is offset to avoid the fixed navbar (72px top) and the
-//              admin sidebar (260px left) so both remain visible and interactive
-//   • Bug 4 — eventId / eventName are tracked in local state so the linked-event
-//              link updates immediately after selection, before the drawer closes
+// KEY FIX: The entire backdrop + drawer is rendered via ReactDOM.createPortal
+// into document.body. This is required because the admin layout's content div
+// has `overflowX: "auto"`, which creates a new containing block and breaks
+// `position: fixed` — making it behave like `position: absolute` relative to
+// that scrolling container instead of the viewport. Portalling to body escapes
+// all ancestor overflow/transform/will-change stacking contexts entirely.
 
 import { useState, useTransition, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import {
   updateBookingStatus,
@@ -27,7 +27,12 @@ import { CommunicationLogger } from "./CommunicationLogger";
 import { EmailTemplateSelector } from "./EmailTemplateSelector";
 import { LeadScoreBadge } from "./LeadScoreBadge";
 import { toast } from "@/components/ui/Toaster";
-import { KANBAN_STATUSES, ALL_STATUSES, type LeadStatus, type LeadSource } from "@/lib/booking-kanban";
+import {
+  KANBAN_STATUSES,
+  ALL_STATUSES,
+  type LeadStatus,
+  type LeadSource,
+} from "@/lib/booking-kanban";
 import type { KanbanInquiry } from "./KanbanCard";
 
 interface LeadDetailDrawerProps {
@@ -44,9 +49,14 @@ const CHANNEL_ICONS: Record<string, string> = {
   IN_PERSON: "🤝",
 };
 
-const LEAD_SOURCES: LeadSource[] = ["WEBSITE", "INSTAGRAM", "REFERRAL", "GOOGLE", "OTHER"];
+const LEAD_SOURCES: LeadSource[] = [
+  "WEBSITE",
+  "INSTAGRAM",
+  "REFERRAL",
+  "GOOGLE",
+  "OTHER",
+];
 
-// Maps a status to the next logical step in the pipeline
 const SESSION_NEXT: Record<string, LeadStatus> = {
   PENDING: "QUALIFIED",
   QUALIFIED: "SENT_PROPOSAL",
@@ -56,9 +66,17 @@ const SESSION_NEXT: Record<string, LeadStatus> = {
   ARCHIVED: "PENDING",
 };
 
+// Navbar height and sidebar width — must match app/admin/layout.tsx
+const NAVBAR_H = 72;
+const SIDEBAR_W = 260;
+
 export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
   const router = useRouter();
   const needsRefresh = { current: false };
+
+  // SSR guard: createPortal requires document to exist
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
 
   const handleClose = useCallback(() => {
     if (needsRefresh.current) router.refresh();
@@ -68,14 +86,9 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
   const [tab, setTab] = useState<Tab>("overview");
   const [isPending, startTransition] = useTransition();
 
-  // ── Bug 2: track live status in local state so the Move button updates
-  //    immediately after a successful transition without waiting for a full
-  //    drawer close + reopen cycle.
   const [liveStatus, setLiveStatus] = useState<LeadStatus>(
     (inquiry?.status as LeadStatus) ?? "PENDING"
   );
-
-  // ── Bug 4: track event link in local state for immediate UI feedback
   const [liveEventId, setLiveEventId] = useState<string | null>(
     inquiry?.eventId ?? null
   );
@@ -83,7 +96,6 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
     inquiry?.eventName ?? null
   );
 
-  // Notes / pricing form state
   const [notes, setNotes] = useState(inquiry?.notes ?? "");
   const [pricing, setPricing] = useState(inquiry?.pricing ?? "");
   const [estimatedValue, setEstimated] = useState<string>(
@@ -91,14 +103,12 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
   );
   const [followUp, setFollowUp] = useState(inquiry?.followUpDate ?? "");
 
-  // Email compose state
   const [emailSubject, setEmailSubject] = useState(
     `Re: Your ${inquiry?.sessionType ?? ""} Inquiry`
   );
   const [emailBody, setEmailBody] = useState("");
   const [isSendingEmail, setIsSendingEmail] = useState(false);
 
-  // Re-sync all local state when the inquiry prop changes (new card opened)
   useEffect(() => {
     if (!inquiry) return;
     setLiveStatus(inquiry.status as LeadStatus);
@@ -113,7 +123,6 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
     setTab("overview");
   }, [inquiry?.id]);
 
-  // Close on Escape
   useEffect(() => {
     function handler(e: KeyboardEvent) {
       if (e.key === "Escape") handleClose();
@@ -122,19 +131,17 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
     return () => window.removeEventListener("keydown", handler);
   }, [handleClose]);
 
-  if (!inquiry) return null;
+  if (!inquiry || !mounted) return null;
 
-  // Derive display values from local status (Bug 2)
   const nextStatus = SESSION_NEXT[liveStatus];
   const nextLabel = KANBAN_STATUSES.find((s) => s.id === nextStatus)?.label;
   const statusStyle =
     KANBAN_STATUSES.find((s) => s.id === liveStatus)?.badgeStyle ?? {};
 
-  // ── Status change — updates local state immediately (Bug 2)
   function handleStatusChange(status: LeadStatus) {
     startTransition(async () => {
       await updateBookingStatus(inquiry!.id, status);
-      setLiveStatus(status); // ← instant label update
+      setLiveStatus(status);
       toast(
         `Moved to ${KANBAN_STATUSES.find((s) => s.id === status)?.label ?? status}`
       );
@@ -193,18 +200,14 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
     });
   }
 
-  // ── Bug 4: persist event link and update local display state immediately
   function handleLinkEvent(e: React.ChangeEvent<HTMLSelectElement>) {
     const selectedEventId = e.target.value || null;
-    // Capture the option's label text for optimistic display
-    const selectedOption =
-      e.target.selectedOptions[0]?.text ?? null;
+    const selectedOption = e.target.selectedOptions[0]?.text ?? null;
     const selectedEventName =
       selectedEventId && selectedOption !== "— No event —"
         ? selectedOption
         : null;
 
-    // Optimistic local update so the link renders right away
     setLiveEventId(selectedEventId);
     setLiveEventName(selectedEventName);
 
@@ -214,7 +217,6 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
         toast(selectedEventId ? "Event linked ✓" : "Event unlinked");
         needsRefresh.current = true;
       } else {
-        // Revert optimistic update on failure
         setLiveEventId(inquiry!.eventId ?? null);
         setLiveEventName(inquiry!.eventName ?? null);
         toast(result.error ?? "Failed.");
@@ -250,43 +252,52 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
     {
       id: "comms",
       label: `Comms${inquiry.communicationLog.length > 0
-        ? ` (${inquiry.communicationLog.length})`
-        : ""
+          ? ` (${inquiry.communicationLog.length})`
+          : ""
         }`,
     },
     { id: "email", label: "Send Email" },
   ];
 
-  // ── Bug 3: the admin layout is a 260px sidebar + content grid sitting below
-  //    the 72px navbar. We want the backdrop to cover only the content column
-  //    (right of sidebar) and below the navbar, leaving both fully interactive.
-  const SIDEBAR_W = 260;
-  const NAVBAR_H = 72;
+  // ─── The actual drawer JSX ─────────────────────────────────────────────────
+  // Portalled to document.body so position:fixed uses the true viewport,
+  // unaffected by any ancestor overflow, transform, or will-change property.
 
-  return (
+  const drawerContent = (
     <>
-      {/* Backdrop: covers only the content area (right of sidebar, below navbar) */}
+      <style>{`
+        @keyframes slideInRight {
+          from { transform: translateX(40px); opacity: 0; }
+          to   { transform: translateX(0);    opacity: 1; }
+        }
+        @keyframes drawerFadeIn {
+          from { opacity: 0; }
+          to   { opacity: 1; }
+        }
+      `}</style>
+
+      {/* Backdrop — covers only the content area: right of sidebar, below navbar */}
       <div
         onClick={handleClose}
         style={{
           position: "fixed",
-          top: 72,
-          left: 260,
+          top: NAVBAR_H,
+          left: SIDEBAR_W,
           right: 0,
           bottom: 0,
           background: "rgba(42,42,40,0.35)",
           zIndex: 400,
           backdropFilter: "blur(2px)",
           WebkitBackdropFilter: "blur(2px)",
-          animation: "fadeIn 0.2s ease",
+          animation: "drawerFadeIn 0.2s ease",
         }}
       />
 
-      {/* Drawer: hugs right edge, starts below navbar, fills to bottom */}
+      {/* Drawer panel — hugs right edge, starts below navbar, fills to bottom */}
       <div
         style={{
           position: "fixed",
-          top: 72,
+          top: NAVBAR_H,
           right: 0,
           bottom: 0,
           width: "min(560px, calc(100vw - 260px))",
@@ -299,14 +310,7 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
           animation: "slideInRight 0.28s cubic-bezier(0.25,0.46,0.45,0.94)",
         }}
       >
-        <style>{`
-          @keyframes slideInRight {
-            from { transform: translateX(40px); opacity: 0; }
-            to   { transform: translateX(0); opacity: 1; }
-          }
-        `}</style>
-
-        {/* Header */}
+        {/* ── Header ── */}
         <div
           style={{
             display: "flex",
@@ -319,7 +323,6 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
           }}
         >
           <div style={{ flex: 1, minWidth: 0 }}>
-            {/* Status badge — reads from liveStatus (Bug 2) */}
             <div
               style={{
                 display: "flex",
@@ -382,7 +385,7 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
           </button>
         </div>
 
-        {/* Quick action bar — Move button reads nextStatus from liveStatus (Bug 2) */}
+        {/* ── Quick action bar ── */}
         <div
           style={{
             display: "flex",
@@ -414,7 +417,6 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
             </button>
           )}
 
-          {/* Full status select for arbitrary transitions */}
           <select
             value={liveStatus}
             onChange={(e) => handleStatusChange(e.target.value as LeadStatus)}
@@ -481,7 +483,7 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
           </button>
         </div>
 
-        {/* Tabs */}
+        {/* ── Tabs ── */}
         <div
           style={{
             display: "flex",
@@ -501,17 +503,13 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                 cursor: "pointer",
                 color:
                   tab === t.id ? "var(--charcoal)" : "var(--charcoal-muted)",
-                borderBottom:
-                  tab === t.id
-                    ? "1.5px solid var(--olive)"
-                    : "1.5px solid transparent",
-                marginBottom: "-0.5px",
                 background: "none",
                 border: "none",
                 borderBottomStyle: "solid",
                 borderBottomWidth: "1.5px",
                 borderBottomColor:
                   tab === t.id ? "var(--olive)" : "transparent",
+                marginBottom: "-0.5px",
                 fontFamily: "'Jost', sans-serif",
                 transition: "color 0.15s",
                 whiteSpace: "nowrap",
@@ -522,10 +520,10 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
           ))}
         </div>
 
-        {/* Scrollable content */}
+        {/* ── Scrollable content ── */}
         <div style={{ flex: 1, overflowY: "auto", padding: "1.25rem 1.5rem" }}>
 
-          {/* ── OVERVIEW ── */}
+          {/* OVERVIEW */}
           {tab === "overview" && (
             <div>
               <div
@@ -542,50 +540,23 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                   { label: "Received", value: inquiry.createdAt },
                   { label: "Lead Source", value: inquiry.leadSource ?? "—" },
                   ...(inquiry.estimatedValue
-                    ? [
-                      {
-                        label: "Est. Value",
-                        value: `$${inquiry.estimatedValue.toLocaleString()}`,
-                      },
-                    ]
+                    ? [{ label: "Est. Value", value: `$${inquiry.estimatedValue.toLocaleString()}` }]
                     : []),
                   ...(inquiry.pricing
                     ? [{ label: "Quoted Pricing", value: inquiry.pricing }]
                     : []),
                   ...(inquiry.followUpDate
-                    ? [
-                      {
-                        label: "Follow-Up",
-                        value: new Date(inquiry.followUpDate).toLocaleDateString(
-                          "en-US",
-                          { month: "short", day: "numeric", year: "numeric" }
-                        ),
-                      },
-                    ]
+                    ? [{ label: "Follow-Up", value: new Date(inquiry.followUpDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) }]
                     : []),
                   ...(inquiry.lastRespondedAt
                     ? [{ label: "Last Responded", value: inquiry.lastRespondedAt }]
                     : []),
                 ].map(({ label, value }) => (
                   <div key={label}>
-                    <p
-                      style={{
-                        fontSize: "0.6rem",
-                        letterSpacing: "0.12em",
-                        textTransform: "uppercase",
-                        color: "var(--charcoal-muted)",
-                        marginBottom: "0.2rem",
-                      }}
-                    >
+                    <p style={{ fontSize: "0.6rem", letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--charcoal-muted)", marginBottom: "0.2rem" }}>
                       {label}
                     </p>
-                    <p
-                      style={{
-                        fontSize: "0.85rem",
-                        color: "var(--charcoal)",
-                        fontFamily: "'Jost', sans-serif",
-                      }}
-                    >
+                    <p style={{ fontSize: "0.85rem", color: "var(--charcoal)", fontFamily: "'Jost', sans-serif" }}>
                       {value}
                     </p>
                   </div>
@@ -593,19 +564,12 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
               </div>
 
               <div style={{ marginBottom: "1.25rem" }}>
-                <LeadScoreBadge
-                  score={inquiry.leadScore}
-                  size="md"
-                  showLabel
-                />
+                <LeadScoreBadge score={inquiry.leadScore} size="md" showLabel />
               </div>
 
               <div style={{ marginBottom: "1.25rem" }}>
                 <p style={sectionLabelStyle}>Tags</p>
-                <TagManager
-                  inquiryId={inquiry.id}
-                  currentTags={inquiry.tags}
-                />
+                <TagManager inquiryId={inquiry.id} currentTags={inquiry.tags} />
               </div>
 
               <div>
@@ -627,21 +591,15 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
             </div>
           )}
 
-          {/* ── NOTES & CRM ── */}
+          {/* NOTES & CRM */}
           {tab === "notes" && (
             <div>
               <div style={{ marginBottom: "1.25rem" }}>
                 <p style={sectionLabelStyle}>Lead Source</p>
-                <select
-                  value={inquiry.leadSource ?? ""}
-                  onChange={handleSourceChange}
-                  style={inputStyle}
-                >
+                <select value={inquiry.leadSource ?? ""} onChange={handleSourceChange} style={inputStyle}>
                   <option value="">Unknown</option>
                   {LEAD_SOURCES.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
+                    <option key={s} value={s}>{s}</option>
                   ))}
                 </select>
               </div>
@@ -679,11 +637,7 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                     onChange={(e) => setFollowUp(e.target.value)}
                     style={{ ...inputStyle, borderRight: "none", flex: 1 }}
                   />
-                  <button
-                    onClick={handleSaveFollowUp}
-                    disabled={isPending}
-                    style={inlineButtonStyle}
-                  >
+                  <button onClick={handleSaveFollowUp} disabled={isPending} style={inlineButtonStyle}>
                     Set
                   </button>
                 </div>
@@ -695,12 +649,7 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="Private notes — visible only in admin…"
-                  style={{
-                    ...inputStyle,
-                    resize: "vertical",
-                    minHeight: "120px",
-                    lineHeight: 1.7,
-                  }}
+                  style={{ ...inputStyle, resize: "vertical", minHeight: "120px", lineHeight: 1.7 }}
                 />
               </div>
 
@@ -712,9 +661,7 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                   fontSize: "0.68rem",
                   letterSpacing: "0.12em",
                   textTransform: "uppercase",
-                  background: isPending
-                    ? "var(--charcoal-muted)"
-                    : "var(--olive)",
+                  background: isPending ? "var(--charcoal-muted)" : "var(--olive)",
                   color: "var(--white)",
                   border: "none",
                   cursor: isPending ? "not-allowed" : "pointer",
@@ -725,23 +672,13 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                 {isPending ? "Saving…" : "Save Changes"}
               </button>
 
-              {/* ── Bug 4: event link section — uses liveEventId / liveEventName ── */}
               <div style={{ marginTop: "1.5rem" }}>
                 <p style={sectionLabelStyle}>Link to Event</p>
-                <EventLinkSelect
-                  currentEventId={liveEventId}
-                  onChange={handleLinkEvent}
-                />
+                <EventLinkSelect currentEventId={liveEventId} onChange={handleLinkEvent} />
                 {liveEventId && liveEventName && (
                   <a
                     href={`/admin/events/${liveEventId}`}
-                    style={{
-                      display: "inline-block",
-                      marginTop: "0.5rem",
-                      fontSize: "0.78rem",
-                      color: "var(--olive)",
-                      textDecoration: "underline",
-                    }}
+                    style={{ display: "inline-block", marginTop: "0.5rem", fontSize: "0.78rem", color: "var(--olive)", textDecoration: "underline" }}
                   >
                     View: {liveEventName}
                   </a>
@@ -750,37 +687,20 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
             </div>
           )}
 
-          {/* ── COMMUNICATION LOG ── */}
+          {/* COMMUNICATION LOG */}
           {tab === "comms" && (
             <div>
               <div style={{ marginBottom: "1.75rem" }}>
                 <p style={sectionLabelStyle}>Log an Interaction</p>
-                <CommunicationLogger
-                  inquiryId={inquiry.id}
-                  onLogged={() => {
-                    needsRefresh.current = true;
-                  }}
-                />
+                <CommunicationLogger inquiryId={inquiry.id} onLogged={() => { needsRefresh.current = true; }} />
               </div>
 
               {inquiry.communicationLog.length > 0 ? (
                 <div>
-                  <p style={sectionLabelStyle}>
-                    History ({inquiry.communicationLog.length})
-                  </p>
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "0.6rem",
-                    }}
-                  >
+                  <p style={sectionLabelStyle}>History ({inquiry.communicationLog.length})</p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
                     {[...inquiry.communicationLog]
-                      .sort(
-                        (a, b) =>
-                          new Date(b.timestamp).getTime() -
-                          new Date(a.timestamp).getTime()
-                      )
+                      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
                       .map((entry) => (
                         <div
                           key={entry.id}
@@ -791,53 +711,16 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                             borderLeft: "2px solid var(--olive)",
                           }}
                         >
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                              marginBottom: "0.35rem",
-                            }}
-                          >
-                            <span
-                              style={{
-                                fontSize: "0.68rem",
-                                letterSpacing: "0.08em",
-                                color: "var(--charcoal-muted)",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "0.35rem",
-                              }}
-                            >
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.35rem" }}>
+                            <span style={{ fontSize: "0.68rem", letterSpacing: "0.08em", color: "var(--charcoal-muted)", display: "flex", alignItems: "center", gap: "0.35rem" }}>
                               {CHANNEL_ICONS[entry.channel] ?? "📌"}
-                              <span style={{ textTransform: "uppercase" }}>
-                                {entry.channel.replace("_", " ")}
-                              </span>
+                              <span style={{ textTransform: "uppercase" }}>{entry.channel.replace("_", " ")}</span>
                             </span>
-                            <span
-                              style={{
-                                fontSize: "0.65rem",
-                                color: "var(--charcoal-muted)",
-                              }}
-                            >
-                              {new Date(entry.timestamp).toLocaleDateString(
-                                "en-US",
-                                {
-                                  month: "short",
-                                  day: "numeric",
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                }
-                              )}
+                            <span style={{ fontSize: "0.65rem", color: "var(--charcoal-muted)" }}>
+                              {new Date(entry.timestamp).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                             </span>
                           </div>
-                          <p
-                            style={{
-                              fontSize: "0.85rem",
-                              color: "var(--charcoal-light)",
-                              lineHeight: 1.7,
-                            }}
-                          >
+                          <p style={{ fontSize: "0.85rem", color: "var(--charcoal-light)", lineHeight: 1.7 }}>
                             {entry.summary}
                           </p>
                         </div>
@@ -845,20 +728,14 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                   </div>
                 </div>
               ) : (
-                <p
-                  style={{
-                    fontSize: "0.82rem",
-                    color: "var(--charcoal-muted)",
-                    fontStyle: "italic",
-                  }}
-                >
+                <p style={{ fontSize: "0.82rem", color: "var(--charcoal-muted)", fontStyle: "italic" }}>
                   No interactions logged yet.
                 </p>
               )}
             </div>
           )}
 
-          {/* ── EMAIL ── */}
+          {/* EMAIL */}
           {tab === "email" && (
             <div>
               <div style={{ marginBottom: "1.25rem" }}>
@@ -873,29 +750,14 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
               </div>
 
               <form onSubmit={handleSendEmail}>
-                <p
-                  style={{
-                    fontSize: "0.72rem",
-                    color: "var(--charcoal-muted)",
-                    marginBottom: "1rem",
-                    lineHeight: 1.6,
-                  }}
-                >
+                <p style={{ fontSize: "0.72rem", color: "var(--charcoal-muted)", marginBottom: "1rem", lineHeight: 1.6 }}>
                   Sending to{" "}
-                  <strong style={{ color: "var(--charcoal)" }}>
-                    {inquiry.email}
-                  </strong>
+                  <strong style={{ color: "var(--charcoal)" }}>{inquiry.email}</strong>
                 </p>
 
                 <div style={{ marginBottom: "1rem" }}>
                   <p style={sectionLabelStyle}>Subject</p>
-                  <input
-                    type="text"
-                    value={emailSubject}
-                    onChange={(e) => setEmailSubject(e.target.value)}
-                    required
-                    style={inputStyle}
-                  />
+                  <input type="text" value={emailSubject} onChange={(e) => setEmailSubject(e.target.value)} required style={inputStyle} />
                 </div>
 
                 <div style={{ marginBottom: "1.25rem" }}>
@@ -905,22 +767,10 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                     onChange={(e) => setEmailBody(e.target.value)}
                     placeholder="Write your response…"
                     required
-                    style={{
-                      ...inputStyle,
-                      resize: "vertical",
-                      minHeight: "220px",
-                      lineHeight: 1.75,
-                    }}
+                    style={{ ...inputStyle, resize: "vertical", minHeight: "220px", lineHeight: 1.75 }}
                   />
-                  <p
-                    style={{
-                      marginTop: "0.35rem",
-                      fontSize: "0.68rem",
-                      color: "var(--charcoal-muted)",
-                    }}
-                  >
-                    Line breaks preserved. Sending moves the lead to Qualified
-                    automatically.
+                  <p style={{ marginTop: "0.35rem", fontSize: "0.68rem", color: "var(--charcoal-muted)" }}>
+                    Line breaks preserved. Sending moves the lead to Qualified automatically.
                   </p>
                 </div>
 
@@ -933,9 +783,7 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                       fontSize: "0.68rem",
                       letterSpacing: "0.12em",
                       textTransform: "uppercase",
-                      background: isSendingEmail
-                        ? "var(--charcoal-muted)"
-                        : "var(--olive)",
+                      background: isSendingEmail ? "var(--charcoal-muted)" : "var(--olive)",
                       color: "var(--white)",
                       border: "none",
                       cursor: isSendingEmail ? "not-allowed" : "pointer",
@@ -969,6 +817,9 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
       </div>
     </>
   );
+
+  // Portal to body — escapes all ancestor overflow/transform stacking contexts
+  return createPortal(drawerContent, document.body);
 }
 
 // ── Shared style constants ─────────────────────────────────────────────────────
@@ -1009,7 +860,7 @@ const inlineButtonStyle: React.CSSProperties = {
   flexShrink: 0,
 };
 
-// ── EventLinkSelect — fetches event list from the API ─────────────────────────
+// ── EventLinkSelect ───────────────────────────────────────────────────────────
 
 function EventLinkSelect({
   currentEventId,
@@ -1030,17 +881,10 @@ function EventLinkSelect({
   }, []);
 
   return (
-    <select
-      value={currentEventId ?? ""}
-      onChange={onChange}
-      disabled={loading}
-      style={inputStyle}
-    >
+    <select value={currentEventId ?? ""} onChange={onChange} disabled={loading} style={inputStyle}>
       <option value="">— No event —</option>
       {events.map((ev) => (
-        <option key={ev.id} value={ev.id}>
-          {ev.title}
-        </option>
+        <option key={ev.id} value={ev.id}>{ev.title}</option>
       ))}
     </select>
   );
