@@ -17,13 +17,14 @@ type UserRow = {
   createdAt: string;
 };
 
+// AFTER
 async function getUsers(): Promise<UserRow[]> {
-  const snap = await adminDb
-    .collection("users")
-    .orderBy("createdAt", "asc")
-    .get();
+  // Fetch all users without orderBy so documents missing createdAt
+  // are not silently excluded by Firestore (which omits docs that
+  // lack the field used in orderBy). Sort in memory instead.
+  const snap = await adminDb.collection("users").get();
 
-  return Promise.all(
+  const rows = await Promise.all(
     snap.docs.map(async (doc) => {
       const data = doc.data();
       const accessSnap = await adminDb
@@ -32,21 +33,29 @@ async function getUsers(): Promise<UserRow[]> {
         .count()
         .get();
 
+      const createdAtDate: Date | null = data.createdAt?.toDate?.() ?? null;
+
       return {
         uid: doc.id,
         email: data.email as string,
         role: data.role as string,
         eventCount: accessSnap.data().count,
-        createdAt: data.createdAt?.toDate
-          ? data.createdAt.toDate().toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            })
+        createdAt: createdAtDate
+          ? createdAtDate.toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          })
           : "—",
+        _createdAtMs: createdAtDate?.getTime() ?? 0,
       };
     })
   );
+
+  // Sort oldest-first in memory; users without createdAt sort to the top
+  return rows
+    .sort((a, b) => a._createdAtMs - b._createdAtMs)
+    .map(({ _createdAtMs: _, ...row }) => row);
 }
 
 const ROLE_STYLES: Record<string, React.CSSProperties> = {

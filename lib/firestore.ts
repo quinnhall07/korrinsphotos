@@ -44,79 +44,79 @@ export interface ActivityDoc {
 }
 
 export interface UserDoc {
-  uid:         string;
-  email:       string;
+  uid: string;
+  email: string;
   displayName?: string | null;
-  photoURL?:   string | null;
-  role:        Role;
-  createdAt:   Timestamp;
+  photoURL?: string | null;
+  role: Role;
+  createdAt: Timestamp;
 }
 
 export interface EventDoc {
-  id:            string;
-  title:         string;
+  id: string;
+  title: string;
   coverPhotoUrl?: string;
-  createdAt:     Timestamp;
-  updatedAt:     Timestamp;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
 }
 
 export interface PhotoDoc {
-  id:                 string;
-  eventId:            string;
-  cloudflareUrl:      string;
-  cloudflareImageId:  string;
-  label?:             string;
-  category?:          string;
-  uploadedAt:         Timestamp;
+  id: string;
+  eventId: string;
+  cloudflareUrl: string;
+  cloudflareImageId: string;
+  label?: string;
+  category?: string;
+  uploadedAt: Timestamp;
 }
 
 export interface EventAccessDoc {
-  id:        string;
-  userId:    string;
-  eventId:   string;
-  email:     string;
+  id: string;
+  userId: string;
+  eventId: string;
+  email: string;
   createdAt: Timestamp;
 }
 
 export interface BookingInquiryDoc {
-  id:            string;
-  firstName:     string;
-  lastName:      string;
-  email:         string;
-  sessionType:   string;
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  sessionType: string;
   preferredDate?: string;
-  message:       string;
+  message: string;
 
   // ─── Status & workflow ────────────────────────────────────────────────────
-  status:        LeadStatus;
-  notes:         string;
-  pricing:       string | null;
+  status: LeadStatus;
+  notes: string;
+  pricing: string | null;
 
   // ─── Phase 1: CRM fields ──────────────────────────────────────────────────
-  leadSource?:       LeadSource;
-  leadScore?:        number;          // 0–100, recalculated on mutations
-  tags?:             string[];
-  estimatedValue?:   number;          // projected package price in USD
-  followUpDate?:     Timestamp | null;
-  lastContactedAt?:  Timestamp | null;
-  lastRespondedAt?:  Timestamp | null;
+  leadSource?: LeadSource;
+  leadScore?: number;          // 0–100, recalculated on mutations
+  tags?: string[];
+  estimatedValue?: number;          // projected package price in USD
+  followUpDate?: Timestamp | null;
+  lastContactedAt?: Timestamp | null;
+  lastRespondedAt?: Timestamp | null;
   communicationLog?: CommunicationLogEntry[];
 
-  createdAt:     Timestamp;
-  updatedAt:     Timestamp;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
 }
 
 
 
 // ─── Collection refs ──────────────────────────────────────────────────────────
 
-export const usersCol         = () => adminDb.collection("users");
-export const eventsCol        = () => adminDb.collection("events");
-export const photosCol        = () => adminDb.collection("photos");
-export const eventAccessCol   = () => adminDb.collection("eventAccess");
-export const bookingCol       = () => adminDb.collection("bookingInquiries");
-export const mailCol          = () => adminDb.collection("mail");
-export const activityCol      = () => adminDb.collection("activityFeed");
+export const usersCol = () => adminDb.collection("users");
+export const eventsCol = () => adminDb.collection("events");
+export const photosCol = () => adminDb.collection("photos");
+export const eventAccessCol = () => adminDb.collection("eventAccess");
+export const bookingCol = () => adminDb.collection("bookingInquiries");
+export const mailCol = () => adminDb.collection("mail");
+export const activityCol = () => adminDb.collection("activityFeed");
 
 // ─── Users ────────────────────────────────────────────────────────────────────
 
@@ -125,11 +125,20 @@ export async function getUser(uid: string): Promise<UserDoc | null> {
   return snap.exists ? ({ uid, ...snap.data() } as UserDoc) : null;
 }
 
+// AFTER
 export async function upsertUser(uid: string, data: Partial<UserDoc>): Promise<void> {
-  await usersCol().doc(uid).set(
-    { ...data, updatedAt: FieldValue.serverTimestamp() },
-    { merge: true }
-  );
+  const ref = usersCol().doc(uid);
+  await adminDb.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const now = FieldValue.serverTimestamp();
+    if (!snap.exists) {
+      // First write — stamp both createdAt and updatedAt
+      tx.set(ref, { ...data, createdAt: now, updatedAt: now });
+    } else {
+      // Subsequent writes — never overwrite createdAt
+      tx.set(ref, { ...data, updatedAt: now }, { merge: true });
+    }
+  });
 }
 
 export async function listUsers(): Promise<UserDoc[]> {
@@ -221,7 +230,7 @@ export async function revokeEventAccess(userId: string, eventId: string): Promis
 
 export async function userHasEventAccess(userId: string, eventId: string): Promise<boolean> {
   const docId = `${eventId}_${userId}`;
-  const snap  = await eventAccessCol().doc(docId).get();
+  const snap = await eventAccessCol().doc(docId).get();
   return snap.exists;
 }
 
@@ -346,9 +355,9 @@ export async function getDashboardCounts() {
   ]);
 
   return {
-    events:           eventsSnap.data().count,
-    photos:           photosSnap.data().count,
+    events: eventsSnap.data().count,
+    photos: photosSnap.data().count,
     pendingInquiries: pendingSnap.data().count,
-    clients:          clientsSnap.data().count,
+    clients: clientsSnap.data().count,
   };
 }

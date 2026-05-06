@@ -38,7 +38,7 @@ export async function updateBookingStatus(
     "STATUS_CHANGED",
     `${name} moved to ${status.replace(/_/g, " ").toLowerCase()}`,
     { inquiryId: id, status }
-  ).catch(() => {}); // best-effort
+  ).catch(() => { }); // best-effort
 
   revalidatePath("/admin/bookings");
   revalidatePath("/admin");
@@ -67,7 +67,7 @@ export async function bulkUpdateStatus(
       "STATUS_CHANGED",
       `${ids.length} inquir${ids.length === 1 ? "y" : "ies"} bulk-moved to ${status.replace(/_/g, " ").toLowerCase()}`,
       { ids, status }
-    ).catch(() => {});
+    ).catch(() => { });
 
     revalidatePath("/admin/bookings");
     revalidatePath("/admin");
@@ -114,7 +114,7 @@ export async function updateBookingDetails(
     if (details.notes !== undefined) {
       await logActivity("NOTE_ADDED", `Internal note updated`, {
         inquiryId: id,
-      }).catch(() => {});
+      }).catch(() => { });
     }
 
     revalidatePath("/admin/bookings");
@@ -276,7 +276,7 @@ export async function logCommunication(
       "NOTE_ADDED",
       `${entry.channel.toLowerCase()} interaction logged`,
       { inquiryId: id, channel: entry.channel }
-    ).catch(() => {});
+    ).catch(() => { });
 
     revalidatePath("/admin/bookings");
     return { success: true };
@@ -356,7 +356,7 @@ export async function sendBookingResponse(
       "EMAIL_SENT",
       `Email sent to ${name} (${to})`,
       { inquiryId: id, subject }
-    ).catch(() => {});
+    ).catch(() => { });
 
     revalidatePath("/admin/bookings");
     return { success: true };
@@ -409,7 +409,7 @@ export async function deleteBookingInquiry(
       "STATUS_CHANGED",
       `${name || "Unknown"} inquiry deleted`,
       { inquiryId: id }
-    ).catch(() => {});
+    ).catch(() => { });
 
     revalidatePath("/admin/bookings");
     revalidatePath("/admin");
@@ -427,6 +427,8 @@ export async function createBookingInquiry(data: {
   lastName: string;
   email: string;
   sessionType: string;
+  eventId: null,
+  eventName: null,   // ← add alongside eventId
 }): Promise<{ success: boolean; error?: string }> {
   await requireAdmin();
 
@@ -464,7 +466,7 @@ export async function createBookingInquiry(data: {
       "LEAD_RECEIVED",
       `${data.firstName} ${data.lastName} (${data.sessionType}) added manually`,
       { email: data.email }
-    ).catch(() => {});
+    ).catch(() => { });
 
     revalidatePath("/admin/bookings");
     revalidatePath("/admin");
@@ -484,10 +486,22 @@ export async function linkEventToInquiry(
   await requireAdmin();
 
   try {
+    let eventName: string | null = null;
+
+    if (eventId) {
+      const eventDoc = await adminDb.collection("events").doc(eventId).get();
+      if (!eventDoc.exists) {
+        return { success: false, error: "Event not found." };
+      }
+      eventName = (eventDoc.data()?.title as string) ?? null;
+    }
+
     await adminDb.collection("bookingInquiries").doc(inquiryId).update({
       eventId: eventId || null,
+      eventName: eventName,          // ← this line was missing
       updatedAt: FieldValue.serverTimestamp(),
     });
+
     revalidatePath("/admin/bookings");
     return { success: true };
   } catch (err) {

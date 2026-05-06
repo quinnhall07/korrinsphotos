@@ -1,9 +1,9 @@
 // app/admin/events/page.tsx
 // Lists all events. Queries Firestore instead of Prisma.
 
-import { adminDb }    from "@/lib/firebase-admin";
+import { adminDb } from "@/lib/firebase-admin";
 import { createEvent } from "./actions";
-import Link           from "next/link";
+import Link from "next/link";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "Events | Admin" };
@@ -12,19 +12,19 @@ export const dynamic = "force-dynamic";
 type EventStatus = "draft" | "scheduled" | "delivered" | "archived";
 
 const STATUS_BADGES: Record<EventStatus, { bg: string; color: string; label: string }> = {
-  draft:     { bg: "rgba(42,42,40,0.08)", color: "var(--charcoal-muted)", label: "Draft" },
+  draft: { bg: "rgba(42,42,40,0.08)", color: "var(--charcoal-muted)", label: "Draft" },
   scheduled: { bg: "#DBEAFE", color: "#1D4ED8", label: "Scheduled" },
   delivered: { bg: "#D1FAE5", color: "#065F46", label: "Delivered" },
-  archived:  { bg: "#FEF3C7", color: "#92400E", label: "Archived" },
+  archived: { bg: "#FEF3C7", color: "#92400E", label: "Archived" },
 };
 
 type EventRow = {
-  id:          string;
-  title:       string;
-  status:      EventStatus;
-  createdAt:   Date;
-  shootDate:   Date | null;
-  photoCount:  number;
+  id: string;
+  title: string;
+  status: EventStatus;
+  createdAt: Date;
+  shootDate: Date | null;
+  photoCount: number;
   clientCount: number;
 };
 
@@ -47,12 +47,12 @@ async function getEvents(): Promise<EventRow[]> {
       ]);
 
       return {
-        id:          doc.id,
-        title:       data.title as string,
-        status:      (data.status as EventStatus) ?? "draft",
-        createdAt:   data.createdAt?.toDate() ?? new Date(),
-        shootDate:   data.shootDate?.toDate() ?? null,
-        photoCount:  photosSnap.data().count,
+        id: doc.id,
+        title: data.title as string,
+        status: (data.status as EventStatus) ?? "draft",
+        createdAt: data.createdAt?.toDate() ?? new Date(),
+        shootDate: data.shootDate?.toDate() ?? null,
+        photoCount: photosSnap.data().count,
         clientCount: accessSnap.data().count,
       };
     })

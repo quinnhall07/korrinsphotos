@@ -44,7 +44,7 @@ async function getEventData(eventId: string) {
   const [eventDoc, photosSnap, accessSnap] = await Promise.all([
     adminDb.collection("events").doc(eventId).get(),
     adminDb.collection("events").doc(eventId).collection("photos").orderBy("uploadedAt", "asc").get(),
-    adminDb.collection("eventAccess").where("eventId", "==", eventId).orderBy("createdAt", "asc").get(),
+    adminDb.collection("eventAccess").where("eventId", "==", eventId).get(),
   ]);
 
   if (!eventDoc.exists) return null;
