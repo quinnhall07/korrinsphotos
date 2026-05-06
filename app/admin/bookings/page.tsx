@@ -1,175 +1,103 @@
-"use client";
+import type { Metadata } from "next";
+import { adminDb } from "@/lib/firebase-admin";
+import { requireAdmin } from "@/lib/session";
+import { BookingsClientPage, type Inquiry } from "./BookingsClientPage";
 
-// app/admin/bookings/page.tsx
-// Booking inquiries management — Kanban pipeline + Table view.
-// Smart filters, bulk actions, lead scoring, and expandable detail drawer.
+export const metadata: Metadata = { title: "Bookings | Admin" };
+export const dynamic = "force-dynamic";
 
-import { useState, useEffect, useMemo } from "react";
-import { ViewToggle } from "./ViewToggle";
-import { BookingTable } from "./BookingTable";
-import { KanbanBoard } from "./KanbanBoard";
-import { SmartFilters, applySmartFilter } from "./SmartFilters";
-import { BulkActions } from "./BulkActions";
-import { LeadDetailDrawer } from "./LeadDetailDrawer";
-import type { SmartFilter } from "./SmartFilters";
-import type { KanbanInquiry } from "./KanbanCard";
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-export type Inquiry = {
-  id: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-  sessionType: string;
-  preferredDate: string | null;
-  message: string;
-  notes: string;
-  pricing: string;
-  status: string;
-  createdAt: string;
-  lastRespondedAt: string | null;
-  // Phase 1 CRM fields
-  leadScore: number;
-  tags: string[];
-  leadSource: string | null;
-  estimatedValue: number | null;
-  followUpDate: string | null;
-  lastContactedAt: string | null;
-  communicationLog: {
-    id: string;
-    channel: string;
-    summary: string;
-    timestamp: string;
-    adminUid: string;
-  }[];
+type TimestampLike = {
+  toDate?: () => Date;
 };
 
-type View = "kanban" | "table";
-
-// ─── Client Page Component ────────────────────────────────────────────────────
-
-interface BookingsClientPageProps {
-  inquiries: Inquiry[];
+function toDate(value: unknown): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  if (typeof value === "object" && "toDate" in value) {
+    const date = (value as TimestampLike).toDate?.();
+    return date instanceof Date ? date : null;
+  }
+  return null;
 }
 
-export function BookingsClientPage({ inquiries }: BookingsClientPageProps) {
-  const [view, setView] = useState<View>("kanban");
-  const [smartFilter, setSmartFilter] = useState<SmartFilter>("all");
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [drawerInquiry, setDrawerInquiry] = useState<KanbanInquiry | null>(null);
+function formatDisplayDate(value: unknown): string | null {
+  const date = toDate(value);
+  return date
+    ? date.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })
+    : null;
+}
 
-  // Persist view preference
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("bookings_view") as View | null;
-      if (saved === "kanban" || saved === "table") setView(saved);
-    } catch {}
-  }, []);
+function formatDateInput(value: unknown): string | null {
+  const date = toDate(value);
+  return date ? date.toISOString().slice(0, 10) : null;
+}
 
-  // Apply smart filter across all inquiries (client-side)
-  const filtered = useMemo(
-    () => applySmartFilter(inquiries as KanbanInquiry[], smartFilter),
-    [inquiries, smartFilter]
-  );
+function formatDateTime(value: unknown): string | null {
+  const date = toDate(value);
+  return date
+    ? date.toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : null;
+}
 
-  // Smart filter counts
-  const counts = useMemo(() => {
-    const allFilters: SmartFilter[] = [
-      "all", "hot-leads", "needs-follow-up", "high-value", "this-week", "weddings",
-    ];
-    return Object.fromEntries(
-      allFilters.map((f) => [
-        f,
-        applySmartFilter(inquiries as KanbanInquiry[], f).length,
-      ])
-    ) as Record<SmartFilter, number>;
-  }, [inquiries]);
+async function getInquiries(): Promise<Inquiry[]> {
+  const snap = await adminDb
+    .collection("bookingInquiries")
+    .orderBy("createdAt", "desc")
+    .get();
 
-  function handleOpenDrawer(inq: KanbanInquiry) {
-    setDrawerInquiry(inq);
-  }
+  return snap.docs.map((doc) => {
+    const data = doc.data();
+    return {
+      id: doc.id,
+      firstName: String(data.firstName ?? ""),
+      lastName: String(data.lastName ?? ""),
+      email: String(data.email ?? ""),
+      sessionType: String(data.sessionType ?? ""),
+      preferredDate: formatDisplayDate(data.preferredDate),
+      message: String(data.message ?? ""),
+      notes: String(data.notes ?? ""),
+      pricing: data.pricing ? String(data.pricing) : "",
+      status: String(data.status ?? "PENDING"),
+      createdAt: formatDateTime(data.createdAt) ?? "Unknown",
+      lastRespondedAt: formatDateTime(data.lastRespondedAt),
+      leadScore: Number(data.leadScore ?? 0),
+      tags: Array.isArray(data.tags) ? data.tags.map(String) : [],
+      leadSource: data.leadSource ? String(data.leadSource) : null,
+      estimatedValue:
+        typeof data.estimatedValue === "number" ? data.estimatedValue : null,
+      followUpDate: formatDateInput(data.followUpDate),
+      lastContactedAt: formatDateTime(data.lastContactedAt),
+      communicationLog: Array.isArray(data.communicationLog)
+        ? data.communicationLog.map((entry, index) => ({
+            id: String(entry?.id ?? `${doc.id}-${index}`),
+            channel: String(entry?.channel ?? "EMAIL"),
+            summary: String(entry?.summary ?? ""),
+            timestamp:
+              formatDateTime(entry?.timestamp) ?? new Date(0).toISOString(),
+            adminUid: String(entry?.adminUid ?? ""),
+          }))
+        : [],
+    };
+  });
+}
 
-  function handleClearSelection() {
-    setSelectedIds([]);
-  }
+export default async function AdminBookingsPage() {
+  await requireAdmin();
+  const inquiries = await getInquiries();
 
-  return (
-    <div className="page-fade-in">
-      {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          marginBottom: "1rem",
-          gap: "1rem",
-          flexWrap: "wrap",
-        }}
-      >
-        <div>
-          <p
-            style={{
-              fontSize: "0.65rem",
-              letterSpacing: "0.2em",
-              textTransform: "uppercase",
-              color: "var(--olive)",
-              marginBottom: "0.3rem",
-            }}
-          >
-            Clients
-          </p>
-          <h2
-            style={{
-              fontFamily: "'Cormorant Garamond', serif",
-              fontSize: "2rem",
-              fontWeight: 300,
-            }}
-          >
-            Booking Inquiries
-          </h2>
-          <p
-            style={{
-              fontSize: "0.78rem",
-              color: "var(--charcoal-muted)",
-              marginTop: "0.25rem",
-            }}
-          >
-            {view === "kanban"
-              ? "Drag cards between columns to update status."
-              : "Click any row to expand notes, pricing, and email tools."}
-          </p>
-        </div>
-
-        <ViewToggle value={view} onChange={setView} />
-      </div>
-
-      {/* Smart filters */}
-      <SmartFilters active={smartFilter} onChange={setSmartFilter} counts={counts} />
-
-      {/* Main content */}
-      {view === "kanban" ? (
-        <KanbanBoard
-          inquiries={filtered as KanbanInquiry[]}
-          onOpenDrawer={handleOpenDrawer}
-        />
-      ) : (
-        <BookingTable
-          inquiries={filtered as Inquiry[]}
-          selectedIds={selectedIds}
-          onSelectionChange={setSelectedIds}
-          onOpenDrawer={handleOpenDrawer}
-        />
-      )}
-
-      {/* Bulk actions bar */}
-      <BulkActions selectedIds={selectedIds} onClearSelection={handleClearSelection} />
-
-      {/* Lead detail drawer */}
-      <LeadDetailDrawer
-        inquiry={drawerInquiry}
-        onClose={() => setDrawerInquiry(null)}
-      />
-    </div>
-  );
+  return <BookingsClientPage inquiries={inquiries} />;
 }

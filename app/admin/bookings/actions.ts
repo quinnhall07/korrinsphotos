@@ -11,7 +11,7 @@ import { requireAdmin } from "@/lib/session";
 import { FieldValue } from "firebase-admin/firestore";
 import { calculateLeadScore } from "@/lib/lead-scoring";
 import { logActivity } from "@/lib/firestore";
-import type { LeadStatus, LeadSource, CommunicationChannel } from "@/lib/firestore";
+import type { LeadStatus, LeadSource, CommunicationChannel } from "@/lib/booking-kanban";
 import { randomUUID } from "crypto";
 import { z } from "zod";
 

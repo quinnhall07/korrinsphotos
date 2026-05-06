@@ -4,7 +4,7 @@
 // Single Kanban card. Draggable, shows lead score, tags, session type, and date.
 // Fires onOpen when clicked to open the LeadDetailDrawer.
 
-import { getScoreColor, getScoreBackground } from "@/lib/lead-scoring";
+import { getScoreColor } from "@/lib/lead-scoring";
 import { LeadScoreBadge } from "./LeadScoreBadge";
 
 export interface KanbanInquiry {

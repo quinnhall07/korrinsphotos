@@ -7,7 +7,7 @@
 import { useState, useTransition } from "react";
 import { logCommunication } from "./actions";
 import { toast } from "@/components/ui/Toaster";
-import type { CommunicationChannel } from "@/lib/firestore";
+import type { CommunicationChannel } from "@/lib/booking-kanban";
 
 interface CommunicationLoggerProps {
   inquiryId: string;

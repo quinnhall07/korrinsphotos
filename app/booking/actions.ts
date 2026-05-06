@@ -9,6 +9,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { z }          from "zod";
 import { calculateLeadScore } from "@/lib/lead-scoring";
 import { logActivity } from "@/lib/firestore";
+import type { LeadStatus } from "@/lib/booking-kanban";
 
 const BookingSchema = z.object({
   firstName:     z.string().min(1, "First name is required").max(100),
@@ -40,7 +41,9 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
   const { firstName, lastName, email, sessionType, preferredDate, message } = parsed.data;
 
   try {
-    // Build initial doc data so we can compute lead score before writing
+    const initialStatus: LeadStatus = "PENDING";
+
+    // Build initial pipeline data so the lead lands directly on the Kanban board.
     const inquiryData = {
       firstName,
       lastName,
@@ -48,9 +51,14 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
       sessionType,
       preferredDate: preferredDate ? new Date(preferredDate) : null,
       message,
-      status:    "PENDING" as const,
+      status:    initialStatus,
       notes:     "",
       pricing:   null,
+      leadSource: "WEBSITE" as const,
+      estimatedValue: null,
+      followUpDate: null,
+      lastContactedAt: null,
+      lastRespondedAt: null,
       tags:      [] as string[],
       communicationLog: [] as unknown[],
       createdAt: FieldValue.serverTimestamp(),

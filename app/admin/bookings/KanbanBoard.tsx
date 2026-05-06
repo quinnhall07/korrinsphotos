@@ -10,7 +10,7 @@ import { useRouter } from "next/navigation";
 import { KanbanCard, type KanbanInquiry } from "./KanbanCard";
 import { updateBookingStatus } from "./actions";
 import { toast } from "@/components/ui/Toaster";
-import { KANBAN_STATUSES, type LeadStatus } from "@/lib/firestore";
+import { KANBAN_STATUSES, type LeadStatus } from "@/lib/booking-kanban";
 
 interface KanbanBoardProps {
   inquiries: KanbanInquiry[];
@@ -20,7 +20,7 @@ interface KanbanBoardProps {
 export function KanbanBoard({ inquiries, onOpenDrawer }: KanbanBoardProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverColumn, setDragOverColumn] = useState<LeadStatus | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   const router = useRouter();
 
   // Group inquiries by status (only active statuses — ARCHIVED excluded)
@@ -69,11 +69,6 @@ export function KanbanBoard({ inquiries, onOpenDrawer }: KanbanBoardProps) {
     });
 
     setDraggingId(null);
-  }
-
-  function handleDragEnd() {
-    setDraggingId(null);
-    setDragOverColumn(null);
   }
 
   return (

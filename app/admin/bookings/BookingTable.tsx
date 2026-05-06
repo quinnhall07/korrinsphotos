@@ -4,7 +4,7 @@
 // Client component: renders the bookings table with row selection (for bulk
 // actions) and opens the LeadDetailDrawer on row click.
 
-import type { Inquiry } from "./page";
+import type { Inquiry } from "./BookingsClientPage";
 import type { KanbanInquiry } from "./KanbanCard";
 
 const STATUS_COLORS: Record<string, React.CSSProperties> = {

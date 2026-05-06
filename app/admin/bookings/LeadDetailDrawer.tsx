@@ -18,7 +18,7 @@ import { CommunicationLogger } from "./CommunicationLogger";
 import { EmailTemplateSelector } from "./EmailTemplateSelector";
 import { LeadScoreBadge } from "./LeadScoreBadge";
 import { toast } from "@/components/ui/Toaster";
-import { KANBAN_STATUSES, ALL_STATUSES, type LeadStatus, type LeadSource } from "@/lib/firestore";
+import { KANBAN_STATUSES, ALL_STATUSES, type LeadStatus, type LeadSource } from "@/lib/booking-kanban";
 import type { KanbanInquiry } from "./KanbanCard";
 
 interface LeadDetailDrawerProps {

@@ -7,7 +7,7 @@
 import { useState, useTransition } from "react";
 import { bulkUpdateStatus } from "./actions";
 import { toast } from "@/components/ui/Toaster";
-import type { LeadStatus } from "@/lib/firestore";
+import type { LeadStatus } from "@/lib/booking-kanban";
 
 interface BulkActionsProps {
   selectedIds: string[];

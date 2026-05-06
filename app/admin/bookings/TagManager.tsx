@@ -5,7 +5,7 @@
 
 import { useState, useTransition } from "react";
 import { addTag, removeTag } from "./actions";
-import { PRESET_TAGS } from "@/lib/firestore";
+import { PRESET_TAGS } from "@/lib/booking-kanban";
 import { toast } from "@/components/ui/Toaster";
 
 interface TagManagerProps {

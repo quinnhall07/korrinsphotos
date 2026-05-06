@@ -22,9 +22,21 @@ const firebaseConfig = {
   appId:             process.env.NEXT_PUBLIC_FIREBASE_APP_ID!,
 };
 
-function getFirebaseApp(): FirebaseApp {
+const hasFirebaseConfig = Object.values(firebaseConfig).every(
+  (value) => typeof value === "string" && value.length > 0
+);
+
+function getFirebaseApp(): FirebaseApp | null {
+  if (!hasFirebaseConfig) return null;
   return getApps().length > 0 ? getApps()[0]! : initializeApp(firebaseConfig);
 }
 
 export const firebaseApp = getFirebaseApp();
-export const firebaseAuth: Auth = getAuth(firebaseApp);
+export const firebaseAuth: Auth | null = firebaseApp ? getAuth(firebaseApp) : null;
+
+export function requireFirebaseAuth(): Auth {
+  if (!firebaseAuth) {
+    throw new Error("Firebase client auth is not configured.");
+  }
+  return firebaseAuth;
+}

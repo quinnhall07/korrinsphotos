@@ -19,7 +19,7 @@ import {
   fetchSignInMethodsForEmail,
   type AuthProvider,
 } from "firebase/auth";
-import { firebaseAuth } from "@/lib/firebase";
+import { firebaseAuth, requireFirebaseAuth } from "@/lib/firebase";
 import { useAuth } from "@/components/AuthProvider";
 
 const googleProvider = new GoogleAuthProvider();
@@ -130,7 +130,8 @@ export function LoginForm() {
     setIsLoading(true);
 
     try {
-      await signInWithPopup(firebaseAuth, provider);
+      const auth = requireFirebaseAuth();
+      await signInWithPopup(auth, provider);
       const { role } = await afterSignIn();
       redirectForRole(role);
     } catch (err: unknown) {
@@ -163,8 +164,9 @@ export function LoginForm() {
     setActiveProvider("email-password");
     setIsLoading(true);
 
+    const auth = requireFirebaseAuth();
     try {
-      await signInWithEmailAndPassword(firebaseAuth, email, password);
+      await signInWithEmailAndPassword(auth, email, password);
       const { role } = await afterSignIn();
       redirectForRole(role);
     } catch (err: unknown) {
@@ -172,7 +174,7 @@ export function LoginForm() {
 
       // Check what providers this email actually uses for a better hint
       if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
-        const methods = await fetchSignInMethodsForEmail(firebaseAuth, email).catch(() => [] as string[]);
+        const methods = await fetchSignInMethodsForEmail(auth, email).catch(() => [] as string[]);
         if (methods.includes("google.com")) {
           setGlobalError("This email is linked to a Google account. Use 'Continue with Google' above.");
         } else if (methods.includes("microsoft.com")) {
@@ -205,7 +207,8 @@ export function LoginForm() {
     setIsLoading(true);
 
     try {
-      const methods = await fetchSignInMethodsForEmail(firebaseAuth, email).catch(() => [] as string[]);
+      const auth = requireFirebaseAuth();
+      const methods = await fetchSignInMethodsForEmail(auth, email).catch(() => [] as string[]);
       if (methods.includes("google.com")) {
         setGlobalError("This email is already linked to a Google account. Sign in with Google instead.");
         return;
@@ -215,7 +218,7 @@ export function LoginForm() {
         return;
       }
 
-      await createUserWithEmailAndPassword(firebaseAuth, email, password);
+      await createUserWithEmailAndPassword(auth, email, password);
       const { role } = await afterSignIn();
       redirectForRole(role);
     } catch (err: unknown) {
@@ -229,16 +232,22 @@ export function LoginForm() {
 
   const isSignUp = emailMode === "password-signup";
   const handleEmailSubmit = isSignUp ? handlePasswordSignUp : handlePasswordSignIn;
+  const authConfigured = Boolean(firebaseAuth);
 
   return (
     <div>
       {/* OAuth buttons */}
+      {!authConfigured && (
+        <div style={{ padding: "0.75rem 1rem", background: "#FEF3C7", borderLeft: "2px solid #F59E0B", fontSize: "0.82rem", color: "#92400E", marginBottom: "1rem", lineHeight: 1.6 }}>
+          Sign-in is not configured for this environment.
+        </div>
+      )}
       <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem", marginBottom: "1.75rem" }}>
         {OAUTH_BUTTONS.map(({ id, label, provider, icon }) => (
           <button
             key={id}
             onClick={() => handleOAuth(id, provider)}
-            disabled={isLoading}
+            disabled={isLoading || !authConfigured}
             style={{
               display: "flex",
               alignItems: "center",
@@ -378,7 +387,7 @@ export function LoginForm() {
 
         <button
           type="submit"
-          disabled={isLoading}
+          disabled={isLoading || !authConfigured}
           style={{
             width: "100%",
             padding: "0.85rem",
@@ -388,12 +397,12 @@ export function LoginForm() {
             background: "var(--olive)",
             color: "var(--white)",
             border: "none",
-            cursor: isLoading ? "not-allowed" : "pointer",
+            cursor: isLoading || !authConfigured ? "not-allowed" : "pointer",
             fontFamily: "'Jost', sans-serif",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            opacity: isLoading ? 0.7 : 1,
+            opacity: isLoading || !authConfigured ? 0.7 : 1,
             transition: "background 0.2s",
           }}
         >
