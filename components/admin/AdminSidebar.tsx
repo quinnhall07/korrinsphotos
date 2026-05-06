@@ -93,7 +93,7 @@ export function AdminSidebar() {
             color: "var(--charcoal)",
           }}
         >
-          Korrin&apos;s<span style={{ color: "var(--olive)" }}>.</span>
+          Korrin&apos;s Photography<span style={{ color: "var(--olive)" }}>.</span>
         </div>
         <p
           style={{

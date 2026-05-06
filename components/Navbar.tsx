@@ -64,7 +64,7 @@ export function Navbar() {
     >
       {/* Logo */}
       <Link href="/" style={logoStyle}>
-        Korrin&apos;s<span style={{ color: "var(--olive)" }}>.</span>
+        Korrin&apos;s Photography<span style={{ color: "var(--olive)" }}>.</span>
       </Link>
 
       {/* Nav links */}

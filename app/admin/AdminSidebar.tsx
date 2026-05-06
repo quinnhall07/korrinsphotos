@@ -15,10 +15,10 @@ const links = [
         href: "/admin",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
-            <rect x="1" y="1" width="6" height="6" rx="1"/>
-            <rect x="9" y="1" width="6" height="6" rx="1"/>
-            <rect x="1" y="9" width="6" height="6" rx="1"/>
-            <rect x="9" y="9" width="6" height="6" rx="1"/>
+            <rect x="1" y="1" width="6" height="6" rx="1" />
+            <rect x="9" y="1" width="6" height="6" rx="1" />
+            <rect x="1" y="9" width="6" height="6" rx="1" />
+            <rect x="9" y="9" width="6" height="6" rx="1" />
           </svg>
         ),
       },
@@ -32,8 +32,8 @@ const links = [
         href: "/admin/events",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
-            <rect x="1" y="4" width="14" height="11" rx="1"/>
-            <path d="M5 1v4M11 1v4M1 8h14"/>
+            <rect x="1" y="4" width="14" height="11" rx="1" />
+            <path d="M5 1v4M11 1v4M1 8h14" />
           </svg>
         ),
       },
@@ -47,7 +47,7 @@ const links = [
         href: "/admin/bookings",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
-            <path d="M2 4h12M2 8h12M2 12h7"/>
+            <path d="M2 4h12M2 8h12M2 12h7" />
           </svg>
         ),
       },
@@ -56,8 +56,8 @@ const links = [
         href: "/admin/users",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
-            <circle cx="8" cy="5" r="3"/>
-            <path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6"/>
+            <circle cx="8" cy="5" r="3" />
+            <path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6" />
           </svg>
         ),
       },
@@ -92,7 +92,7 @@ export function AdminSidebar() {
             fontWeight: 500,
           }}
         >
-          Korrin&apos;s<span style={{ color: "var(--olive)" }}>.</span>
+          Korrin&apos;s Photography<span style={{ color: "var(--olive)" }}>.</span>
         </div>
         <p
           style={{
