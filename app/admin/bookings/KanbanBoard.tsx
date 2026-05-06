@@ -24,9 +24,32 @@ export function KanbanBoard({ inquiries, onOpenDrawer }: KanbanBoardProps) {
   const router = useRouter();
 
   // Group inquiries by status (only active statuses — ARCHIVED excluded)
+  // Sort each column: overdue follow-ups first, then by leadScore descending
+  const now = new Date();
   const byStatus = KANBAN_STATUSES.reduce<Record<string, KanbanInquiry[]>>(
     (acc, col) => {
-      acc[col.id] = inquiries.filter((i) => i.status === col.id);
+      acc[col.id] = inquiries
+        .filter((i) => i.status === col.id)
+        .sort((a, b) => {
+          const aOverdue =
+            a.followUpDate &&
+            new Date(a.followUpDate) < now &&
+            a.status !== "BOOKED" &&
+            a.status !== "ARCHIVED"
+              ? 1
+              : 0;
+          const bOverdue =
+            b.followUpDate &&
+            new Date(b.followUpDate) < now &&
+            b.status !== "BOOKED" &&
+            b.status !== "ARCHIVED"
+              ? 1
+              : 0;
+          // Overdue first (descending flag: overdue=1 goes first)
+          if (bOverdue !== aOverdue) return bOverdue - aOverdue;
+          // Then by leadScore descending
+          return (b.leadScore ?? 0) - (a.leadScore ?? 0);
+        });
       return acc;
     },
     {}

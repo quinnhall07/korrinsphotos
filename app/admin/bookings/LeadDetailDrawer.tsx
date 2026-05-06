@@ -4,7 +4,7 @@
 // Slide-over panel that opens when a Kanban card (or table row) is clicked.
 // Shows all inquiry details, communication history, tag editor, notes, and email composer.
 
-import { useState, useTransition, useEffect } from "react";
+import { useState, useTransition, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   updateBookingStatus,
@@ -12,6 +12,8 @@ import {
   sendBookingResponse,
   updateLeadSource,
   setFollowUpDate,
+  deleteBookingInquiry,
+  linkEventToInquiry,
 } from "./actions";
 import { TagManager } from "./TagManager";
 import { CommunicationLogger } from "./CommunicationLogger";
@@ -48,6 +50,14 @@ const SESSION_NEXT: Record<string, LeadStatus> = {
 
 export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
   const router               = useRouter();
+  const needsRefresh         = { current: false };
+
+  const handleClose = useCallback(() => {
+    if (needsRefresh.current) {
+      router.refresh();
+    }
+    onClose();
+  }, [onClose, router]);
   const [tab, setTab]        = useState<Tab>("overview");
   const [isPending, startTransition] = useTransition();
 
@@ -79,11 +89,11 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
   // Close on Escape
   useEffect(() => {
     function handler(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") handleClose();
     }
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
+  }, [handleClose]);
 
   if (!inquiry) return null;
 
@@ -96,7 +106,7 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
     startTransition(async () => {
       await updateBookingStatus(inquiry!.id, status);
       toast(`Moved to ${KANBAN_STATUSES.find((s) => s.id === status)?.label ?? status}`);
-      router.refresh();
+      needsRefresh.current = true;
     });
   }
 
@@ -109,7 +119,7 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
       });
       if (result.success) {
         toast("Notes saved ✓");
-        router.refresh();
+        needsRefresh.current = true;
       } else {
         toast(result.error ?? "Save failed.");
       }
@@ -121,7 +131,7 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
       const result = await setFollowUpDate(inquiry!.id, followUp || null);
       if (result.success) {
         toast("Follow-up date set ✓");
-        router.refresh();
+        needsRefresh.current = true;
       } else {
         toast(result.error ?? "Failed.");
       }
@@ -132,7 +142,34 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
     const source = e.target.value as LeadSource;
     startTransition(async () => {
       await updateLeadSource(inquiry!.id, source);
-      router.refresh();
+      needsRefresh.current = true;
+    });
+  }
+
+  function handleDelete() {
+    if (!confirm("Permanently delete this inquiry? This cannot be undone.")) return;
+    startTransition(async () => {
+      const result = await deleteBookingInquiry(inquiry!.id);
+      if (result.success) {
+        toast("Inquiry deleted");
+        router.refresh();
+        onClose();
+      } else {
+        toast(result.error ?? "Delete failed.");
+      }
+    });
+  }
+
+  function handleLinkEvent(e: React.ChangeEvent<HTMLSelectElement>) {
+    const eventId = e.target.value || null;
+    startTransition(async () => {
+      const result = await linkEventToInquiry(inquiry!.id, eventId);
+      if (result.success) {
+        toast(eventId ? "Event linked ✓" : "Event unlinked");
+        needsRefresh.current = true;
+      } else {
+        toast(result.error ?? "Failed.");
+      }
     });
   }
 
@@ -149,7 +186,7 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
       if (result.success) {
         toast(`Email sent to ${inquiry!.email} ✓`);
         setEmailBody("");
-        router.refresh();
+        needsRefresh.current = true;
       } else {
         toast(result.error ?? "Send failed.");
       }
@@ -169,7 +206,7 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
     <>
       {/* Backdrop */}
       <div
-        onClick={onClose}
+        onClick={handleClose}
         style={{
           position: "fixed",
           inset: 0,
@@ -251,7 +288,7 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
           </div>
 
           <button
-            onClick={onClose}
+            onClick={handleClose}
             style={{
               width: "36px",
               height: "36px",
@@ -346,6 +383,25 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
               Archive
             </button>
           )}
+
+          <button
+            onClick={handleDelete}
+            disabled={isPending}
+            style={{
+              padding: "0.5rem 0.9rem",
+              fontSize: "0.65rem",
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              background: "transparent",
+              color: "#991B1B",
+              border: "0.5px solid #FCA5A5",
+              cursor: isPending ? "not-allowed" : "pointer",
+              fontFamily: "'Jost', sans-serif",
+              marginLeft: "auto",
+            }}
+          >
+            Delete
+          </button>
         </div>
 
         {/* Tabs */}
@@ -557,6 +613,29 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
               >
                 {isPending ? "Saving…" : "Save Changes"}
               </button>
+
+              {/* Event linking */}
+              <div style={{ marginTop: "1.5rem" }}>
+                <p style={sectionLabelStyle}>Link to Event</p>
+                <EventLinkSelect
+                  currentEventId={inquiry.eventId ?? null}
+                  onChange={handleLinkEvent}
+                />
+                {inquiry.eventId && inquiry.eventName && (
+                  <a
+                    href={`/admin/events/${inquiry.eventId}`}
+                    style={{
+                      display: "inline-block",
+                      marginTop: "0.5rem",
+                      fontSize: "0.78rem",
+                      color: "var(--olive)",
+                      textDecoration: "underline",
+                    }}
+                  >
+                    View: {inquiry.eventName}
+                  </a>
+                )}
+              </div>
             </div>
           )}
 
@@ -567,7 +646,7 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                 <p style={sectionLabelStyle}>Log an Interaction</p>
                 <CommunicationLogger
                   inquiryId={inquiry.id}
-                  onLogged={() => router.refresh()}
+                  onLogged={() => { needsRefresh.current = true; }}
                 />
               </div>
 
@@ -708,8 +787,6 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
   );
 }
 
-// ─── Shared styles ────────────────────────────────────────────────────────────
-
 const sectionLabelStyle: React.CSSProperties = {
   fontSize: "0.62rem",
   letterSpacing: "0.14em",
@@ -745,3 +822,38 @@ const inlineButtonStyle: React.CSSProperties = {
   fontFamily: "'Jost', sans-serif",
   flexShrink: 0,
 };
+
+function EventLinkSelect({
+  currentEventId,
+  onChange,
+}: {
+  currentEventId: string | null;
+  onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+}) {
+  const [events, setEvents] = useState<{ id: string; title: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/events-list")
+      .then((r) => r.json())
+      .then((data) => setEvents(data.events ?? []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <select
+      value={currentEventId ?? ""}
+      onChange={onChange}
+      disabled={loading}
+      style={inputStyle}
+    >
+      <option value="">— No event —</option>
+      {events.map((ev) => (
+        <option key={ev.id} value={ev.id}>
+          {ev.title}
+        </option>
+      ))}
+    </select>
+  );
+}

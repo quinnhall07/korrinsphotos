@@ -33,6 +33,8 @@ export interface KanbanInquiry {
     timestamp: string;
     adminUid: string;
   }[];
+  eventId?: string | null;
+  eventName?: string | null;
 }
 
 interface KanbanCardProps {

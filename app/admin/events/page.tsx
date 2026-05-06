@@ -9,11 +9,22 @@ import type { Metadata } from "next";
 export const metadata: Metadata = { title: "Events | Admin" };
 export const dynamic = "force-dynamic";
 
+type EventStatus = "draft" | "scheduled" | "delivered" | "archived";
+
+const STATUS_BADGES: Record<EventStatus, { bg: string; color: string; label: string }> = {
+  draft:     { bg: "rgba(42,42,40,0.08)", color: "var(--charcoal-muted)", label: "Draft" },
+  scheduled: { bg: "#DBEAFE", color: "#1D4ED8", label: "Scheduled" },
+  delivered: { bg: "#D1FAE5", color: "#065F46", label: "Delivered" },
+  archived:  { bg: "#FEF3C7", color: "#92400E", label: "Archived" },
+};
+
 type EventRow = {
-  id:         string;
-  title:      string;
-  createdAt:  Date;
-  photoCount: number;
+  id:          string;
+  title:       string;
+  status:      EventStatus;
+  createdAt:   Date;
+  shootDate:   Date | null;
+  photoCount:  number;
   clientCount: number;
 };
 
@@ -38,7 +49,9 @@ async function getEvents(): Promise<EventRow[]> {
       return {
         id:          doc.id,
         title:       data.title as string,
+        status:      (data.status as EventStatus) ?? "draft",
         createdAt:   data.createdAt?.toDate() ?? new Date(),
+        shootDate:   data.shootDate?.toDate() ?? null,
         photoCount:  photosSnap.data().count,
         clientCount: accessSnap.data().count,
       };
@@ -72,7 +85,7 @@ export default async function EventsPage() {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
           <thead>
             <tr>
-              {["Event", "Photos", "Clients", "Status", "Created", ""].map((h) => (
+              {["Event", "Photos", "Clients", "Status", "Shoot Date", "Created", ""].map((h) => (
                 <th key={h} style={thStyle}>{h}</th>
               ))}
             </tr>
@@ -80,29 +93,37 @@ export default async function EventsPage() {
           <tbody>
             {events.length === 0 && (
               <tr>
-                <td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: "var(--charcoal-muted)" }}>
+                <td colSpan={7} style={{ ...tdStyle, textAlign: "center", color: "var(--charcoal-muted)" }}>
                   No events yet. Create your first one above.
                 </td>
               </tr>
             )}
-            {events.map((ev) => (
-              <tr key={ev.id}>
-                <td style={tdStyle}><strong style={{ fontWeight: 500 }}>{ev.title}</strong></td>
-                <td style={tdStyle}>{ev.photoCount}</td>
-                <td style={tdStyle}>{ev.clientCount}</td>
-                <td style={tdStyle}>
-                  <span style={{ display: "inline-block", padding: "0.25rem 0.65rem", fontSize: "0.62rem", letterSpacing: "0.1em", textTransform: "uppercase", background: "#D1FAE5", color: "#065F46" }}>
-                    Active
-                  </span>
-                </td>
-                <td style={tdStyle}>
-                  {ev.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                </td>
-                <td style={tdStyle}>
-                  <Link href={`/admin/events/${ev.id}`} style={btnOutlineDark}>Manage</Link>
-                </td>
-              </tr>
-            ))}
+            {events.map((ev) => {
+              const badge = STATUS_BADGES[ev.status] ?? STATUS_BADGES.draft;
+              return (
+                <tr key={ev.id}>
+                  <td style={tdStyle}><strong style={{ fontWeight: 500 }}>{ev.title}</strong></td>
+                  <td style={tdStyle}>{ev.photoCount}</td>
+                  <td style={tdStyle}>{ev.clientCount}</td>
+                  <td style={tdStyle}>
+                    <span style={{ display: "inline-block", padding: "0.25rem 0.65rem", fontSize: "0.62rem", letterSpacing: "0.1em", textTransform: "uppercase", background: badge.bg, color: badge.color }}>
+                      {badge.label}
+                    </span>
+                  </td>
+                  <td style={tdStyle}>
+                    {ev.shootDate
+                      ? ev.shootDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                      : "—"}
+                  </td>
+                  <td style={tdStyle}>
+                    {ev.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                  </td>
+                  <td style={tdStyle}>
+                    <Link href={`/admin/events/${ev.id}`} style={btnOutlineDark}>Manage</Link>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

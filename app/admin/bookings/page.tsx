@@ -91,6 +91,8 @@ async function getInquiries(): Promise<Inquiry[]> {
             adminUid: String(entry?.adminUid ?? ""),
           }))
         : [],
+      eventId: data.eventId ? String(data.eventId) : null,
+      eventName: data.eventName ? String(data.eventName) : null,
     };
   });
 }

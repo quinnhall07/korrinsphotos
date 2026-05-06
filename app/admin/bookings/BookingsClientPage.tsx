@@ -1,16 +1,15 @@
 "use client";
 
 // app/admin/bookings/BookingsClientPage.tsx
-// Booking inquiries management — Kanban pipeline + Table view.
-// Smart filters, bulk actions, lead scoring, and expandable detail drawer.
+// Booking inquiries management — Kanban pipeline view.
+// Smart filters, search, bulk actions, lead scoring, and expandable detail drawer.
 
-import { useState, useEffect, useMemo } from "react";
-import { ViewToggle } from "./ViewToggle";
-import { BookingTable } from "./BookingTable";
+import { useState, useMemo } from "react";
 import { KanbanBoard } from "./KanbanBoard";
 import { SmartFilters, applySmartFilter } from "./SmartFilters";
 import { BulkActions } from "./BulkActions";
 import { LeadDetailDrawer } from "./LeadDetailDrawer";
+import { NewInquiryModal } from "./NewInquiryModal";
 import type { SmartFilter } from "./SmartFilters";
 import type { KanbanInquiry } from "./KanbanCard";
 
@@ -43,9 +42,10 @@ export type Inquiry = {
     timestamp: string;
     adminUid: string;
   }[];
+  // Event linking
+  eventId?: string | null;
+  eventName?: string | null;
 };
-
-type View = "kanban" | "table";
 
 // ─── Client Page Component ────────────────────────────────────────────────────
 
@@ -54,24 +54,28 @@ interface BookingsClientPageProps {
 }
 
 export function BookingsClientPage({ inquiries }: BookingsClientPageProps) {
-  const [view, setView] = useState<View>("kanban");
   const [smartFilter, setSmartFilter] = useState<SmartFilter>("all");
+  const [searchQuery, setSearchQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [drawerInquiry, setDrawerInquiry] = useState<KanbanInquiry | null>(null);
-
-  // Persist view preference
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("bookings_view") as View | null;
-      if (saved === "kanban" || saved === "table") setView(saved);
-    } catch {}
-  }, []);
+  const [showNewModal, setShowNewModal] = useState(false);
 
   // Apply smart filter across all inquiries (client-side)
-  const filtered = useMemo(
-    () => applySmartFilter(inquiries as KanbanInquiry[], smartFilter),
-    [inquiries, smartFilter]
-  );
+  const filtered = useMemo(() => {
+    let result = applySmartFilter(inquiries as KanbanInquiry[], smartFilter);
+
+    // Apply free-text search
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      result = result.filter((i) => {
+        const fullName = `${i.firstName} ${i.lastName}`.toLowerCase();
+        const email = i.email.toLowerCase();
+        return fullName.includes(q) || email.includes(q);
+      });
+    }
+
+    return result;
+  }, [inquiries, smartFilter, searchQuery]);
 
   // Smart filter counts
   const counts = useMemo(() => {
@@ -135,32 +139,60 @@ export function BookingsClientPage({ inquiries }: BookingsClientPageProps) {
               marginTop: "0.25rem",
             }}
           >
-            {view === "kanban"
-              ? "Drag cards between columns to update status."
-              : "Click any row to expand notes, pricing, and email tools."}
+            Drag cards between columns to update status.
           </p>
         </div>
 
-        <ViewToggle value={view} onChange={setView} />
+        <button
+          onClick={() => setShowNewModal(true)}
+          style={{
+            padding: "0.72rem 1.8rem",
+            fontSize: "0.68rem",
+            letterSpacing: "0.12em",
+            textTransform: "uppercase",
+            background: "var(--olive)",
+            color: "var(--white)",
+            border: "none",
+            cursor: "pointer",
+            fontFamily: "'Jost', sans-serif",
+            transition: "background 0.15s",
+            flexShrink: 0,
+          }}
+        >
+          + New Inquiry
+        </button>
+      </div>
+
+      {/* Search */}
+      <div style={{ marginBottom: "0.5rem" }}>
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search by name or email…"
+          style={{
+            width: "100%",
+            maxWidth: "380px",
+            border: "0.5px solid var(--border-strong)",
+            background: "transparent",
+            padding: "0.6rem 0.9rem",
+            fontFamily: "'Jost', sans-serif",
+            fontSize: "0.82rem",
+            color: "var(--charcoal)",
+            outline: "none",
+            borderRadius: 0,
+          }}
+        />
       </div>
 
       {/* Smart filters */}
       <SmartFilters active={smartFilter} onChange={setSmartFilter} counts={counts} />
 
-      {/* Main content */}
-      {view === "kanban" ? (
-        <KanbanBoard
-          inquiries={filtered as KanbanInquiry[]}
-          onOpenDrawer={handleOpenDrawer}
-        />
-      ) : (
-        <BookingTable
-          inquiries={filtered as Inquiry[]}
-          selectedIds={selectedIds}
-          onSelectionChange={setSelectedIds}
-          onOpenDrawer={handleOpenDrawer}
-        />
-      )}
+      {/* Kanban board */}
+      <KanbanBoard
+        inquiries={filtered as KanbanInquiry[]}
+        onOpenDrawer={handleOpenDrawer}
+      />
 
       {/* Bulk actions bar */}
       <BulkActions selectedIds={selectedIds} onClearSelection={handleClearSelection} />
@@ -170,6 +202,11 @@ export function BookingsClientPage({ inquiries }: BookingsClientPageProps) {
         inquiry={drawerInquiry}
         onClose={() => setDrawerInquiry(null)}
       />
+
+      {/* New inquiry modal */}
+      {showNewModal && (
+        <NewInquiryModal onClose={() => setShowNewModal(false)} />
+      )}
     </div>
   );
 }

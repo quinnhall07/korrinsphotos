@@ -391,6 +391,111 @@ export async function recalculateLeadScore(
   }
 }
 
+// ─── Delete Booking Inquiry ───────────────────────────────────────────────────
+
+export async function deleteBookingInquiry(
+  id: string
+): Promise<{ success: boolean; error?: string }> {
+  await requireAdmin();
+
+  try {
+    const doc = await adminDb.collection("bookingInquiries").doc(id).get();
+    if (!doc.exists) return { success: false, error: "Inquiry not found." };
+
+    const name = `${doc.data()?.firstName ?? ""} ${doc.data()?.lastName ?? ""}`.trim();
+    await adminDb.collection("bookingInquiries").doc(id).delete();
+
+    await logActivity(
+      "STATUS_CHANGED",
+      `${name || "Unknown"} inquiry deleted`,
+      { inquiryId: id }
+    ).catch(() => {});
+
+    revalidatePath("/admin/bookings");
+    revalidatePath("/admin");
+    return { success: true };
+  } catch (err) {
+    console.error("deleteBookingInquiry error:", err);
+    return { success: false, error: "Failed to delete inquiry." };
+  }
+}
+
+// ─── Create Booking Inquiry ───────────────────────────────────────────────────
+
+export async function createBookingInquiry(data: {
+  firstName: string;
+  lastName: string;
+  email: string;
+  sessionType: string;
+}): Promise<{ success: boolean; error?: string }> {
+  await requireAdmin();
+
+  try {
+    const newDoc = {
+      firstName: data.firstName,
+      lastName: data.lastName,
+      email: data.email,
+      sessionType: data.sessionType,
+      status: "PENDING",
+      message: "",
+      notes: "",
+      pricing: "",
+      leadScore: calculateLeadScore({
+        sessionType: data.sessionType,
+        message: "",
+        tags: [],
+      }),
+      tags: [],
+      leadSource: null,
+      estimatedValue: null,
+      followUpDate: null,
+      lastContactedAt: null,
+      lastRespondedAt: null,
+      preferredDate: null,
+      communicationLog: [],
+      eventId: null,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+
+    await adminDb.collection("bookingInquiries").add(newDoc);
+
+    await logActivity(
+      "LEAD_RECEIVED",
+      `${data.firstName} ${data.lastName} (${data.sessionType}) added manually`,
+      { email: data.email }
+    ).catch(() => {});
+
+    revalidatePath("/admin/bookings");
+    revalidatePath("/admin");
+    return { success: true };
+  } catch (err) {
+    console.error("createBookingInquiry error:", err);
+    return { success: false, error: "Failed to create inquiry." };
+  }
+}
+
+// ─── Link Event to Inquiry ────────────────────────────────────────────────────
+
+export async function linkEventToInquiry(
+  inquiryId: string,
+  eventId: string | null
+): Promise<{ success: boolean; error?: string }> {
+  await requireAdmin();
+
+  try {
+    await adminDb.collection("bookingInquiries").doc(inquiryId).update({
+      eventId: eventId || null,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    revalidatePath("/admin/bookings");
+    return { success: true };
+  } catch (err) {
+    console.error("linkEventToInquiry error:", err);
+    return { success: false, error: "Failed to link event." };
+  }
+}
+
 // ─── Email Template Builder ───────────────────────────────────────────────────
 
 function buildResponseHtml({

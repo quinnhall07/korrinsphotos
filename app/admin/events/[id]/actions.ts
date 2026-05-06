@@ -11,7 +11,7 @@ import {
   deleteFromCloudflareImages,
   deleteFromR2,
 } from "@/lib/cloudflare";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 
 // ─── Delete Photo ─────────────────────────────────────────────────────────────
 
@@ -89,4 +89,35 @@ export async function updateEventTitle(
   revalidatePath(`/admin/events/${eventId}`);
   revalidatePath("/admin/events");
   revalidatePath("/admin");
+}
+
+// ─── Update Shoot Dates ───────────────────────────────────────────────────────
+
+export async function updateShootDates(
+  eventId: string,
+  shootDate: string | null,
+  shootEndDate: string | null
+): Promise<void> {
+  await requireAdmin();
+
+  const update: Record<string, unknown> = {
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+
+  if (shootDate) {
+    update.shootDate = Timestamp.fromDate(new Date(shootDate + "T12:00:00"));
+  } else {
+    update.shootDate = FieldValue.delete();
+  }
+
+  if (shootEndDate) {
+    update.shootEndDate = Timestamp.fromDate(new Date(shootEndDate + "T12:00:00"));
+  } else {
+    update.shootEndDate = FieldValue.delete();
+  }
+
+  await adminDb.collection("events").doc(eventId).update(update);
+
+  revalidatePath(`/admin/events/${eventId}`);
+  revalidatePath("/admin/events");
 }

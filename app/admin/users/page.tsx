@@ -56,8 +56,45 @@ const ROLE_STYLES: Record<string, React.CSSProperties> = {
 
 export default async function UsersPage() {
   const session = await requireAdmin();
-  const users = await getUsers();
 
+  let users: UserRow[] = [];
+  let error: string | null = null;
+
+  try {
+    users = await getUsers();
+  } catch (err: unknown) {
+    console.error("getUsers error:", err);
+    error = err instanceof Error ? err.message : "Failed to load users from Firestore.";
+  }
+
+  if (error) {
+    return (
+      <div className="page-fade-in">
+        <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "2rem", fontWeight: 300, marginBottom: "1rem" }}>
+          User Management
+        </h2>
+        <div
+          style={{
+            padding: "2rem",
+            border: "0.5px solid #FCA5A5",
+            background: "#FEF2F2",
+            color: "#991B1B",
+            fontSize: "0.88rem",
+            lineHeight: 1.7,
+          }}
+        >
+          <strong>Error loading users</strong>
+          <br />
+          {error}
+          <br />
+          <br />
+          <span style={{ fontSize: "0.78rem", color: "#B91C1C" }}>
+            Check that your Firestore indexes are configured and that FIREBASE_* environment variables are set correctly.
+          </span>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="page-fade-in">
       <div
