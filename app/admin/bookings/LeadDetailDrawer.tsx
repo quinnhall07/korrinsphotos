@@ -3,6 +3,13 @@
 // app/admin/bookings/LeadDetailDrawer.tsx
 // Slide-over panel that opens when a Kanban card (or table row) is clicked.
 // Shows all inquiry details, communication history, tag editor, notes, and email composer.
+//
+// Fixes applied:
+//   • Bug 2 — Move button label now reflects live local status (not stale prop)
+//   • Bug 3 — Backdrop is offset to avoid the fixed navbar (72px top) and the
+//              admin sidebar (260px left) so both remain visible and interactive
+//   • Bug 4 — eventId / eventName are tracked in local state so the linked-event
+//              link updates immediately after selection, before the drawer closes
 
 import { useState, useTransition, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
@@ -39,6 +46,7 @@ const CHANNEL_ICONS: Record<string, string> = {
 
 const LEAD_SOURCES: LeadSource[] = ["WEBSITE", "INSTAGRAM", "REFERRAL", "GOOGLE", "OTHER"];
 
+// Maps a status to the next logical step in the pipeline
 const SESSION_NEXT: Record<string, LeadStatus> = {
   PENDING: "QUALIFIED",
   QUALIFIED: "SENT_PROPOSAL",
@@ -49,34 +57,53 @@ const SESSION_NEXT: Record<string, LeadStatus> = {
 };
 
 export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
-  const router               = useRouter();
-  const needsRefresh         = { current: false };
+  const router = useRouter();
+  const needsRefresh = { current: false };
 
   const handleClose = useCallback(() => {
-    if (needsRefresh.current) {
-      router.refresh();
-    }
+    if (needsRefresh.current) router.refresh();
     onClose();
   }, [onClose, router]);
-  const [tab, setTab]        = useState<Tab>("overview");
+
+  const [tab, setTab] = useState<Tab>("overview");
   const [isPending, startTransition] = useTransition();
 
+  // ── Bug 2: track live status in local state so the Move button updates
+  //    immediately after a successful transition without waiting for a full
+  //    drawer close + reopen cycle.
+  const [liveStatus, setLiveStatus] = useState<LeadStatus>(
+    (inquiry?.status as LeadStatus) ?? "PENDING"
+  );
+
+  // ── Bug 4: track event link in local state for immediate UI feedback
+  const [liveEventId, setLiveEventId] = useState<string | null>(
+    inquiry?.eventId ?? null
+  );
+  const [liveEventName, setLiveEventName] = useState<string | null>(
+    inquiry?.eventName ?? null
+  );
+
   // Notes / pricing form state
-  const [notes, setNotes]               = useState(inquiry?.notes ?? "");
-  const [pricing, setPricing]           = useState(inquiry?.pricing ?? "");
-  const [estimatedValue, setEstimated]  = useState<string>(
+  const [notes, setNotes] = useState(inquiry?.notes ?? "");
+  const [pricing, setPricing] = useState(inquiry?.pricing ?? "");
+  const [estimatedValue, setEstimated] = useState<string>(
     inquiry?.estimatedValue ? String(inquiry.estimatedValue) : ""
   );
-  const [followUp, setFollowUp]         = useState(inquiry?.followUpDate ?? "");
+  const [followUp, setFollowUp] = useState(inquiry?.followUpDate ?? "");
 
   // Email compose state
-  const [emailSubject, setEmailSubject] = useState(`Re: Your ${inquiry?.sessionType ?? ""} Inquiry`);
-  const [emailBody, setEmailBody]       = useState("");
+  const [emailSubject, setEmailSubject] = useState(
+    `Re: Your ${inquiry?.sessionType ?? ""} Inquiry`
+  );
+  const [emailBody, setEmailBody] = useState("");
   const [isSendingEmail, setIsSendingEmail] = useState(false);
 
-  // Re-sync when inquiry changes
+  // Re-sync all local state when the inquiry prop changes (new card opened)
   useEffect(() => {
     if (!inquiry) return;
+    setLiveStatus(inquiry.status as LeadStatus);
+    setLiveEventId(inquiry.eventId ?? null);
+    setLiveEventName(inquiry.eventName ?? null);
     setNotes(inquiry.notes ?? "");
     setPricing(inquiry.pricing ?? "");
     setEstimated(inquiry.estimatedValue ? String(inquiry.estimatedValue) : "");
@@ -97,15 +124,20 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
 
   if (!inquiry) return null;
 
-  const currentStatus = inquiry.status as LeadStatus;
-  const nextStatus = SESSION_NEXT[currentStatus];
+  // Derive display values from local status (Bug 2)
+  const nextStatus = SESSION_NEXT[liveStatus];
   const nextLabel = KANBAN_STATUSES.find((s) => s.id === nextStatus)?.label;
-  const statusStyle = KANBAN_STATUSES.find((s) => s.id === currentStatus)?.badgeStyle ?? {};
+  const statusStyle =
+    KANBAN_STATUSES.find((s) => s.id === liveStatus)?.badgeStyle ?? {};
 
+  // ── Status change — updates local state immediately (Bug 2)
   function handleStatusChange(status: LeadStatus) {
     startTransition(async () => {
       await updateBookingStatus(inquiry!.id, status);
-      toast(`Moved to ${KANBAN_STATUSES.find((s) => s.id === status)?.label ?? status}`);
+      setLiveStatus(status); // ← instant label update
+      toast(
+        `Moved to ${KANBAN_STATUSES.find((s) => s.id === status)?.label ?? status}`
+      );
       needsRefresh.current = true;
     });
   }
@@ -147,7 +179,8 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
   }
 
   function handleDelete() {
-    if (!confirm("Permanently delete this inquiry? This cannot be undone.")) return;
+    if (!confirm("Permanently delete this inquiry? This cannot be undone."))
+      return;
     startTransition(async () => {
       const result = await deleteBookingInquiry(inquiry!.id);
       if (result.success) {
@@ -160,14 +193,30 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
     });
   }
 
+  // ── Bug 4: persist event link and update local display state immediately
   function handleLinkEvent(e: React.ChangeEvent<HTMLSelectElement>) {
-    const eventId = e.target.value || null;
+    const selectedEventId = e.target.value || null;
+    // Capture the option's label text for optimistic display
+    const selectedOption =
+      e.target.selectedOptions[0]?.text ?? null;
+    const selectedEventName =
+      selectedEventId && selectedOption !== "— No event —"
+        ? selectedOption
+        : null;
+
+    // Optimistic local update so the link renders right away
+    setLiveEventId(selectedEventId);
+    setLiveEventName(selectedEventName);
+
     startTransition(async () => {
-      const result = await linkEventToInquiry(inquiry!.id, eventId);
+      const result = await linkEventToInquiry(inquiry!.id, selectedEventId);
       if (result.success) {
-        toast(eventId ? "Event linked ✓" : "Event unlinked");
+        toast(selectedEventId ? "Event linked ✓" : "Event unlinked");
         needsRefresh.current = true;
       } else {
+        // Revert optimistic update on failure
+        setLiveEventId(inquiry!.eventId ?? null);
+        setLiveEventName(inquiry!.eventName ?? null);
         toast(result.error ?? "Failed.");
       }
     });
@@ -197,19 +246,34 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
 
   const TABS: { id: Tab; label: string }[] = [
     { id: "overview", label: "Overview" },
-    { id: "notes",    label: "Notes & CRM" },
-    { id: "comms",    label: `Comms${inquiry.communicationLog.length > 0 ? ` (${inquiry.communicationLog.length})` : ""}` },
-    { id: "email",    label: "Send Email" },
+    { id: "notes", label: "Notes & CRM" },
+    {
+      id: "comms",
+      label: `Comms${inquiry.communicationLog.length > 0
+          ? ` (${inquiry.communicationLog.length})`
+          : ""
+        }`,
+    },
+    { id: "email", label: "Send Email" },
   ];
+
+  // ── Bug 3: the admin layout is a 260px sidebar + content grid sitting below
+  //    the 72px navbar. We want the backdrop to cover only the content column
+  //    (right of sidebar) and below the navbar, leaving both fully interactive.
+  const SIDEBAR_W = 260;
+  const NAVBAR_H = 72;
 
   return (
     <>
-      {/* Backdrop */}
+      {/* ── Bug 3 fix: backdrop scoped to content area only ── */}
       <div
         onClick={handleClose}
         style={{
           position: "fixed",
-          inset: 0,
+          top: NAVBAR_H,
+          left: SIDEBAR_W,
+          right: 0,
+          bottom: 0,
           background: "rgba(42,42,40,0.35)",
           zIndex: 400,
           backdropFilter: "blur(2px)",
@@ -217,14 +281,14 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
         }}
       />
 
-      {/* Drawer panel */}
+      {/* ── Drawer panel — also scoped below navbar ── */}
       <div
         style={{
           position: "fixed",
-          top: 0,
+          top: NAVBAR_H,
           right: 0,
           bottom: 0,
-          width: "min(560px, 94vw)",
+          width: "min(560px, calc(100vw - 260px))",
           zIndex: 401,
           background: "var(--white)",
           boxShadow: "-16px 0 48px rgba(42,42,40,0.18)",
@@ -254,8 +318,15 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
           }}
         >
           <div style={{ flex: 1, minWidth: 0 }}>
-            {/* Status badge */}
-            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
+            {/* Status badge — reads from liveStatus (Bug 2) */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                marginBottom: "0.5rem",
+              }}
+            >
               <span
                 style={{
                   padding: "0.2rem 0.65rem",
@@ -267,7 +338,7 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                   ...statusStyle,
                 }}
               >
-                {currentStatus.replace("_", " ")}
+                {liveStatus.replace("_", " ")}
               </span>
               <LeadScoreBadge score={inquiry.leadScore} showLabel />
             </div>
@@ -284,7 +355,9 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
             >
               {inquiry.firstName} {inquiry.lastName}
             </h2>
-            <p style={{ fontSize: "0.78rem", color: "var(--charcoal-muted)" }}>{inquiry.email}</p>
+            <p style={{ fontSize: "0.78rem", color: "var(--charcoal-muted)" }}>
+              {inquiry.email}
+            </p>
           </div>
 
           <button
@@ -308,7 +381,7 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
           </button>
         </div>
 
-        {/* Quick action bar */}
+        {/* Quick action bar — Move button reads nextStatus from liveStatus (Bug 2) */}
         <div
           style={{
             display: "flex",
@@ -319,7 +392,7 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
             flexShrink: 0,
           }}
         >
-          {currentStatus !== "BOOKED" && currentStatus !== "ARCHIVED" && (
+          {liveStatus !== "BOOKED" && liveStatus !== "ARCHIVED" && (
             <button
               onClick={() => handleStatusChange(nextStatus)}
               disabled={isPending}
@@ -340,9 +413,9 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
             </button>
           )}
 
-          {/* Status select for any transition */}
+          {/* Full status select for arbitrary transitions */}
           <select
-            value={currentStatus}
+            value={liveStatus}
             onChange={(e) => handleStatusChange(e.target.value as LeadStatus)}
             disabled={isPending}
             style={{
@@ -359,14 +432,17 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
             }}
           >
             {ALL_STATUSES.map((s) => (
-              <option key={s} value={s}>{s.replace("_", " ")}</option>
+              <option key={s} value={s}>
+                {s.replace("_", " ")}
+              </option>
             ))}
           </select>
 
-          {currentStatus !== "ARCHIVED" && (
+          {liveStatus !== "ARCHIVED" && (
             <button
               onClick={() => {
-                if (confirm("Archive this inquiry?")) handleStatusChange("ARCHIVED");
+                if (confirm("Archive this inquiry?"))
+                  handleStatusChange("ARCHIVED");
               }}
               style={{
                 padding: "0.5rem 0.9rem",
@@ -422,14 +498,19 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                 letterSpacing: "0.1em",
                 textTransform: "uppercase",
                 cursor: "pointer",
-                color: tab === t.id ? "var(--charcoal)" : "var(--charcoal-muted)",
-                borderBottom: tab === t.id ? "1.5px solid var(--olive)" : "1.5px solid transparent",
+                color:
+                  tab === t.id ? "var(--charcoal)" : "var(--charcoal-muted)",
+                borderBottom:
+                  tab === t.id
+                    ? "1.5px solid var(--olive)"
+                    : "1.5px solid transparent",
                 marginBottom: "-0.5px",
                 background: "none",
                 border: "none",
                 borderBottomStyle: "solid",
                 borderBottomWidth: "1.5px",
-                borderBottomColor: tab === t.id ? "var(--olive)" : "transparent",
+                borderBottomColor:
+                  tab === t.id ? "var(--olive)" : "transparent",
                 fontFamily: "'Jost', sans-serif",
                 transition: "color 0.15s",
                 whiteSpace: "nowrap",
@@ -446,7 +527,6 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
           {/* ── OVERVIEW ── */}
           {tab === "overview" && (
             <div>
-              {/* Key details grid */}
               <div
                 style={{
                   display: "grid",
@@ -461,41 +541,72 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                   { label: "Received", value: inquiry.createdAt },
                   { label: "Lead Source", value: inquiry.leadSource ?? "—" },
                   ...(inquiry.estimatedValue
-                    ? [{ label: "Est. Value", value: `$${inquiry.estimatedValue.toLocaleString()}` }]
+                    ? [
+                      {
+                        label: "Est. Value",
+                        value: `$${inquiry.estimatedValue.toLocaleString()}`,
+                      },
+                    ]
                     : []),
                   ...(inquiry.pricing
                     ? [{ label: "Quoted Pricing", value: inquiry.pricing }]
                     : []),
                   ...(inquiry.followUpDate
-                    ? [{ label: "Follow-Up", value: new Date(inquiry.followUpDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) }]
+                    ? [
+                      {
+                        label: "Follow-Up",
+                        value: new Date(inquiry.followUpDate).toLocaleDateString(
+                          "en-US",
+                          { month: "short", day: "numeric", year: "numeric" }
+                        ),
+                      },
+                    ]
                     : []),
                   ...(inquiry.lastRespondedAt
                     ? [{ label: "Last Responded", value: inquiry.lastRespondedAt }]
                     : []),
                 ].map(({ label, value }) => (
                   <div key={label}>
-                    <p style={{ fontSize: "0.6rem", letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--charcoal-muted)", marginBottom: "0.2rem" }}>
+                    <p
+                      style={{
+                        fontSize: "0.6rem",
+                        letterSpacing: "0.12em",
+                        textTransform: "uppercase",
+                        color: "var(--charcoal-muted)",
+                        marginBottom: "0.2rem",
+                      }}
+                    >
                       {label}
                     </p>
-                    <p style={{ fontSize: "0.85rem", color: "var(--charcoal)", fontFamily: "'Jost', sans-serif" }}>
+                    <p
+                      style={{
+                        fontSize: "0.85rem",
+                        color: "var(--charcoal)",
+                        fontFamily: "'Jost', sans-serif",
+                      }}
+                    >
                       {value}
                     </p>
                   </div>
                 ))}
               </div>
 
-              {/* Lead score visual */}
               <div style={{ marginBottom: "1.25rem" }}>
-                <LeadScoreBadge score={inquiry.leadScore} size="md" showLabel />
+                <LeadScoreBadge
+                  score={inquiry.leadScore}
+                  size="md"
+                  showLabel
+                />
               </div>
 
-              {/* Tags */}
               <div style={{ marginBottom: "1.25rem" }}>
                 <p style={sectionLabelStyle}>Tags</p>
-                <TagManager inquiryId={inquiry.id} currentTags={inquiry.tags} />
+                <TagManager
+                  inquiryId={inquiry.id}
+                  currentTags={inquiry.tags}
+                />
               </div>
 
-              {/* Original message */}
               <div>
                 <p style={sectionLabelStyle}>Client Message</p>
                 <div
@@ -518,7 +629,6 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
           {/* ── NOTES & CRM ── */}
           {tab === "notes" && (
             <div>
-              {/* Lead source */}
               <div style={{ marginBottom: "1.25rem" }}>
                 <p style={sectionLabelStyle}>Lead Source</p>
                 <select
@@ -528,12 +638,13 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                 >
                   <option value="">Unknown</option>
                   {LEAD_SOURCES.map((s) => (
-                    <option key={s} value={s}>{s}</option>
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
                   ))}
                 </select>
               </div>
 
-              {/* Estimated value */}
               <div style={{ marginBottom: "1.25rem" }}>
                 <p style={sectionLabelStyle}>Estimated Value (USD)</p>
                 <input
@@ -547,7 +658,6 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                 />
               </div>
 
-              {/* Quoted pricing */}
               <div style={{ marginBottom: "1.25rem" }}>
                 <p style={sectionLabelStyle}>Quoted Pricing</p>
                 <input
@@ -559,7 +669,6 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                 />
               </div>
 
-              {/* Follow-up date */}
               <div style={{ marginBottom: "1.25rem" }}>
                 <p style={sectionLabelStyle}>Follow-Up Date</p>
                 <div style={{ display: "flex", gap: 0 }}>
@@ -579,7 +688,6 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                 </div>
               </div>
 
-              {/* Internal notes */}
               <div style={{ marginBottom: "1.25rem" }}>
                 <p style={sectionLabelStyle}>Internal Notes</p>
                 <textarea
@@ -603,7 +711,9 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                   fontSize: "0.68rem",
                   letterSpacing: "0.12em",
                   textTransform: "uppercase",
-                  background: isPending ? "var(--charcoal-muted)" : "var(--olive)",
+                  background: isPending
+                    ? "var(--charcoal-muted)"
+                    : "var(--olive)",
                   color: "var(--white)",
                   border: "none",
                   cursor: isPending ? "not-allowed" : "pointer",
@@ -614,16 +724,16 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                 {isPending ? "Saving…" : "Save Changes"}
               </button>
 
-              {/* Event linking */}
+              {/* ── Bug 4: event link section — uses liveEventId / liveEventName ── */}
               <div style={{ marginTop: "1.5rem" }}>
                 <p style={sectionLabelStyle}>Link to Event</p>
                 <EventLinkSelect
-                  currentEventId={inquiry.eventId ?? null}
+                  currentEventId={liveEventId}
                   onChange={handleLinkEvent}
                 />
-                {inquiry.eventId && inquiry.eventName && (
+                {liveEventId && liveEventName && (
                   <a
-                    href={`/admin/events/${inquiry.eventId}`}
+                    href={`/admin/events/${liveEventId}`}
                     style={{
                       display: "inline-block",
                       marginTop: "0.5rem",
@@ -632,7 +742,7 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                       textDecoration: "underline",
                     }}
                   >
-                    View: {inquiry.eventName}
+                    View: {liveEventName}
                   </a>
                 )}
               </div>
@@ -646,19 +756,30 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                 <p style={sectionLabelStyle}>Log an Interaction</p>
                 <CommunicationLogger
                   inquiryId={inquiry.id}
-                  onLogged={() => { needsRefresh.current = true; }}
+                  onLogged={() => {
+                    needsRefresh.current = true;
+                  }}
                 />
               </div>
 
-              {/* Timeline */}
               {inquiry.communicationLog.length > 0 ? (
                 <div>
                   <p style={sectionLabelStyle}>
                     History ({inquiry.communicationLog.length})
                   </p>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "0.6rem",
+                    }}
+                  >
                     {[...inquiry.communicationLog]
-                      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+                      .sort(
+                        (a, b) =>
+                          new Date(b.timestamp).getTime() -
+                          new Date(a.timestamp).getTime()
+                      )
                       .map((entry) => (
                         <div
                           key={entry.id}
@@ -669,21 +790,53 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                             borderLeft: "2px solid var(--olive)",
                           }}
                         >
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.35rem" }}>
-                            <span style={{ fontSize: "0.68rem", letterSpacing: "0.08em", color: "var(--charcoal-muted)", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              marginBottom: "0.35rem",
+                            }}
+                          >
+                            <span
+                              style={{
+                                fontSize: "0.68rem",
+                                letterSpacing: "0.08em",
+                                color: "var(--charcoal-muted)",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "0.35rem",
+                              }}
+                            >
                               {CHANNEL_ICONS[entry.channel] ?? "📌"}
-                              <span style={{ textTransform: "uppercase" }}>{entry.channel.replace("_", " ")}</span>
+                              <span style={{ textTransform: "uppercase" }}>
+                                {entry.channel.replace("_", " ")}
+                              </span>
                             </span>
-                            <span style={{ fontSize: "0.65rem", color: "var(--charcoal-muted)" }}>
-                              {new Date(entry.timestamp).toLocaleDateString("en-US", {
-                                month: "short",
-                                day: "numeric",
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
+                            <span
+                              style={{
+                                fontSize: "0.65rem",
+                                color: "var(--charcoal-muted)",
+                              }}
+                            >
+                              {new Date(entry.timestamp).toLocaleDateString(
+                                "en-US",
+                                {
+                                  month: "short",
+                                  day: "numeric",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                }
+                              )}
                             </span>
                           </div>
-                          <p style={{ fontSize: "0.85rem", color: "var(--charcoal-light)", lineHeight: 1.7 }}>
+                          <p
+                            style={{
+                              fontSize: "0.85rem",
+                              color: "var(--charcoal-light)",
+                              lineHeight: 1.7,
+                            }}
+                          >
                             {entry.summary}
                           </p>
                         </div>
@@ -691,7 +844,13 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                   </div>
                 </div>
               ) : (
-                <p style={{ fontSize: "0.82rem", color: "var(--charcoal-muted)", fontStyle: "italic" }}>
+                <p
+                  style={{
+                    fontSize: "0.82rem",
+                    color: "var(--charcoal-muted)",
+                    fontStyle: "italic",
+                  }}
+                >
                   No interactions logged yet.
                 </p>
               )}
@@ -713,8 +872,18 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
               </div>
 
               <form onSubmit={handleSendEmail}>
-                <p style={{ fontSize: "0.72rem", color: "var(--charcoal-muted)", marginBottom: "1rem", lineHeight: 1.6 }}>
-                  Sending to <strong style={{ color: "var(--charcoal)" }}>{inquiry.email}</strong>
+                <p
+                  style={{
+                    fontSize: "0.72rem",
+                    color: "var(--charcoal-muted)",
+                    marginBottom: "1rem",
+                    lineHeight: 1.6,
+                  }}
+                >
+                  Sending to{" "}
+                  <strong style={{ color: "var(--charcoal)" }}>
+                    {inquiry.email}
+                  </strong>
                 </p>
 
                 <div style={{ marginBottom: "1rem" }}>
@@ -735,10 +904,22 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                     onChange={(e) => setEmailBody(e.target.value)}
                     placeholder="Write your response…"
                     required
-                    style={{ ...inputStyle, resize: "vertical", minHeight: "220px", lineHeight: 1.75 }}
+                    style={{
+                      ...inputStyle,
+                      resize: "vertical",
+                      minHeight: "220px",
+                      lineHeight: 1.75,
+                    }}
                   />
-                  <p style={{ marginTop: "0.35rem", fontSize: "0.68rem", color: "var(--charcoal-muted)" }}>
-                    Line breaks preserved. Sending moves the lead to Qualified automatically.
+                  <p
+                    style={{
+                      marginTop: "0.35rem",
+                      fontSize: "0.68rem",
+                      color: "var(--charcoal-muted)",
+                    }}
+                  >
+                    Line breaks preserved. Sending moves the lead to Qualified
+                    automatically.
                   </p>
                 </div>
 
@@ -751,7 +932,9 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
                       fontSize: "0.68rem",
                       letterSpacing: "0.12em",
                       textTransform: "uppercase",
-                      background: isSendingEmail ? "var(--charcoal-muted)" : "var(--olive)",
+                      background: isSendingEmail
+                        ? "var(--charcoal-muted)"
+                        : "var(--olive)",
                       color: "var(--white)",
                       border: "none",
                       cursor: isSendingEmail ? "not-allowed" : "pointer",
@@ -786,6 +969,8 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
     </>
   );
 }
+
+// ── Shared style constants ─────────────────────────────────────────────────────
 
 const sectionLabelStyle: React.CSSProperties = {
   fontSize: "0.62rem",
@@ -823,6 +1008,8 @@ const inlineButtonStyle: React.CSSProperties = {
   flexShrink: 0,
 };
 
+// ── EventLinkSelect — fetches event list from the API ─────────────────────────
+
 function EventLinkSelect({
   currentEventId,
   onChange,
@@ -837,7 +1024,7 @@ function EventLinkSelect({
     fetch("/api/events-list")
       .then((r) => r.json())
       .then((data) => setEvents(data.events ?? []))
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => setLoading(false));
   }, []);
 

@@ -3,6 +3,8 @@
 // app/booking/BookingForm.tsx
 // Client component wrapping the booking form.
 // On submit, calls the submitBooking Server Action which writes to the DB.
+// Uses controlled inputs so field values are preserved when a server-side
+// validation error is returned.
 
 import { useState, useTransition } from "react";
 import { submitBooking } from "./actions";
@@ -34,13 +36,32 @@ export function BookingForm() {
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  async function handleSubmit(formData: FormData) {
+  // Controlled field state — values are preserved across submit attempts
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [email, setEmail] = useState("");
+  const [sessionType, setSessionType] = useState("");
+  const [preferredDate, setPreferredDate] = useState("");
+  const [message, setMessage] = useState("");
+
+  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
     setError(null);
+
+    const formData = new FormData();
+    formData.set("firstName", firstName);
+    formData.set("lastName", lastName);
+    formData.set("email", email);
+    formData.set("sessionType", sessionType);
+    formData.set("preferredDate", preferredDate);
+    formData.set("message", message);
+
     startTransition(async () => {
       const result = await submitBooking(formData);
       if (result.success) {
         setSuccess(true);
       } else {
+        // Error is shown inline; all field values are preserved via state
         setError(result.error ?? "Something went wrong. Please try again.");
       }
     });
@@ -65,7 +86,7 @@ export function BookingForm() {
   }
 
   return (
-    <form action={handleSubmit}>
+    <form onSubmit={handleSubmit}>
       {/* Name row */}
       <div
         style={{
@@ -83,6 +104,8 @@ export function BookingForm() {
             type="text"
             placeholder="Jane"
             required
+            value={firstName}
+            onChange={(e) => setFirstName(e.target.value)}
             style={inputStyle}
           />
         </div>
@@ -94,6 +117,8 @@ export function BookingForm() {
             type="text"
             placeholder="Doe"
             required
+            value={lastName}
+            onChange={(e) => setLastName(e.target.value)}
             style={inputStyle}
           />
         </div>
@@ -108,6 +133,8 @@ export function BookingForm() {
           type="email"
           placeholder="jane@example.com"
           required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
           style={inputStyle}
         />
       </div>
@@ -123,7 +150,13 @@ export function BookingForm() {
       >
         <div>
           <label style={labelStyle}>Session Type</label>
-          <select name="sessionType" required style={inputStyle}>
+          <select
+            name="sessionType"
+            required
+            value={sessionType}
+            onChange={(e) => setSessionType(e.target.value)}
+            style={inputStyle}
+          >
             <option value="">Select a type</option>
             <option>Wedding</option>
             <option>Portrait</option>
@@ -138,6 +171,8 @@ export function BookingForm() {
             name="preferredDate"
             className="form-input"
             type="date"
+            value={preferredDate}
+            onChange={(e) => setPreferredDate(e.target.value)}
             style={inputStyle}
           />
         </div>
@@ -151,6 +186,8 @@ export function BookingForm() {
           className="form-input"
           placeholder="Describe your ideal session, location ideas, mood, or anything you'd like me to know..."
           required
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
           style={{ ...inputStyle, resize: "vertical", minHeight: "120px", lineHeight: 1.7 }}
         />
       </div>
