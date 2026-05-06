@@ -3,6 +3,7 @@
 // app/booking/actions.ts
 // Server Action: validates booking form and writes to Firestore.
 // Also fires an auto-responder email via the Firebase "Trigger Email" extension.
+// Applies automatic tags based on inquiry data (Rush, High-Budget, Destination, etc.)
 
 import { adminDb }    from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
@@ -65,11 +66,50 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
       updatedAt: FieldValue.serverTimestamp(),
     };
 
-    // Calculate initial lead score
+    // ── Automatic tagging heuristics ──────────────────────────────────────────
+    const autoTags: string[] = [];
+
+    // "Rush" — preferred date is within 30 days
+    if (preferredDate) {
+      const daysUntil = Math.round(
+        (new Date(preferredDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+      );
+      if (daysUntil >= 0 && daysUntil <= 30) {
+        autoTags.push("Rush");
+      }
+    }
+
+    // "High-Budget" — Wedding sessions tend to be higher investment
+    if (sessionType === "Wedding") {
+      autoTags.push("High-Budget");
+    }
+
+    // "Destination" — message mentions travel/location keywords
+    const destinationKeywords = [
+      "destination", "travel", "out of state", "out-of-state", "flying",
+      "abroad", "international", "beach", "resort", "island", "overseas",
+      "europe", "mexico", "caribbean", "hawaii", "bali", "italy", "france",
+      "spain", "greece", "costa rica", "vineyard", "mountain",
+    ];
+    const msgLower = message.toLowerCase();
+    if (destinationKeywords.some((kw) => msgLower.includes(kw))) {
+      autoTags.push("Destination");
+    }
+
+    // "Needs Follow-Up" — no preferred date means we should reach out to clarify
+    if (!preferredDate) {
+      autoTags.push("Needs Follow-Up");
+    }
+
+    // Apply auto-tags to inquiry data
+    inquiryData.tags = autoTags;
+
+    // Calculate initial lead score (with tags applied so they influence score)
     const leadScore = calculateLeadScore({
       sessionType,
       message,
       preferredDate: preferredDate ?? undefined,
+      tags: autoTags,
     });
 
     // Write the inquiry
@@ -133,7 +173,7 @@ function buildAutoResponderHtml({
     <!-- Header -->
     <div style="background:#2A2A28;padding:32px 40px;">
       <p style="margin:0;font-size:22px;font-weight:300;color:#FAF9F6;letter-spacing:0.04em;">
-        Korrin&apos;s Photos<span style="color:#6B7845;">.</span>
+        Korrin&apos;s Photography<span style="color:#6B7845;">.</span>
       </p>
     </div>
 
@@ -178,7 +218,7 @@ function buildAutoResponderHtml({
     <div style="padding:24px 40px;border-top:0.5px solid rgba(42,42,40,0.12);">
       <p style="margin:0;font-size:12px;color:#8A8A85;line-height:1.6;">
         This is an automated confirmation. Please don't reply to this email — Korrin will reach out directly from her personal address.<br><br>
-        © ${new Date().getFullYear()} Korrin's Photos. All rights reserved.
+        © ${new Date().getFullYear()} Korrin's Photography. All rights reserved.
       </p>
     </div>
 

@@ -287,7 +287,7 @@ export default function SettingsPage() {
             {/* ── Connected Accounts ── */}
             {activeSection === "connected" && (
               <div>
-                <SectionHeader title="Connected Accounts" subtitle="Manage the services linked to your Korrin's Photos account." />
+                <SectionHeader title="Connected Accounts" subtitle="Manage the services linked to your Korrin's Photography account." />
 
                 <div style={{ border: "0.5px solid var(--border)", overflow: "hidden" }}>
                   {Object.entries(PROVIDER_LABELS).map(([providerId, { label, icon }], i, arr) => {

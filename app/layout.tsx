@@ -10,14 +10,14 @@ import { Toaster }      from "@/components/ui/Toaster";
 
 export const metadata: Metadata = {
   title: {
-    default:  "Korrin's Photos",
-    template: "%s | Korrin's Photos",
+    default:  "Korrin's Photography",
+    template: "%s | Korrin's Photography",
   },
   description:
     "Fine art photography for weddings, portraits, and editorial work — crafted with intention and an eye for the extraordinary.",
   icons: { icon: "/favicon.ico" },
   openGraph: {
-    title:       "Korrin's Photos",
+    title:       "Korrin's Photography",
     description: "Fine art photography for weddings, portraits, and editorial work.",
     type:        "website",
   },

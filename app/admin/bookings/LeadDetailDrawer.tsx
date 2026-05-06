@@ -136,7 +136,10 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
   const nextStatus = SESSION_NEXT[liveStatus];
   const nextLabel = KANBAN_STATUSES.find((s) => s.id === nextStatus)?.label;
   const statusStyle =
-    KANBAN_STATUSES.find((s) => s.id === liveStatus)?.badgeStyle ?? {};
+    ALL_STATUSES.includes(liveStatus)
+      ? (KANBAN_STATUSES.find((s) => s.id === liveStatus)?.badgeStyle ??
+         (liveStatus === "ARCHIVED" ? { background: "rgba(42,42,40,0.06)", color: "var(--charcoal-muted)" } : {}))
+      : {};
 
   function handleStatusChange(status: LeadStatus) {
     startTransition(async () => {

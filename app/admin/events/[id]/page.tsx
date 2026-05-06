@@ -13,6 +13,7 @@ import { PhotoGrid } from "./PhotoGrid";
 import { AddToCalendarButton } from "./AddToCalendarButton";
 import { TitleEditor } from "./TitleEditor";
 import { ShootDateEditor } from "./ShootDateEditor";
+import { EventActions } from "./EventActions";
 import type { Metadata } from "next";
 
 export const dynamic = "force-dynamic";
@@ -201,6 +202,14 @@ export default async function EventDetailPage({ params }: Props) {
           </div>
         </div>
       )}
+
+      {/* Danger zone — delete event / clear gallery */}
+      <EventActions
+        eventId={event.id}
+        eventTitle={event.title}
+        photoCount={photos.length}
+        clientCount={clients.length}
+      />
     </div>
   );
 }

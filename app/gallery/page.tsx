@@ -11,7 +11,7 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "My Galleries",
-  description: "Your private photo galleries from Korrin's Photos.",
+  description: "Your private photo galleries from Korrin's Photography.",
 };
 
 export const dynamic = "force-dynamic";

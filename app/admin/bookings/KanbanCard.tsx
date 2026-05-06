@@ -60,6 +60,29 @@ export function KanbanCard({ inquiry, onOpen, onDragStart }: KanbanCardProps) {
     inquiry.status !== "BOOKED" &&
     inquiry.status !== "ARCHIVED";
 
+  // ── Urgency tracking for PENDING inquiries ────────────────────────────────
+  const urgency = (() => {
+    if (inquiry.status !== "PENDING" || !inquiry.createdAt) return null;
+    const elapsedMs = Date.now() - new Date(inquiry.createdAt).getTime();
+    const elapsedHours = elapsedMs / (1000 * 60 * 60);
+
+    const formatAge = (h: number) => {
+      if (h < 1) return `${Math.max(1, Math.round(h * 60))}m`;
+      if (h < 24) return `${Math.round(h)}h`;
+      const days = Math.floor(h / 24);
+      const rem = Math.round(h % 24);
+      return rem > 0 ? `${days}d ${rem}h` : `${days}d`;
+    };
+
+    if (elapsedHours >= 48) {
+      return { label: formatAge(elapsedHours), bg: "#FEE2E2", color: "#991B1B", title: "Over 48h — urgent response needed" };
+    }
+    if (elapsedHours >= 24) {
+      return { label: formatAge(elapsedHours), bg: "#FEF3C7", color: "#92400E", title: "24–48h — respond soon" };
+    }
+    return { label: formatAge(elapsedHours), bg: "#D1FAE5", color: "#065F46", title: "Under 24h" };
+  })();
+
   return (
     <div
       draggable
@@ -91,6 +114,30 @@ export function KanbanCard({ inquiry, onOpen, onDragStart }: KanbanCardProps) {
             background: "#EF4444",
           }}
         />
+      )}
+
+      {/* Urgency badge for PENDING inquiries */}
+      {urgency && (
+        <div
+          title={urgency.title}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "0.3rem",
+            padding: "0.18rem 0.55rem",
+            fontSize: "0.56rem",
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            fontFamily: "'Jost', sans-serif",
+            fontWeight: 600,
+            background: urgency.bg,
+            color: urgency.color,
+            marginBottom: "0.5rem",
+          }}
+        >
+          <span style={{ fontSize: "0.6rem" }}>⏱</span>
+          {urgency.label} ago
+        </div>
       )}
 
       {/* Session type badge */}

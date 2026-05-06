@@ -73,11 +73,6 @@ export function Navbar() {
           // Inside admin — minimal nav
           <>
             <li>
-              <Link href="/gallery" style={navLinkStyle}>
-                My Galleries
-              </Link>
-            </li>
-            <li>
               <Link href="/" style={navLinkStyle}>← Public Site</Link>
             </li>
           </>
@@ -230,36 +225,9 @@ export function Navbar() {
                         )}
                       </div>
 
+
                       {/* Menu items */}
                       <div style={{ padding: "0.4rem 0" }}>
-                        {role === "ADMIN" && (
-                          <Link
-                            href="/admin"
-                            onClick={() => setDropdownOpen(false)}
-                            style={dropdownItemStyle}
-                          >
-                            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2">
-                              <rect x="1" y="1" width="6" height="6" rx="1"/>
-                              <rect x="9" y="1" width="6" height="6" rx="1"/>
-                              <rect x="1" y="9" width="6" height="6" rx="1"/>
-                              <rect x="9" y="9" width="6" height="6" rx="1"/>
-                            </svg>
-                            Admin Dashboard
-                          </Link>
-                        )}
-
-                        <Link
-                          href="/gallery"
-                          onClick={() => setDropdownOpen(false)}
-                          style={dropdownItemStyle}
-                        >
-                          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
-                            <rect x="1" y="1" width="12" height="10" rx="1"/>
-                            <path d="M1 8l3-3 3 3 2-2 4 4"/>
-                          </svg>
-                          My Galleries
-                        </Link>
-
                         <Link
                           href="/settings"
                           onClick={() => setDropdownOpen(false)}

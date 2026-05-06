@@ -29,7 +29,7 @@ export default function Loading() {
             animation: "pulse 1.6s ease-in-out infinite",
           }}
         >
-          Korrin&apos;s Photos<span style={{ color: "var(--olive)" }}>.</span>
+          Korrin&apos;s Photography<span style={{ color: "var(--olive)" }}>.</span>
         </div>
         <style>{`
           @keyframes pulse {
