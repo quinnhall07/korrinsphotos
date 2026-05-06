@@ -250,8 +250,8 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
     {
       id: "comms",
       label: `Comms${inquiry.communicationLog.length > 0
-          ? ` (${inquiry.communicationLog.length})`
-          : ""
+        ? ` (${inquiry.communicationLog.length})`
+        : ""
         }`,
     },
     { id: "email", label: "Send Email" },
@@ -265,27 +265,28 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
 
   return (
     <>
-      {/* ── Bug 3 fix: backdrop scoped to content area only ── */}
+      {/* Backdrop: covers only the content area (right of sidebar, below navbar) */}
       <div
         onClick={handleClose}
         style={{
           position: "fixed",
-          top: NAVBAR_H,
-          left: SIDEBAR_W,
+          top: 72,
+          left: 260,
           right: 0,
           bottom: 0,
           background: "rgba(42,42,40,0.35)",
           zIndex: 400,
           backdropFilter: "blur(2px)",
+          WebkitBackdropFilter: "blur(2px)",
           animation: "fadeIn 0.2s ease",
         }}
       />
 
-      {/* ── Drawer panel — also scoped below navbar ── */}
+      {/* Drawer: hugs right edge, starts below navbar, fills to bottom */}
       <div
         style={{
           position: "fixed",
-          top: NAVBAR_H,
+          top: 72,
           right: 0,
           bottom: 0,
           width: "min(560px, calc(100vw - 260px))",
