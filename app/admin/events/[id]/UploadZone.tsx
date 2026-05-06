@@ -10,6 +10,7 @@
 import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "@/components/ui/Toaster";
+import { uploadMultipartFile } from "@/lib/upload";
 
 interface UploadZoneProps {
   eventId: string;
@@ -22,7 +23,9 @@ interface UploadFile {
   error?: string;
 }
 
-const ACCEPTED = ["image/jpeg", "image/png", "image/webp", "image/heic"];
+const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic"];
+const ACCEPTED_EXTS = [".jpg", ".jpeg", ".png", ".webp", ".heic", ".raw", ".cr2", ".nef", ".arw", ".dng"];
+const MULTIPART_THRESHOLD = 15 * 1024 * 1024; // 15MB
 
 export function UploadZone({ eventId }: UploadZoneProps) {
   const [files, setFiles] = useState<UploadFile[]>([]);
@@ -39,6 +42,30 @@ export function UploadZone({ eventId }: UploadZoneProps) {
         )
       );
 
+      // Branch based on file size
+      if (file.size > MULTIPART_THRESHOLD) {
+        try {
+          await uploadMultipartFile(file, eventId, (progress) => {
+            setFiles((prev) =>
+              prev.map((f, i) => (i === index ? { ...f, progress } : f))
+            );
+          });
+          setFiles((prev) =>
+            prev.map((f, i) =>
+              i === index ? { ...f, status: "done", progress: 100 } : f
+            )
+          );
+        } catch (error: any) {
+          setFiles((prev) =>
+            prev.map((f, i) =>
+              i === index ? { ...f, status: "error", error: error.message } : f
+            )
+          );
+        }
+        return;
+      }
+
+      // Step 1 — get pre-signed URL for normal files
       let presignedUrl: string;
       let key: string;
 
@@ -129,9 +156,14 @@ export function UploadZone({ eventId }: UploadZoneProps) {
 
   const startUploads = useCallback(
     async (selectedFiles: File[]) => {
-      const valid = selectedFiles.filter((f) => ACCEPTED.includes(f.type));
+      const valid = selectedFiles.filter((f) => {
+        if (ACCEPTED_TYPES.includes(f.type)) return true;
+        const ext = f.name.toLowerCase().match(/\.[^.]+$/)?.[0];
+        return ext && ACCEPTED_EXTS.includes(ext);
+      });
+      
       if (valid.length === 0) {
-        toast("Please select JPG, PNG, WEBP, or HEIC images.");
+        toast("Please select supported images (including RAW formats).");
         return;
       }
 
@@ -220,7 +252,7 @@ export function UploadZone({ eventId }: UploadZoneProps) {
           Drag &amp; drop images here
         </h4>
         <p style={{ fontSize: "0.75rem", color: "var(--charcoal-muted)" }}>
-          or click to select files · JPG, PNG, WEBP, HEIC · Up to 50MB each
+          or click to select files · JPG, PNG, WEBP, HEIC, RAW
         </p>
         <p
           style={{
@@ -236,7 +268,7 @@ export function UploadZone({ eventId }: UploadZoneProps) {
       <input
         ref={inputRef}
         type="file"
-        accept={ACCEPTED.join(",")}
+        accept={[...ACCEPTED_TYPES, ...ACCEPTED_EXTS].join(",")}
         multiple
         style={{ display: "none" }}
         onChange={handleChange}

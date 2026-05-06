@@ -8,6 +8,11 @@ import {
   PutObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand, // Add this import
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
+  CompletedPart,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -57,6 +62,108 @@ export async function generatePresignedUploadUrl({
   const presignedUrl = await getSignedUrl(r2, command, { expiresIn: 900 });
 
   return { presignedUrl, key };
+}
+
+// ─── Multipart Upload API ─────────────────────────────────────────────────────
+
+/**
+ * Initiates a multipart upload for large files (e.g., RAW photos).
+ * Returns the UploadId needed for subsequent part uploads and completion.
+ */
+export async function createMultipartUpload({
+  key,
+  contentType,
+  eventId,
+}: {
+  key: string;
+  contentType: string;
+  eventId: string;
+}): Promise<string> {
+  const command = new CreateMultipartUploadCommand({
+    Bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME!,
+    Key: key,
+    ContentType: contentType,
+    Metadata: {
+      eventId,
+      uploadedAt: new Date().toISOString(),
+    },
+  });
+
+  const response = await r2.send(command);
+  if (!response.UploadId) {
+    throw new Error("Failed to create multipart upload: No UploadId returned.");
+  }
+  return response.UploadId;
+}
+
+/**
+ * Generates presigned URLs for each part of a multipart upload.
+ */
+export async function generatePresignedPartUrls({
+  key,
+  uploadId,
+  parts,
+}: {
+  key: string;
+  uploadId: string;
+  parts: number;
+}): Promise<{ partNumber: number; url: string }[]> {
+  const urls: { partNumber: number; url: string }[] = [];
+
+  for (let i = 1; i <= parts; i++) {
+    const command = new UploadPartCommand({
+      Bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME!,
+      Key: key,
+      UploadId: uploadId,
+      PartNumber: i,
+    });
+    // Parts can take longer to upload, give it 1 hour
+    const url = await getSignedUrl(r2, command, { expiresIn: 3600 });
+    urls.push({ partNumber: i, url });
+  }
+
+  return urls;
+}
+
+/**
+ * Completes a multipart upload once all parts are uploaded.
+ */
+export async function completeMultipartUpload({
+  key,
+  uploadId,
+  parts,
+}: {
+  key: string;
+  uploadId: string;
+  parts: CompletedPart[];
+}): Promise<void> {
+  const command = new CompleteMultipartUploadCommand({
+    Bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME!,
+    Key: key,
+    UploadId: uploadId,
+    MultipartUpload: { Parts: parts },
+  });
+
+  await r2.send(command);
+}
+
+/**
+ * Aborts a multipart upload, cleaning up any uploaded parts.
+ */
+export async function abortMultipartUpload({
+  key,
+  uploadId,
+}: {
+  key: string;
+  uploadId: string;
+}): Promise<void> {
+  const command = new AbortMultipartUploadCommand({
+    Bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME!,
+    Key: key,
+    UploadId: uploadId,
+  });
+
+  await r2.send(command);
 }
 
 /**
