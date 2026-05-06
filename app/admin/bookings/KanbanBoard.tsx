@@ -2,8 +2,7 @@
 
 // app/admin/bookings/KanbanBoard.tsx
 // Drag-and-drop Kanban board for managing booking inquiry pipeline.
-// Columns map to LeadStatus values (excluding ARCHIVED).
-// Drag between columns fires updateBookingStatus server action.
+// Uses dnd-kit for smooth drag animations.
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
@@ -11,6 +10,17 @@ import { KanbanCard, type KanbanInquiry } from "./KanbanCard";
 import { updateBookingStatus } from "./actions";
 import { toast } from "@/components/ui/Toaster";
 import { KANBAN_STATUSES, type LeadStatus } from "@/lib/booking-kanban";
+import {
+  DndContext,
+  DragOverlay,
+  closestCorners,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+  DragStartEvent,
+  useDroppable,
+} from "@dnd-kit/core";
 
 interface KanbanBoardProps {
   inquiries: KanbanInquiry[];
@@ -18,13 +28,18 @@ interface KanbanBoardProps {
 }
 
 export function KanbanBoard({ inquiries, onOpenDrawer }: KanbanBoardProps) {
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [dragOverColumn, setDragOverColumn] = useState<LeadStatus | null>(null);
   const [, startTransition] = useTransition();
   const router = useRouter();
+  const [activeId, setActiveId] = useState<string | null>(null);
 
-  // Group inquiries by status (only active statuses — ARCHIVED excluded)
-  // Sort each column: overdue follow-ups first, then by leadScore descending
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 5, // Requires a 5px drag to start, allowing clicks to pass through
+      },
+    })
+  );
+
   const now = new Date();
   const byStatus = KANBAN_STATUSES.reduce<Record<string, KanbanInquiry[]>>(
     (acc, col) => {
@@ -45,9 +60,7 @@ export function KanbanBoard({ inquiries, onOpenDrawer }: KanbanBoardProps) {
             b.status !== "ARCHIVED"
               ? 1
               : 0;
-          // Overdue first (descending flag: overdue=1 goes first)
           if (bOverdue !== aOverdue) return bOverdue - aOverdue;
-          // Then by leadScore descending
           return (b.leadScore ?? 0) - (a.leadScore ?? 0);
         });
       return acc;
@@ -55,32 +68,21 @@ export function KanbanBoard({ inquiries, onOpenDrawer }: KanbanBoardProps) {
     {}
   );
 
-  function handleDragStart(e: React.DragEvent, id: string) {
-    setDraggingId(id);
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", id);
+  function handleDragStart(event: DragStartEvent) {
+    setActiveId(event.active.id as string);
   }
 
-  function handleDragOver(e: React.DragEvent, status: LeadStatus) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    setDragOverColumn(status);
-  }
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    setActiveId(null);
 
-  function handleDragLeave() {
-    setDragOverColumn(null);
-  }
+    if (!over) return;
 
-  function handleDrop(e: React.DragEvent, targetStatus: LeadStatus) {
-    e.preventDefault();
-    setDragOverColumn(null);
-
-    const id = e.dataTransfer.getData("text/plain") || draggingId;
-    if (!id) return;
+    const id = active.id as string;
+    const targetStatus = over.id as LeadStatus;
 
     const inquiry = inquiries.find((i) => i.id === id);
     if (!inquiry || inquiry.status === targetStatus) {
-      setDraggingId(null);
       return;
     }
 
@@ -90,146 +92,168 @@ export function KanbanBoard({ inquiries, onOpenDrawer }: KanbanBoardProps) {
       toast(`Moved to ${colLabel}`);
       router.refresh();
     });
-
-    setDraggingId(null);
   }
+
+  const activeInquiry = activeId ? inquiries.find((i) => i.id === activeId) : null;
+
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCorners}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+    >
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: `repeat(${KANBAN_STATUSES.length}, minmax(200px, 1fr))`,
+          gap: "0.5rem",
+          overflowX: "auto",
+          paddingBottom: "1rem",
+        }}
+      >
+        {KANBAN_STATUSES.map((col) => (
+          <KanbanColumn
+            key={col.id}
+            col={col}
+            inquiries={byStatus[col.id] ?? []}
+            onOpenDrawer={onOpenDrawer}
+          />
+        ))}
+      </div>
+
+      <DragOverlay dropAnimation={{ duration: 200, easing: 'ease' }}>
+        {activeInquiry ? (
+          <div style={{ transform: 'scale(1.02)' }}>
+            <KanbanCard inquiry={activeInquiry} onOpen={onOpenDrawer} />
+          </div>
+        ) : null}
+      </DragOverlay>
+    </DndContext>
+  );
+}
+
+interface KanbanColumnProps {
+  col: typeof KANBAN_STATUSES[0];
+  inquiries: KanbanInquiry[];
+  onOpenDrawer: (inquiry: KanbanInquiry) => void;
+}
+
+function KanbanColumn({ col, inquiries, onOpenDrawer }: KanbanColumnProps) {
+  const { isOver, setNodeRef } = useDroppable({
+    id: col.id,
+  });
 
   return (
     <div
+      ref={setNodeRef}
       style={{
-        display: "grid",
-        gridTemplateColumns: `repeat(${KANBAN_STATUSES.length}, minmax(220px, 1fr))`,
-        gap: "0.75rem",
-        overflowX: "auto",
-        paddingBottom: "1rem",
+        display: "flex",
+        flexDirection: "column",
+        minHeight: "400px",
+        border: isOver
+          ? "1.5px dashed var(--olive)"
+          : "0.5px solid var(--border)",
+        background: isOver
+          ? "rgba(107,120,69,0.04)"
+          : "rgba(42,42,40,0.02)",
+        transition: "border-color 0.15s, background 0.15s",
+        borderRadius: 0,
       }}
     >
-      {KANBAN_STATUSES.map((col) => {
-        const colInquiries = byStatus[col.id] ?? [];
-        const isOver = dragOverColumn === col.id;
-
-        return (
-          <div
-            key={col.id}
-            onDragOver={(e) => handleDragOver(e, col.id)}
-            onDragLeave={handleDragLeave}
-            onDrop={(e) => handleDrop(e, col.id)}
+      {/* Column header */}
+      <div
+        style={{
+          padding: "0.85rem 1rem",
+          borderBottom: "0.5px solid var(--border)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          background: "var(--white)",
+          flexShrink: 0,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          <span
             style={{
+              width: "8px",
+              height: "8px",
+              borderRadius: "50%",
+              background: (col.badgeStyle.color as string) ?? "var(--olive)",
+              flexShrink: 0,
+            }}
+          />
+          <span
+            style={{
+              fontSize: "0.68rem",
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              fontWeight: 500,
+              color: "var(--charcoal)",
+              fontFamily: "'Jost', sans-serif",
+            }}
+          >
+            {col.label}
+          </span>
+        </div>
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            minWidth: "20px",
+            height: "20px",
+            borderRadius: "10px",
+            background: "var(--olive-dim)",
+            color: "var(--olive)",
+            fontSize: "0.62rem",
+            fontWeight: 600,
+            fontFamily: "'Jost', sans-serif",
+            padding: "0 4px",
+          }}
+        >
+          {inquiries.length}
+        </span>
+      </div>
+
+      {/* Cards */}
+      <div
+        style={{
+          flex: 1,
+          padding: "0.5rem",
+          display: "flex",
+          flexDirection: "column",
+          gap: "0.5rem",
+          overflowY: "auto",
+        }}
+      >
+        {inquiries.length === 0 && (
+          <div
+            style={{
+              flex: 1,
               display: "flex",
-              flexDirection: "column",
-              minHeight: "400px",
-              border: isOver
-                ? "1.5px dashed var(--olive)"
-                : "0.5px solid var(--border)",
-              background: isOver
-                ? "rgba(107,120,69,0.04)"
-                : "rgba(42,42,40,0.02)",
-              transition: "border-color 0.15s, background 0.15s",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--charcoal-muted)",
+              fontSize: "0.72rem",
+              letterSpacing: "0.06em",
+              opacity: 0.5,
+              minHeight: "80px",
+              border: "1px dashed var(--border)",
               borderRadius: 0,
             }}
           >
-            {/* Column header */}
-            <div
-              style={{
-                padding: "0.85rem 1rem",
-                borderBottom: "0.5px solid var(--border)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                background: "var(--white)",
-                flexShrink: 0,
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                <span
-                  style={{
-                    width: "8px",
-                    height: "8px",
-                    borderRadius: "50%",
-                    background: (col.badgeStyle.color as string) ?? "var(--olive)",
-                    flexShrink: 0,
-                  }}
-                />
-                <span
-                  style={{
-                    fontSize: "0.68rem",
-                    letterSpacing: "0.1em",
-                    textTransform: "uppercase",
-                    fontWeight: 500,
-                    color: "var(--charcoal)",
-                    fontFamily: "'Jost', sans-serif",
-                  }}
-                >
-                  {col.label}
-                </span>
-              </div>
-              <span
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  minWidth: "20px",
-                  height: "20px",
-                  borderRadius: "10px",
-                  background: "var(--olive-dim)",
-                  color: "var(--olive)",
-                  fontSize: "0.62rem",
-                  fontWeight: 600,
-                  fontFamily: "'Jost', sans-serif",
-                  padding: "0 4px",
-                }}
-              >
-                {colInquiries.length}
-              </span>
-            </div>
-
-            {/* Cards */}
-            <div
-              style={{
-                flex: 1,
-                padding: "0.75rem",
-                display: "flex",
-                flexDirection: "column",
-                gap: "0.6rem",
-                overflowY: "auto",
-              }}
-            >
-              {colInquiries.length === 0 && (
-                <div
-                  style={{
-                    flex: 1,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "var(--charcoal-muted)",
-                    fontSize: "0.72rem",
-                    letterSpacing: "0.06em",
-                    opacity: 0.5,
-                    minHeight: "80px",
-                    border: "1px dashed var(--border)",
-                    borderRadius: 0,
-                  }}
-                >
-                  Drop here
-                </div>
-              )}
-              {colInquiries.map((inq) => (
-                <KanbanCard
-                  key={inq.id}
-                  inquiry={inq}
-                  onOpen={onOpenDrawer}
-                  onDragStart={handleDragStart}
-                />
-              ))}
-            </div>
+            Drop here
           </div>
-        );
-      })}
-
-      {/* Global drag end capture */}
-      <style>{`
-        [draggable=true] { user-select: none; }
-      `}</style>
+        )}
+        {inquiries.map((inq) => (
+          <KanbanCard
+            key={inq.id}
+            inquiry={inq}
+            onOpen={onOpenDrawer}
+          />
+        ))}
+      </div>
     </div>
   );
 }

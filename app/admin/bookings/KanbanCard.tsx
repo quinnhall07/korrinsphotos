@@ -6,6 +6,8 @@
 
 import { getScoreColor } from "@/lib/lead-scoring";
 import { LeadScoreBadge } from "./LeadScoreBadge";
+import { useDraggable } from "@dnd-kit/core";
+import { CSS } from "@dnd-kit/utilities";
 
 export interface KanbanInquiry {
   id: string;
@@ -40,7 +42,6 @@ export interface KanbanInquiry {
 interface KanbanCardProps {
   inquiry: KanbanInquiry;
   onOpen: (inquiry: KanbanInquiry) => void;
-  onDragStart: (e: React.DragEvent, id: string) => void;
 }
 
 const SESSION_COLORS: Record<string, { bg: string; color: string }> = {
@@ -52,7 +53,12 @@ const SESSION_COLORS: Record<string, { bg: string; color: string }> = {
   Commercial: { bg: "#FEF3C7", color: "#92400E" },
 };
 
-export function KanbanCard({ inquiry, onOpen, onDragStart }: KanbanCardProps) {
+export function KanbanCard({ inquiry, onOpen }: KanbanCardProps) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: inquiry.id,
+    data: { status: inquiry.status },
+  });
+
   const sessionColor = SESSION_COLORS[inquiry.sessionType] ?? { bg: "var(--olive-dim)", color: "var(--olive)" };
   const isOverdue =
     inquiry.followUpDate &&
@@ -85,18 +91,22 @@ export function KanbanCard({ inquiry, onOpen, onDragStart }: KanbanCardProps) {
 
   return (
     <div
-      draggable
-      onDragStart={(e) => onDragStart(e, inquiry.id)}
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
       onClick={() => onOpen(inquiry)}
       style={{
         background: "var(--white)",
         border: "0.5px solid var(--border)",
         borderLeft: `2px solid ${getScoreColor(inquiry.leadScore)}`,
-        padding: "0.9rem",
-        cursor: "grab",
+        padding: "0.75rem",
+        cursor: isDragging ? "grabbing" : "grab",
         transition: "box-shadow 0.2s, border-color 0.2s",
         userSelect: "none",
         position: "relative",
+        transform: CSS.Translate.toString(transform),
+        opacity: isDragging ? 0.6 : 1,
+        zIndex: isDragging ? 10 : 1,
       }}
       className="kanban-card"
     >

@@ -16,7 +16,7 @@ const BookingSchema = z.object({
   firstName:     z.string().min(1, "First name is required").max(100),
   lastName:      z.string().min(1, "Last name is required").max(100),
   email:         z.string().email("Please enter a valid email address"),
-  sessionType:   z.enum(["Wedding", "Portrait", "Editorial", "Family", "Engagement"], {
+  sessionType:   z.enum(["Wedding", "Portrait", "Editorial", "Family", "Engagement", "Commercial"], {
     errorMap: () => ({ message: "Please select a session type" }),
   }),
   preferredDate: z.string().optional(),
@@ -67,7 +67,7 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
     };
 
     // ── Automatic tagging heuristics ──────────────────────────────────────────
-    const autoTags: string[] = [];
+    const autoTags: string[] = [sessionType]; // Automatically tag the session type
 
     // "Rush" — preferred date is within 30 days
     if (preferredDate) {
@@ -79,9 +79,9 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
       }
     }
 
-    // "High-Budget" — Wedding sessions tend to be higher investment
-    if (sessionType === "Wedding") {
-      autoTags.push("High-Budget");
+    // "High Budget" — Wedding and Commercial sessions tend to be higher investment
+    if (sessionType === "Wedding" || sessionType === "Commercial") {
+      autoTags.push("High Budget");
     }
 
     // "Destination" — message mentions travel/location keywords
@@ -155,6 +155,7 @@ function buildAutoResponderHtml({
     Editorial:  "$500 – $2,000 depending on scope and usage.",
     Family:     "$300 – $600 for an outdoor or in-home session.",
     Engagement: "$450 – $850 for a 1.5-hour golden-hour session.",
+    Commercial: "$750 – $3,000 depending on scope and licensing.",
   };
 
   const rate = rates[sessionType] ?? "Rates vary by session type — we'll cover details in our call.";

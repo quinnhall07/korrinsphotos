@@ -289,9 +289,9 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
           right: 0,
           bottom: 0,
           background: "rgba(42,42,40,0.35)",
-          zIndex: 400,
-          backdropFilter: "blur(2px)",
-          WebkitBackdropFilter: "blur(2px)",
+          zIndex: 90,
+          backdropFilter: "blur(4px)",
+          WebkitBackdropFilter: "blur(4px)",
           animation: "drawerFadeIn 0.2s ease",
         }}
       />
@@ -304,7 +304,7 @@ export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
           right: 0,
           bottom: 0,
           width: "min(560px, calc(100vw - 260px))",
-          zIndex: 401,
+          zIndex: 91,
           background: "var(--white)",
           boxShadow: "-16px 0 48px rgba(42,42,40,0.18)",
           display: "flex",

@@ -75,7 +75,7 @@ export function AdminSidebar() {
     <aside
       style={{
         borderRight: "0.5px solid var(--border)",
-        padding: "2.5rem 0",
+        padding: "1.5rem 0",
         background: "rgba(42,42,40,0.02)",
         position: "sticky",
         top: "72px",
@@ -84,7 +84,7 @@ export function AdminSidebar() {
       }}
     >
       {/* Logo lockup */}
-      <div style={{ padding: "0 1.8rem 2rem" }}>
+      <div style={{ padding: "0 1.2rem 1.5rem" }}>
         <div
           style={{
             fontFamily: "'Cormorant Garamond', serif",
@@ -115,7 +115,7 @@ export function AdminSidebar() {
               letterSpacing: "0.2em",
               textTransform: "uppercase",
               color: "var(--charcoal-muted)",
-              padding: "0 1.8rem",
+              padding: "0 1.2rem",
               marginBottom: "0.5rem",
               marginTop: "1.5rem",
             }}
@@ -131,9 +131,9 @@ export function AdminSidebar() {
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: "0.75rem",
-                  padding: "0.7rem 1.8rem",
-                  fontSize: "0.82rem",
+                  gap: "0.5rem",
+                  padding: "0.5rem 1.2rem",
+                  fontSize: "0.78rem",
                   color: active ? "var(--charcoal)" : "var(--charcoal-light)",
                   borderLeft: active
                     ? "2px solid var(--olive)"
@@ -154,7 +154,7 @@ export function AdminSidebar() {
       {/* Back to public site */}
       <div
         style={{
-          padding: "2rem 1.8rem 0",
+          padding: "1.5rem 1.2rem 0",
           marginTop: "auto",
           borderTop: "0.5px solid var(--border)",
           position: "absolute",
