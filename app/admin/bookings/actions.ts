@@ -427,8 +427,8 @@ export async function createBookingInquiry(data: {
   lastName: string;
   email: string;
   sessionType: string;
-  eventId: null,
-  eventName: null,   // ← add alongside eventId
+  eventId?: string | null;
+  eventName?: string | null;
 }): Promise<{ success: boolean; error?: string }> {
   await requireAdmin();
 
@@ -455,7 +455,8 @@ export async function createBookingInquiry(data: {
       lastRespondedAt: null,
       preferredDate: null,
       communicationLog: [],
-      eventId: null,
+      eventId: data.eventId ?? null,
+      eventName: data.eventName ?? null,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     };
