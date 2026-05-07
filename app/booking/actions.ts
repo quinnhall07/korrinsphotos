@@ -8,6 +8,7 @@
 import { adminDb }    from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { z }          from "zod";
+import { cookies }    from "next/headers";
 import { calculateLeadScore } from "@/lib/lead-scoring";
 import { logActivity } from "@/lib/firestore";
 import type { LeadStatus } from "@/lib/booking-kanban";
@@ -40,6 +41,10 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
   }
 
   const { firstName, lastName, email, sessionType, preferredDate, message } = parsed.data;
+  
+  const cookieStore = await cookies();
+  const originStr = cookieStore.get("__origin")?.value;
+  const origin = originStr ? JSON.parse(originStr) : {};
 
   try {
     const initialStatus: LeadStatus = "PENDING";
@@ -112,7 +117,68 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
       tags: autoTags,
     });
 
-    // Write the inquiry
+    // 1. Find or create Client
+    let clientId: string;
+    const clientSnap = await adminDb.collection("clients").where("email", "==", email).limit(1).get();
+    
+    if (!clientSnap.empty) {
+      clientId = clientSnap.docs[0].id;
+    } else {
+      const slug = firstName.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const randomChars = Math.random().toString(36).substring(2, 6);
+      const referralCode = `${slug}-${randomChars}`;
+      
+      const clientRef = adminDb.collection("clients").doc();
+      clientId = clientRef.id;
+      await clientRef.set({
+        email,
+        firstName,
+        lastName,
+        role: "CLIENT",
+        referralCode,
+        referralCredit: 0,
+        totalSessionsBooked: 0,
+        firstTouchSource: origin.source ?? "WEBSITE",
+        firstTouchMedium: origin.medium ?? null,
+        firstTouchCampaign: origin.campaign ?? null,
+        firstTouchLandingUrl: origin.landingUrl ?? null,
+        firstTouchAt: origin.ts ? new Date(origin.ts) : FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+
+    // 2. Create Project (replaces bookingInquiry)
+    const projectRef = adminDb.collection("projects").doc();
+    const projectId = projectRef.id;
+    await projectRef.set({
+      clientId,
+      status: "INQUIRY",
+      sessionType,
+      title: `${firstName} ${lastName} — ${sessionType}`,
+      shootDate: preferredDate ? new Date(preferredDate) : null,
+      notes: "",
+      leadSource: origin.source ?? "WEBSITE",
+      leadScore,
+      tags: autoTags,
+      estimatedValue: null,
+      followUpDate: null,
+      lastContactedAt: null,
+      lastRespondedAt: null,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    
+    // 3. Write first inbound message to subcollection
+    await projectRef.collection("messages").add({
+      direction: "INBOUND",
+      channel: "EMAIL",
+      body: message,
+      sentAt: FieldValue.serverTimestamp(),
+      isAutomatic: false,
+    });
+
+    // 4. (Temporary Migration Step) Keep writing to bookingInquiries so current Admin Dashboard doesn't break until Phase 2 is complete.
     const docRef = await adminDb.collection("bookingInquiries").add({
       ...inquiryData,
       leadScore,
@@ -122,7 +188,7 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
     await logActivity(
       "LEAD_RECEIVED",
       `New ${sessionType.toLowerCase()} inquiry from ${firstName} ${lastName}`,
-      { inquiryId: docRef.id, sessionType, email }
+      { inquiryId: docRef.id, projectId: projectId, sessionType, email }
     ).catch(() => {});
 
     // Auto-responder: write to `mail` collection for Firebase Trigger Email extension

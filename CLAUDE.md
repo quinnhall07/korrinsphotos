@@ -1,0 +1,351 @@
+# CLAUDE.md — Korrin's Photos
+
+> This file is the primary reference for Claude Code. Read it fully before touching any file.
+> Re-read the relevant sections before starting any task.
+
+---
+
+## Project Identity
+
+**Korrin's Photos** is a full-stack Next.js 15 (App Router) application that serves three audiences simultaneously:
+
+| Audience | Routes | Auth |
+|---|---|---|
+| Public visitors | `/`, `/portfolio`, `/booking`, `/login` | None |
+| Admin (Korrin) | `/admin/**` | Firebase session cookie + `role: "ADMIN"` claim |
+| Clients | `/gallery/**` | Firebase session cookie + `eventAccess` Firestore doc |
+
+The codebase is **proprietary** (see `LICENSE.md`). Do not copy, publish, or reference external repositories.
+
+---
+
+## Repo Layout
+
+```
+korrin-photos/
+├── app/                        # Next.js App Router pages & API routes
+│   ├── admin/                  # Admin dashboard (server-guarded)
+│   │   ├── bookings/           # Kanban CRM pipeline
+│   │   ├── events/             # Event management + [id] detail
+│   │   └── users/              # User management
+│   ├── api/
+│   │   ├── auth/session/       # POST: exchange idToken → session cookie
+│   │   ├── auth/signout/       # POST: clear session cookie
+│   │   ├── events-list/        # GET: dropdown data for event linking
+│   │   ├── invite/             # POST: grant access + send magic link
+│   │   ├── upload/             # POST: generate R2 pre-signed URL
+│   │   └── upload/confirm/     # POST: ingest into Cloudflare Images + Firestore
+│   ├── booking/                # Public booking inquiry form
+│   ├── gallery/                # Client portal: [id] private event gallery
+│   ├── login/                  # Magic link + OAuth login
+│   ├── portfolio/              # Public portfolio with category filter
+│   ├── settings/               # Client account settings
+│   ├── error.tsx               # Global error boundary
+│   ├── globals.css             # Design tokens + global styles
+│   ├── layout.tsx              # Root layout (Navbar, AuthProvider, Toaster)
+│   ├── loading.tsx             # Root loading state
+│   └── page.tsx                # Home page
+├── components/
+│   ├── admin/AdminSidebar.tsx  # Admin nav sidebar (canonical version)
+│   ├── ui/Toaster.tsx          # Global toast system
+│   ├── AuthProvider.tsx        # Firebase Auth context + magic link completion
+│   ├── Footer.tsx
+│   ├── HeroSlideshow.tsx
+│   ├── Lightbox.tsx
+│   ├── MasonryGrid.tsx
+│   ├── Navbar.tsx
+│   └── SecureImage.tsx         # Right-click / drag protected image wrapper
+├── lib/
+│   ├── booking-kanban.ts       # LeadStatus types + Kanban column config
+│   ├── cloudflare.ts           # R2 presign, Cloudflare Images upload/delete
+│   ├── firebase-admin.ts       # Admin SDK singleton (server-only)
+│   ├── firebase-email.ts       # Identity Toolkit magic link sender (server-only)
+│   ├── firebase.ts             # Client SDK singleton (client-only)
+│   ├── firestore.ts            # All Firestore collection helpers + types
+│   ├── lead-scoring.ts         # 0-100 lead score algorithm
+│   └── session.ts              # Session cookie create/verify/clear + requireAdmin/requireSession
+├── middleware.ts               # Edge cookie presence check for /admin and /gallery
+├── styles/main.css             # Legacy CSS (prototype artifact — do not delete)
+├── index.html                  # Legacy prototype HTML (do not delete)
+├── next.config.ts
+├── tailwind.config.ts
+├── tsconfig.json
+└── package.json
+```
+
+---
+
+## Environment Variables
+
+All env vars must exist in `.env.local` for local dev and in the Vercel project for production.
+**Never commit `.env.local`.**
+
+### Firebase Client SDK (browser-readable)
+```
+NEXT_PUBLIC_FIREBASE_API_KEY
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+NEXT_PUBLIC_FIREBASE_PROJECT_ID
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+NEXT_PUBLIC_FIREBASE_APP_ID
+```
+
+### Firebase Admin SDK (server-only)
+```
+FIREBASE_PROJECT_ID
+FIREBASE_CLIENT_EMAIL
+FIREBASE_PRIVATE_KEY          # Full PEM; Vercel stores \n literally — lib/firebase-admin.ts normalises it
+```
+
+### Auth & App
+```
+ADMIN_EMAILS                  # Comma-separated list of admin email addresses
+NEXT_PUBLIC_APP_URL           # https://yourdomain.com (no trailing slash)
+```
+
+### Cloudflare R2
+```
+CLOUDFLARE_R2_ENDPOINT        # https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+CLOUDFLARE_R2_ACCESS_KEY_ID
+CLOUDFLARE_R2_SECRET_ACCESS_KEY
+CLOUDFLARE_R2_BUCKET_NAME
+CLOUDFLARE_ACCOUNT_ID
+```
+
+### Cloudflare Images
+```
+CLOUDFLARE_IMAGES_API_TOKEN
+NEXT_PUBLIC_CLOUDFLARE_IMAGES_URL   # https://imagedelivery.net/<HASH>
+```
+
+---
+
+## Critical Architecture Rules
+
+### 1. Server / Client Boundary — Non-Negotiable
+
+| File | Allowed in |
+|---|---|
+| `lib/firebase-admin.ts` | Server Components, API Routes, Server Actions, `lib/session.ts` |
+| `lib/firebase.ts` | Client Components only (files with `"use client"`) |
+| `lib/cloudflare.ts` | Server-only (contains AWS SDK calls) |
+| `lib/session.ts` | Server-only |
+
+Violating this boundary causes build failures. If a client component needs auth state, use `useAuth()` from `AuthProvider.tsx`.
+
+### 2. Session Cookie Protocol
+
+The session cookie (`__session`) is an HTTP-only 14-day Firebase session cookie.
+
+**Creation flow:**
+1. User signs in client-side with Firebase Auth.
+2. Client calls `afterSignIn()` from `useAuth()`.
+3. `afterSignIn()` POSTs the `idToken` to `/api/auth/session`.
+4. Server verifies, upserts Firestore user doc, sets cookie.
+5. **Admin first login only:** Server returns `{ needsRefresh: true }` → client force-refreshes the Firebase token → POSTs again → session cookie is now created with `role: "ADMIN"`.
+
+**Verification:** Every protected server route calls `await requireAdmin()` or `await requireSession()` from `lib/session.ts`. These redirect to `/login` if invalid.
+
+**Middleware** (`middleware.ts`) only checks cookie *presence* at the Edge (no Admin SDK on Edge). Actual token verification happens inside Server Components.
+
+### 3. Image Upload Pipeline
+
+```
+Browser
+  │  POST /api/upload  { eventId, fileName, contentType }
+  ▼
+API Route (server)
+  │  Generates R2 pre-signed PUT URL (15min expiry)
+  │  Returns { presignedUrl, key }
+  ▼
+Browser
+  │  PUT {presignedUrl}  (file body, bypasses Vercel 4.5MB limit)
+  ▼
+Cloudflare R2
+  │
+  ▼
+Browser
+  │  POST /api/upload/confirm  { key, eventId, label }
+  ▼
+API Route (server)
+  │  Constructs R2 object URL
+  │  Calls uploadToCloudflareImages() → gets imageId
+  │  Writes Photo doc to events/{eventId}/photos subcollection
+  │  Returns { photo }
+```
+
+**Never** expose raw R2 URLs in the DOM. Always use `buildCdnUrl(imageId, variant)` from `lib/cloudflare.ts`.
+
+### 4. Firestore Data Model
+
+```
+users/{uid}
+  email, role ("ADMIN"|"CLIENT"), displayName, photoURL, createdAt, updatedAt
+
+events/{eventId}
+  title, status, shootDate?, shootEndDate?, createdAt, updatedAt
+  └── photos/{photoId}
+        cloudflareUrl, cloudflareImageId, label?, category?,
+        galleryReady?, uploadedAt, r2Key?
+
+eventAccess/{uid}_{eventId}
+  userId, eventId, createdAt
+
+bookingInquiries/{id}
+  firstName, lastName, email, sessionType, preferredDate?, message,
+  status (PENDING|QUALIFIED|SENT_PROPOSAL|CONTRACT_SENT|BOOKED|ARCHIVED),
+  notes, pricing?, leadScore, tags[], leadSource?,
+  estimatedValue?, followUpDate?, lastContactedAt?, lastRespondedAt?,
+  communicationLog[{id, timestamp, channel, summary, adminUid}],
+  eventId?, eventName?, createdAt, updatedAt
+
+mail/{id}                     # Firebase Trigger Email extension watches this
+  to, message: { subject, html }, createdAt
+
+activityFeed/{id}
+  action, message, timestamp, metadata?
+```
+
+**Subcollection queries** that cross multiple events require `collectionGroup()`. Always pair `where("field", "!=", null)` with `orderBy("field")` before any secondary `orderBy` or Firestore will reject the query.
+
+### 5. Component Conventions
+
+- **`"use client"`** at the top of any file that uses hooks, browser APIs, or event handlers.
+- **Server Components** fetch data directly (no `useEffect`). Pass serialisable props down to client children.
+- **Server Actions** live in `actions.ts` files co-located with their page. Always call `await requireAdmin()` as the first line.
+- **Toaster:** Import `toast` from `@/components/ui/Toaster` (event-driven, no context needed).
+- **Routing after mutations:** Call `router.refresh()` (not `router.push`) to revalidate server data while staying on the page.
+
+---
+
+## Design System
+
+### Tokens (CSS variables — defined in `app/globals.css`)
+
+```css
+--white: #FAF9F6          /* warm off-white background */
+--charcoal: #2A2A28       /* primary text */
+--charcoal-light: #4A4A47
+--charcoal-muted: #8A8A85
+--olive: #6B7845          /* primary accent */
+--olive-light: #8A9A5A
+--olive-dim: #E8EBD8      /* light olive tint for backgrounds */
+--border: rgba(42,42,40,0.12)
+--border-strong: rgba(42,42,40,0.22)
+--transition: 0.4s cubic-bezier(0.25,0.46,0.45,0.94)
+```
+
+### Typography
+
+- **Headings / Display:** `Cormorant Garamond`, serif, weight 300. Use `<em>` for italic variety.
+- **Body / UI:** `Jost`, sans-serif, weights 300/400/500.
+- **Eyebrows / Labels:** 0.65rem, letter-spacing 0.2em, uppercase, `var(--olive)`.
+
+### Aesthetic Principles
+
+- **Minimalist editorial** — generous white space, thin borders (0.5px), no border-radius on interactive elements.
+- Avoid Bootstrap-style utility chaining. Write inline styles or single-purpose classes.
+- Animations: `fadeIn` (page transitions), `heroReveal` (hero), `scrollBob` (scroll indicator), `shimmer` (skeleton).
+- Grain texture overlay on `body::before` at z-index 9999 — never place content above this except the Toaster (z-index: 9000 is fine; lightbox is 1000).
+
+---
+
+## Common Patterns
+
+### Fetching Firestore in a Server Component
+```tsx
+// app/some-page/page.tsx
+export const dynamic = "force-dynamic"; // or revalidate = N for ISR
+
+export default async function SomePage() {
+  await requireAdmin(); // or requireSession()
+  const snap = await adminDb.collection("events").orderBy("createdAt", "desc").get();
+  const events = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return <ClientComponent events={events} />;
+}
+```
+
+### Server Action Pattern
+```ts
+// app/admin/something/actions.ts
+"use server";
+import { requireAdmin } from "@/lib/session";
+import { revalidatePath } from "next/cache";
+
+export async function doSomething(id: string): Promise<{ success: boolean; error?: string }> {
+  await requireAdmin();
+  try {
+    await adminDb.collection("things").doc(id).update({ ... });
+    revalidatePath("/admin/something");
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: "Failed." };
+  }
+}
+```
+
+### Toasting from a Client Component
+```tsx
+import { toast } from "@/components/ui/Toaster";
+// ...
+toast("Photo deleted successfully");
+```
+
+### Building a CDN URL
+```ts
+import { buildCdnUrl } from "@/lib/cloudflare";
+const src = buildCdnUrl(photo.cloudflareImageId, "gallery");   // or "thumbnail" | "download" | "public"
+```
+
+---
+
+## Known Gotchas
+
+1. **Duplicate AdminSidebar:** There are two versions — `app/admin/AdminSidebar.tsx` (legacy) and `components/admin/AdminSidebar.tsx` (canonical). `app/admin/layout.tsx` imports from `./AdminSidebar` (the legacy one). Both are functionally identical. Don't delete either without updating the import.
+
+2. **Firestore composite index requirement:** Any query combining `where("field", "!=", null)` with `orderBy("uploadedAt")` requires a composite index. If you see a Firestore index error in logs, follow the link in the error to create it in the Firebase Console.
+
+3. **FIREBASE_PRIVATE_KEY newlines:** The raw PEM has `\n` characters. Vercel stores them as literal `\n` strings. `lib/firebase-admin.ts` handles this with `.replace(/\\n/g, "\n")` — don't change this.
+
+4. **`collectionGroup` requires Firestore rules:** If adding new collectionGroup queries, ensure Firestore Security Rules permit them. Check the Firebase Console.
+
+5. **Vercel 4.5MB body limit:** Never POST image data to a Next.js API route. Always use the pre-signed R2 URL pipeline.
+
+6. **`cookies()` is async in Next.js 15:** `await cookies()` is required before calling `.get()` or `.set()`. This is already handled in `lib/session.ts`.
+
+7. **`searchParams` is async in Next.js 15:** Page props `searchParams` must be `await`ed. Already handled in `app/login/page.tsx`.
+
+8. **`params` is async in Next.js 15:** `const { id } = await params` is required in dynamic routes. Already handled throughout.
+
+9. **`revalidatePath` scope:** After a Server Action mutation, call `revalidatePath` for every route that displays that data — both the detail page and any list pages.
+
+10. **Lead score recalculation:** `calculateLeadScore()` must be called any time `tags`, `estimatedValue`, `sessionType`, `message`, `preferredDate`, or `leadSource` changes. See `lib/lead-scoring.ts`.
+
+---
+
+## Commands
+
+```bash
+npm run dev       # Start development server (localhost:3000)
+npm run build     # Production build (catches type errors)
+npm run lint      # ESLint
+npm start         # Serve production build locally
+```
+
+TypeScript strict mode is enabled. Fix all type errors before committing.
+
+---
+
+## Testing Checklist (Before Any PR / Deploy)
+
+- [ ] `npm run build` passes with zero errors and zero type errors
+- [ ] `npm run lint` passes
+- [ ] Public routes load without auth
+- [ ] `/login` → magic link flow → `/gallery` redirect works
+- [ ] Admin login (first-time and returning) → `/admin` redirect works
+- [ ] Photo upload pipeline completes (all 3 steps)
+- [ ] Client invite flow sends email and grants `eventAccess`
+- [ ] Booking form submission appears in `/admin/bookings`
+- [ ] Kanban drag-and-drop updates status
+- [ ] Lightbox keyboard nav (←, →, Escape) works
+- [ ] Right-click on images is blocked
