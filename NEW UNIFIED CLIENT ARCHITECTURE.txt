@@ -1,0 +1,606 @@
+# Unified Client Lifecycle Architecture
+## Korrin's Photos — Full-Stack CRM & Pipeline Redesign
+
+---
+
+## Part 1: Core Philosophy & The Central Entity
+
+The entire system orbits a single object: the **Client**. Every inquiry, event, contract, invoice, and referral is a child of this entity. An email address is the universal key — it binds together anonymous site visits, form submissions, Firebase Auth accounts, and post-delivery referrals into one continuous, queryable thread.
+
+---
+
+## Part 2: Entity Relationship Diagram (Firestore Schema)
+
+```
+clients/{clientId}
+├── id                   string   (Firebase UID once registered, otherwise generated)
+├── email                string   (UNIQUE — the universal anchor)
+├── firstName            string
+├── lastName             string
+├── phone                string | null
+├── avatarUrl            string | null
+├── role                 "CLIENT" | "ADMIN"
+├── referralCode         string   (unique slug, e.g. "sarah-jones-k7x2")
+├── referredBy           string | null  → clients/{clientId}
+├── referralCredit       number   (USD cents in wallet)
+├── totalSessionsBooked  number
+├── firstTouchSource     LeadSource
+├── firstTouchMedium     string | null  (e.g. "story", "bio_link")
+├── firstTouchCampaign   string | null
+├── firstTouchLandingUrl string | null
+├── firstTouchAt         Timestamp
+├── createdAt            Timestamp
+└── updatedAt            Timestamp
+
+projects/{projectId}
+├── id                   string
+├── clientId             string   → clients/{clientId}
+├── status               ProjectStatus  (the master state machine)
+├── sessionType          SessionType
+├── title                string   (e.g. "Smith Wedding 2026")
+├── shootDate            Timestamp | null
+├── shootEndDate         Timestamp | null
+├── shootLocation        Location | null
+├── packageName          string | null
+├── packagePriceUsd      number | null
+├── discountApplied      number | null  (referral credit applied)
+├── depositPaidAt        Timestamp | null
+├── balancePaidAt        Timestamp | null
+├── contractSignedAt     Timestamp | null
+├── deliveredAt          Timestamp | null
+├── referralLinkSentAt   Timestamp | null
+├── leadScore            number
+├── leadSource           LeadSource
+├── tags                 string[]
+├── estimatedValue       number | null
+├── followUpDate         Timestamp | null
+├── lastContactedAt      Timestamp | null
+├── lastRespondedAt      Timestamp | null
+├── notes                string   (internal, admin-only)
+├── createdAt            Timestamp  (= inquiry submission time)
+└── updatedAt            Timestamp
+
+projects/{projectId}/messages/{messageId}
+├── id                   string
+├── direction            "INBOUND" | "OUTBOUND"
+├── channel              CommunicationChannel
+├── subject              string | null
+├── body                 string
+├── adminUid             string | null
+├── sentAt               Timestamp
+└── isAutomatic          boolean
+
+projects/{projectId}/questionnaires/{questionnaireId}
+├── id                   string
+├── type                 "WEDDING" | "PORTRAIT" | "EDITORIAL" | "FAMILY" | "ENGAGEMENT"
+├── status               "DRAFT" | "SENT" | "COMPLETED"
+├── sentAt               Timestamp | null
+├── completedAt          Timestamp | null
+└── responses            Record<string, string>
+
+contracts/{contractId}
+├── id                   string
+├── projectId            string   → projects/{projectId}
+├── clientId             string   → clients/{clientId}
+├── status               "DRAFT" | "SENT" | "SIGNED" | "VOIDED"
+├── templateId           string
+├── renderedHtml         string   (merged with project data)
+├── signerIp             string | null
+├── signerUserAgent      string | null
+├── sentAt               Timestamp | null
+└── signedAt             Timestamp | null
+
+invoices/{invoiceId}
+├── id                   string
+├── projectId            string   → projects/{projectId}
+├── clientId             string   → clients/{clientId}
+├── type                 "DEPOSIT" | "BALANCE" | "FULL"
+├── status               "DRAFT" | "SENT" | "PAID" | "OVERDUE" | "VOID"
+├── amountCents          number
+├── dueDate              Timestamp
+├── paidAt               Timestamp | null
+├── stripePaymentIntentId string | null
+├── sentAt               Timestamp | null
+└── createdAt            Timestamp
+
+events/{eventId}
+├── id                   string
+├── projectId            string   → projects/{projectId}  (1:1)
+├── clientId             string   → clients/{clientId}
+├── title                string
+├── shootDate            Timestamp
+├── status               "ACTIVE" | "EDITING" | "DELIVERED" | "ARCHIVED"
+└── createdAt            Timestamp
+
+events/{eventId}/photos/{photoId}
+(unchanged — cloudflareImageId, label, category, galleryReady, uploadedAt)
+
+eventAccess/{accessId}
+(unchanged — userId, eventId, createdAt)
+
+referrals/{referralId}
+├── id                   string
+├── referrerClientId     string   → clients/{clientId}
+├── referredClientId     string   → clients/{clientId}
+├── referredProjectId    string   → projects/{projectId}
+├── creditAmountCents    number
+├── creditAppliedAt      Timestamp | null
+└── createdAt            Timestamp
+
+siteVisits/{visitId}
+├── id                   string
+├── sessionId            string   (anonymous cookie, 30-day TTL)
+├── clientId             string | null  (set later when email is known)
+├── source               LeadSource
+├── medium               string | null
+├── campaign             string | null
+├── referralCode         string | null  (populated if ?ref=slug)
+├── landingUrl           string
+└── visitedAt            Timestamp
+```
+
+### Type Definitions
+
+```typescript
+type ProjectStatus =
+  | "SITE_VISIT"        // anonymous — attached retroactively
+  | "INQUIRY"           // form submitted
+  | "QUALIFYING"        // admin reviewing
+  | "PROPOSAL_SENT"     // package/pricing shared
+  | "NEGOTIATING"       // back-and-forth
+  | "CONTRACT_SENT"     // awaiting signature
+  | "DEPOSIT_PENDING"   // signed, deposit invoice out
+  | "BOOKED"            // deposit paid, slot confirmed
+  | "SHOOT_READY"       // questionnaire complete, shoot < 7 days
+  | "IN_EDITING"        // shoot done, gallery being edited
+  | "GALLERY_DELIVERED" // client can access gallery
+  | "REFERRAL_SENT"     // referral link emailed
+  | "COMPLETED"         // all done
+  | "LOST"              // ghosted / declined
+  | "ARCHIVED";
+
+type SessionType = "Wedding" | "Engagement" | "Portrait" | "Family" | "Editorial" | "Commercial";
+type LeadSource  = "WEBSITE" | "INSTAGRAM" | "GOOGLE" | "REFERRAL" | "DIRECT" | "OTHER";
+type CommunicationChannel = "EMAIL" | "PHONE" | "SMS" | "IN_PERSON";
+
+interface Location {
+  label: string;   // e.g. "Ashford Estate, Versailles KY"
+  lat?: number;
+  lng?: number;
+  notes?: string;
+}
+```
+
+---
+
+## Part 3: The State Machine — Full Lifecycle
+
+```
+ANONYMOUS VISIT
+     │  (UTM params / referral code stored in cookie)
+     ▼
+INQUIRY SUBMITTED  ──────────────────── Project record created
+     │                                  Client record created or matched by email
+     │                                  firstTouchSource attached from cookie
+     ▼
+QUALIFYING  ─────────────────────────── Admin reviews, lead score calculated
+     │
+     ├──[low intent]──────────────────► LOST
+     │
+     ▼
+PROPOSAL_SENT  ──────────────────────── Package details + pricing emailed
+     │                                  Invoice DRAFT auto-created
+     │
+     ├──[no response 7 days]──────────► follow-up task auto-created
+     │
+     ▼
+NEGOTIATING  (optional)
+     │
+     ▼
+CONTRACT_SENT  ──────────────────────── Contract auto-rendered from project data
+     │                                  Sent via Resend / in-app signing
+     ▼
+DEPOSIT_PENDING  ────────────────────── Deposit invoice sent (50% of package)
+     │                                  Stripe payment link attached
+     ▼
+BOOKED  ─────────────────────────────── Deposit confirmed
+     │                                  Questionnaire auto-sent
+     │                                  Event record auto-created (pre-filled)
+     │                                  Calendar hold placed
+     ▼
+SHOOT_READY  ────────────────────────── Questionnaire completed
+     │                                  Shoot brief auto-generated
+     │                                  24hr reminder email auto-sent
+     ▼
+IN_EDITING  ─────────────────────────── Shoot complete, admin marks in editing
+     │                                  Balance invoice auto-sent
+     ▼
+GALLERY_DELIVERED  ──────────────────── Balance paid
+     │                                  Client portal access granted
+     │                                  Thank-you email + gallery link sent
+     ▼
+REFERRAL_SENT  ──────────────────────── 7-day delayed trigger
+     │                                  Unique referral link generated & emailed
+     ▼
+COMPLETED  ──────────────────────────── Project archived, client remains active
+                                        Client can have new Project at any time
+```
+
+---
+
+## Part 4: Feature Additions & Removals
+
+### Features to ADD
+
+**A. Universal Client Record (The Missing Anchor)**
+The current schema has `bookingInquiries` and `users` as separate systems with no formal parent entity. Add a `clients` collection that is the true owner of all downstream records. A client can exist before they have a Firebase Auth account (they're just an email + name until they log in).
+
+**B. Source Attribution Cookie**
+On first site visit, write a `__origin` cookie (30-day TTL, httpOnly: false so JS can read it) containing `{ source, medium, campaign, referralCode, landingUrl, ts }`. When the booking form is submitted, this cookie is sent alongside the form data and permanently attached to the new Project and Client. This closes the attribution loop entirely.
+
+**C. Contract Engine**
+Add a `contracts` collection with Handlebars-style templates (stored in Firestore or R2 as HTML). When a lead advances to `CONTRACT_SENT`, a Server Action merges the project fields (names, dates, locations, package price) into the template and renders a signed-read-only HTML document. Implement click-to-sign using a timestamp + IP capture — sufficient for a freelance business without third-party e-signature cost.
+
+**D. Invoice System with Stripe**
+Add an `invoices` collection. Invoices are generated automatically at two trigger points: `PROPOSAL_SENT` (deposit) and `IN_EDITING` (balance). Attach a Stripe Payment Intent or Payment Link. When Stripe's webhook fires `payment_intent.succeeded`, a Server Action advances the project status automatically.
+
+**E. Questionnaire System**
+Session-type-specific question sets. When status becomes `BOOKED`, auto-send a questionnaire (Firebase `mail` collection triggers it). The client fills it out in a simple `/questionnaire/[token]` page. Responses are stored structured (not in a notes blob) so they can be referenced in the shoot brief and contract.
+
+**F. Shoot Brief Auto-Generator**
+When questionnaire is complete and shoot < 7 days away, auto-generate a PDF/HTML shoot brief compiling: client names, location with map link, timeline, style references, must-have shots, gear notes. Admin can review before it auto-sends to a phone or prints.
+
+**G. Referral Engine**
+On `GALLERY_DELIVERED`, schedule a 7-day delayed Cloud Function (or Vercel Cron job) that sends a referral email containing the client's unique `referralCode` link (e.g., `korrinsphotos.com/booking?ref=sarah-jones-k7x2`). When a new visitor uses this link, the `siteVisit` is tagged. When that visitor converts, the original client's `referralCredit` is incremented and an automated "You earned a credit!" email fires.
+
+**H. Client Timeline View**
+In the client portal, replace the flat gallery grid with a vertical timeline showing all their projects chronologically. Each card shows status, shoot date, gallery link (if delivered), and invoice history.
+
+**I. Admin Pipeline Dashboard**
+Replace the current flat Kanban (which only shows active inquiries) with a true pipeline view that shows revenue projections: column totals, weighted pipeline value (leadScore × estimatedValue), and a monthly bookings-vs-target chart.
+
+**J. Automated Follow-Up Sequences**
+A Vercel Cron job runs nightly. It checks for:
+- Projects stuck in `PROPOSAL_SENT` > 7 days → auto-sends follow-up template
+- Projects stuck in `CONTRACT_SENT` > 5 days → sends gentle nudge
+- Projects with `followUpDate` = today → creates admin task notification
+- Shoots within 48 hours → sends client reminder
+
+### Features to REMOVE / Simplify
+
+**Remove: Dual `bookingInquiries` + `events` top-level collections**
+Replace with `projects` (the lifecycle record) + `events` (the media delivery sub-record created automatically at `BOOKED`). This eliminates the manual `linkEventToInquiry` workflow entirely.
+
+**Remove: Manual "Create Event" flow**
+The admin should never need to manually create an Event. It is a side effect of the booking confirmation. The event gets its title, client, and shoot date directly from the project.
+
+**Remove: Manual client invite from event page**
+When the Event is auto-created from a BOOKED project, the client's `eventAccess` document is also auto-created. The invite email is triggered by the status change, not a separate admin action.
+
+**Remove: `leadSource` as a manually-entered dropdown**
+Replace with the automated attribution cookie system. The admin may still override, but the default should be populated automatically.
+
+---
+
+## Part 5: Data Flow — Inquiry to Delivery
+
+### Step 1 — Site Visit Attribution
+
+```typescript
+// middleware.ts — runs on every public page request
+export function middleware(req: NextRequest) {
+  const res = NextResponse.next();
+
+  // Only set on first visit
+  if (!req.cookies.get("__origin")) {
+    const url = new URL(req.url);
+    const origin = {
+      source:       url.searchParams.get("utm_source") ?? inferSource(req),
+      medium:       url.searchParams.get("utm_medium") ?? null,
+      campaign:     url.searchParams.get("utm_campaign") ?? null,
+      referralCode: url.searchParams.get("ref") ?? null,
+      landingUrl:   req.nextUrl.pathname,
+      ts:           Date.now(),
+    };
+    res.cookies.set("__origin", JSON.stringify(origin), {
+      maxAge: 60 * 60 * 24 * 30,
+      httpOnly: false,  // JS needs to read it on form submit
+      sameSite: "lax",
+    });
+  }
+  return res;
+}
+```
+
+### Step 2 — Booking Form Submission → Project + Client Creation
+
+```typescript
+// app/booking/actions.ts
+export async function submitBooking(formData: FormData) {
+  const origin = JSON.parse(formData.get("__origin") as string ?? "{}");
+  const email  = formData.get("email") as string;
+
+  // 1. Find or create Client
+  const existingSnap = await adminDb.collection("clients")
+    .where("email", "==", email).limit(1).get();
+
+  let clientId: string;
+  if (!existingSnap.empty) {
+    clientId = existingSnap.docs[0].id;
+  } else {
+    const clientRef = adminDb.collection("clients").doc();
+    await clientRef.set({
+      email,
+      firstName: formData.get("firstName"),
+      lastName:  formData.get("lastName"),
+      role:      "CLIENT",
+      referralCode: generateReferralCode(formData.get("firstName") as string),
+      referralCredit: 0,
+      totalSessionsBooked: 0,
+      firstTouchSource:     origin.source ?? "WEBSITE",
+      firstTouchMedium:     origin.medium,
+      firstTouchCampaign:   origin.campaign,
+      firstTouchLandingUrl: origin.landingUrl,
+      firstTouchAt:         origin.ts ? new Date(origin.ts) : FieldValue.serverTimestamp(),
+      referredBy:           await resolveReferralCode(origin.referralCode),
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    clientId = clientRef.id;
+  }
+
+  // 2. Create Project (replaces bookingInquiry)
+  const projectRef = adminDb.collection("projects").doc();
+  await projectRef.set({
+    clientId,
+    status:      "INQUIRY",
+    sessionType: formData.get("sessionType"),
+    title:       `${formData.get("firstName")} ${formData.get("lastName")} — ${formData.get("sessionType")}`,
+    shootDate:   null,
+    notes:       "",
+    leadSource:  origin.source ?? "WEBSITE",
+    leadScore:   calculateLeadScore({ ... }),
+    tags:        [],
+    createdAt:   FieldValue.serverTimestamp(),
+    updatedAt:   FieldValue.serverTimestamp(),
+  });
+
+  // 3. Write first inbound message to subcollection
+  await projectRef.collection("messages").add({
+    direction: "INBOUND",
+    channel:   "EMAIL",
+    body:      formData.get("message"),
+    sentAt:    FieldValue.serverTimestamp(),
+    isAutomatic: false,
+  });
+
+  // 4. Log referral attribution if present
+  if (origin.referralCode) {
+    await logReferralVisit(origin.referralCode, clientId, projectRef.id);
+  }
+
+  // 5. Trigger auto-responder via mail collection
+  await adminDb.collection("mail").add({ ... });
+}
+```
+
+### Step 3 — Status Transition: INQUIRY → BOOKED
+
+When `updateProjectStatus(projectId, "BOOKED")` is called:
+
+```typescript
+// lib/project-transitions.ts
+export async function onProjectBooked(projectId: string) {
+  const projectSnap = await adminDb.collection("projects").doc(projectId).get();
+  const project     = projectSnap.data()!;
+  const clientSnap  = await adminDb.collection("clients").doc(project.clientId).get();
+  const client      = clientSnap.data()!;
+
+  // 1. Auto-create Event (no manual step)
+  const eventRef = adminDb.collection("events").doc();
+  await eventRef.set({
+    projectId:  projectId,
+    clientId:   project.clientId,
+    title:      project.title,
+    shootDate:  project.shootDate,
+    status:     "ACTIVE",
+    createdAt:  FieldValue.serverTimestamp(),
+  });
+
+  // 2. Auto-grant client portal access
+  const uid = await getOrCreateFirebaseUser(client.email);
+  const accessId = `${uid}_${eventRef.id}`;
+  await adminDb.collection("eventAccess").doc(accessId).set({
+    userId: uid, eventId: eventRef.id, createdAt: FieldValue.serverTimestamp(),
+  }, { merge: true });
+
+  // 3. Increment client's session count
+  await adminDb.collection("clients").doc(project.clientId).update({
+    totalSessionsBooked: FieldValue.increment(1),
+  });
+
+  // 4. Auto-send questionnaire
+  await sendQuestionnaire(projectId, project.sessionType, client.email);
+
+  // 5. Create balance invoice (due 2 weeks before shoot)
+  await createInvoice(projectId, project.clientId, "BALANCE", project.packagePriceUsd * 0.5);
+}
+```
+
+### Step 4 — Status Transition: IN_EDITING → GALLERY_DELIVERED
+
+```typescript
+export async function onGalleryDelivered(projectId: string, eventId: string) {
+  // 1. Send gallery notification email
+  // 2. Schedule referral email: Vercel Cron or Cloud Scheduler 7 days out
+  await adminDb.collection("scheduledTasks").add({
+    type:      "SEND_REFERRAL",
+    projectId,
+    runAt:     addDays(new Date(), 7),
+    status:    "PENDING",
+  });
+}
+
+// Vercel Cron: /api/cron/run-tasks
+// Runs nightly — picks up PENDING tasks where runAt <= now
+```
+
+### Step 5 — Referral Attribution on New Booking
+
+```typescript
+// In submitBooking, when origin.referralCode is present:
+async function logReferralVisit(code: string, newClientId: string, newProjectId: string) {
+  const referrerSnap = await adminDb.collection("clients")
+    .where("referralCode", "==", code).limit(1).get();
+  if (referrerSnap.empty) return;
+
+  const referrerId = referrerSnap.docs[0].id;
+
+  // Create referral record
+  await adminDb.collection("referrals").add({
+    referrerClientId:  referrerId,
+    referredClientId:  newClientId,
+    referredProjectId: newProjectId,
+    creditAmountCents: 15000,  // $150 credit
+    creditAppliedAt:   null,
+    createdAt:         FieldValue.serverTimestamp(),
+  });
+
+  // Add credit to referrer's wallet immediately
+  await adminDb.collection("clients").doc(referrerId).update({
+    referralCredit: FieldValue.increment(15000),
+  });
+
+  // Notify referrer
+  await adminDb.collection("mail").add({
+    to: referrerSnap.docs[0].data().email,
+    message: { subject: "You earned a $150 credit!", html: buildReferralCreditEmail(...) }
+  });
+}
+```
+
+---
+
+## Part 6: Admin UI Changes
+
+### The Project Detail Page (replaces LeadDetailDrawer + EventDetailPage)
+
+This is the new central admin workspace. Route: `/admin/projects/[id]`
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  HEADER: Client name + avatar + status badge + lead score   │
+│  Quick actions: [Advance Status ▶] [Send Email] [Archive]   │
+├──────────────┬──────────────────────────────────────────────┤
+│              │  Tabs: Overview │ Messages │ Contract │       │
+│  LEFT RAIL   │         Invoice │ Gallery  │ Timeline │       │
+│              ├──────────────────────────────────────────────┤
+│  Client Card │  TAB CONTENT AREA                            │
+│  • email     │  (Overview: key dates, location, package,    │
+│  • phone     │   questionnaire status, tags, notes)         │
+│  • source    │                                              │
+│  • sessions  │  (Messages: threaded communication log)      │
+│  • credit    │                                              │
+│              │  (Contract: render preview, send, track sig) │
+│  Project     │                                              │
+│  • type      │  (Invoice: deposit + balance status,         │
+│  • package   │   Stripe payment links)                      │
+│  • value     │                                              │
+│  • timeline  │  (Gallery: UploadZone + PhotoGrid if event   │
+│              │   exists)                                    │
+│              │                                              │
+│              │  (Timeline: full lifecycle history log)      │
+└──────────────┴──────────────────────────────────────────────┘
+```
+
+### Admin Pipeline Dashboard (replaces flat Kanban)
+
+The Kanban board gains a revenue bar at the top of each column showing:
+- Card count
+- Weighted pipeline value (sum of `estimatedValue × (leadScore/100)`)
+- Monthly closed-won total when in BOOKED/COMPLETED columns
+
+---
+
+## Part 7: Phased Execution Roadmap
+
+### Phase 1 — Data Model Migration (2–3 days)
+**Goal:** Establish the unified schema without breaking anything.
+
+1. Create `clients` collection. Write a migration script that iterates `users` with role `CLIENT` and creates a corresponding `clients` doc, matching by email.
+2. Create `projects` collection. Write a migration script that reads every `bookingInquiry` and creates a `projects` doc, mapping `status` fields and attaching a `clientId` from the new `clients` collection.
+3. Update all Server Actions (`app/admin/bookings/actions.ts`) to write to `projects` instead of `bookingInquiries`. Keep `bookingInquiries` as a read-only legacy source during transition.
+4. Add source attribution middleware (`__origin` cookie) — zero risk, purely additive.
+5. Update `submitBooking` in `app/booking/actions.ts` to use the new find-or-create Client + Project pattern.
+
+### Phase 2 — Unified Project Detail View (3–4 days)
+**Goal:** Replace the side-by-side LeadDetailDrawer + EventDetailPage with the single `/admin/projects/[id]` workspace.
+
+1. Create `app/admin/projects/[id]/page.tsx` as a server component fetching the Project + Client in one pass.
+2. Migrate tabs from `LeadDetailDrawer` (Overview, Notes, Comms, Email) into the new page.
+3. Add the Gallery tab which conditionally renders `UploadZone` + `PhotoGrid` if an `events` doc exists for this project.
+4. Add `app/admin/projects/page.tsx` — the full pipeline Kanban that links to project detail instead of opening a drawer.
+5. Deprecate (but don't delete yet) `app/admin/bookings/` and `app/admin/events/[id]/`.
+
+### Phase 3 — Auto-Transition Engine (3–4 days)
+**Goal:** Status changes trigger side effects automatically.
+
+1. Create `lib/project-transitions.ts` with pure async transition functions: `onProjectBooked`, `onGalleryDelivered`, etc.
+2. Wrap `updateProjectStatus` in `actions.ts` to call the appropriate transition function.
+3. The `onProjectBooked` function: auto-creates the Event, auto-grants `eventAccess`, sends the questionnaire, creates the balance invoice draft.
+4. Add `app/questionnaire/[token]/page.tsx` — a public, token-authenticated form for clients.
+5. Add `app/api/cron/run-tasks/route.ts` and configure in `vercel.json`.
+
+### Phase 4 — Contract & Invoice Engine (4–5 days)
+**Goal:** Automate the two highest-friction manual steps.
+
+1. Create `contracts` collection and 3–4 contract HTML templates (one per session type) stored in Firestore.
+2. Build `lib/contract-renderer.ts` — takes a project + client and merges fields into the template.
+3. Add contract tab to Project Detail: preview, send, track signature status.
+4. Integrate Stripe: add `invoices` collection, create Stripe Payment Links server-side, handle `payment_intent.succeeded` webhook at `app/api/webhooks/stripe/route.ts`.
+5. Auto-advance project status on payment confirmation.
+
+### Phase 5 — Client Portal Upgrade (2–3 days)
+**Goal:** Give clients the full timeline view.
+
+1. Update `app/gallery/page.tsx` to query `projects` by `clientId` instead of `eventAccess`. Show all projects with their full status history.
+2. Add invoice download links to the client portal.
+3. Show questionnaire link if status is `BOOKED` and questionnaire is not yet complete.
+
+### Phase 6 — Referral Engine (2–3 days)
+**Goal:** Close the growth loop.
+
+1. Every `clients` doc gets a `referralCode` on creation (if not already present). Run a one-time migration to backfill existing clients.
+2. Update booking form to read `?ref=` from URL and embed it in the submitted form data.
+3. Build `logReferralVisit` function and wire it into `submitBooking`.
+4. Build the referral credit email template and the scheduled task system.
+5. Show referral status + credit balance in the client portal settings page.
+
+---
+
+## Part 8: Key Invariants to Enforce
+
+| Rule | Enforcement |
+|------|-------------|
+| One Client per email address | Firestore rule + server-side dedup on every `submitBooking` call |
+| Project status can only advance (no skipping 4+ stages) | `validateStatusTransition(from, to)` guard in `updateProjectStatus` |
+| Events are never created manually | Remove the manual "Create Event" form; only `onProjectBooked` creates them |
+| No raw R2 URLs in the DOM | `buildCdnUrl` is the only function that constructs image URLs |
+| Attribution cookie never overwrites itself | Middleware checks `req.cookies.get("__origin")` before setting |
+| Referral credit is write-once per referral | `referrals` doc ID = `${referrerId}_${referredProjectId}` (idempotent) |
+
+---
+
+## Summary: What This Unlocks
+
+| Before | After |
+|--------|-------|
+| Inquiry and Event are separate manual records | One Project owns the full lifecycle |
+| Client source is a dropdown you fill in manually | Automatically captured from UTM/referral cookie at first visit |
+| Booking → Event requires manual linking | `onProjectBooked()` auto-creates Event, access, and invoice |
+| Communication log is a list of text blobs | Structured `messages` subcollection, queryable and referenceable |
+| No contract system | Auto-rendered HTML contract from project data, click-to-sign |
+| No invoice system | Automated deposit + balance invoices with Stripe integration |
+| No referral loop | Unique codes, wallet credits, and attribution tracking |
+| Client portal shows galleries only | Full timeline: projects, invoices, questionnaires, galleries |
+| Admin manages inquiries and events in two places | Single `/admin/projects/[id]` workspace for everything |
