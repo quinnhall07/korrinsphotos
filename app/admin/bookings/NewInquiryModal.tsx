@@ -5,7 +5,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { createBookingInquiry } from "./actions";
+import { createBookingInquiry } from "./inquiry-actions";
 import { toast } from "@/components/ui/Toaster";
 
 interface NewInquiryModalProps {

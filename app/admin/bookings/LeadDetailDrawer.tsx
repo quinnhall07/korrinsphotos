@@ -16,12 +16,12 @@ import { useRouter } from "next/navigation";
 import {
   updateBookingStatus,
   updateBookingDetails,
-  sendBookingResponse,
   updateLeadSource,
   setFollowUpDate,
   deleteBookingInquiry,
   linkEventToInquiry,
-} from "./actions";
+} from "./inquiry-actions";
+import { sendBookingResponse } from "./comms-actions";
 import { TagManager } from "./TagManager";
 import { CommunicationLogger } from "./CommunicationLogger";
 import { EmailTemplateSelector } from "./EmailTemplateSelector";

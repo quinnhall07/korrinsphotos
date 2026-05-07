@@ -4,7 +4,7 @@
 // Inline tag editor. Shows preset tags as toggles + allows custom tag input.
 
 import { useState, useTransition } from "react";
-import { addTag, removeTag } from "./actions";
+import { addTag, removeTag } from "./tag-actions";
 import { PRESET_TAGS } from "@/lib/booking-kanban";
 import { toast } from "@/components/ui/Toaster";
 

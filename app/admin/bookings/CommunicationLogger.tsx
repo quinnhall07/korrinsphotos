@@ -5,7 +5,7 @@
 // inquiry's communication history timeline.
 
 import { useState, useTransition } from "react";
-import { logCommunication } from "./actions";
+import { logCommunication } from "./comms-actions";
 import { toast } from "@/components/ui/Toaster";
 import type { CommunicationChannel } from "@/lib/booking-kanban";
 

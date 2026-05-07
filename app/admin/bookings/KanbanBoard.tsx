@@ -7,7 +7,7 @@
 import { useState, useTransition, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { KanbanCard, type KanbanInquiry } from "./KanbanCard";
-import { updateBookingStatus } from "./actions";
+import { updateBookingStatus } from "./inquiry-actions";
 import { toast } from "@/components/ui/Toaster";
 import { KANBAN_STATUSES, type LeadStatus } from "@/lib/booking-kanban";
 import {

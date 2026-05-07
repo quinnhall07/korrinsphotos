@@ -5,7 +5,7 @@
 // Supports bulk status changes and batch archival.
 
 import { useState, useTransition } from "react";
-import { bulkUpdateStatus } from "./actions";
+import { bulkUpdateStatus } from "./inquiry-actions";
 import { toast } from "@/components/ui/Toaster";
 import type { LeadStatus } from "@/lib/booking-kanban";
 
