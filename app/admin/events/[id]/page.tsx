@@ -14,6 +14,7 @@ import { AddToCalendarButton } from "./AddToCalendarButton";
 import { TitleEditor } from "./TitleEditor";
 import { ShootDateEditor } from "./ShootDateEditor";
 import { EventActions } from "./EventActions";
+import { formatDisplayDate } from "@/lib/date";
 import type { Metadata } from "next";
 
 export const dynamic = "force-dynamic";
@@ -68,9 +69,7 @@ async function getEventData(eventId: string) {
       return {
         userId: data.userId as string,
         email: (userDoc.data()?.email as string) ?? "unknown",
-        invitedAt: data.createdAt?.toDate
-          ? data.createdAt.toDate().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-          : "—",
+        invitedAt: formatDisplayDate(data.createdAt) ?? "—",
       };
     })
   );
@@ -88,9 +87,7 @@ async function getEventData(eventId: string) {
       title: eventData.title as string,
       status: (eventData.status as "UPCOMING" | "COMPLETED") || "UPCOMING",
       createdAt: eventData.createdAt?.toDate?.() ?? new Date(),
-      createdAtFormatted: eventData.createdAt?.toDate?.()?.toLocaleDateString("en-US", {
-        month: "long", day: "numeric", year: "numeric",
-      }) ?? "—",
+      createdAtFormatted: formatDisplayDate(eventData.createdAt) ?? "—",
       startDate: (eventData.startDate as string) || "",
       endDate: (eventData.endDate as string) || "",
       startTime: (eventData.startTime as string) || "",

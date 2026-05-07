@@ -4,7 +4,7 @@
 // Drag-and-drop Kanban board for managing booking inquiry pipeline.
 // Uses dnd-kit for smooth drag animations.
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { KanbanCard, type KanbanInquiry } from "./KanbanCard";
 import { updateBookingStatus } from "./actions";
@@ -40,33 +40,35 @@ export function KanbanBoard({ inquiries, onOpenDrawer }: KanbanBoardProps) {
     })
   );
 
-  const now = new Date();
-  const byStatus = KANBAN_STATUSES.reduce<Record<string, KanbanInquiry[]>>(
-    (acc, col) => {
-      acc[col.id] = inquiries
-        .filter((i) => i.status === col.id)
-        .sort((a, b) => {
-          const aOverdue =
-            a.followUpDate &&
-            new Date(a.followUpDate) < now &&
-            a.status !== "BOOKED" &&
-            a.status !== "ARCHIVED"
-              ? 1
-              : 0;
-          const bOverdue =
-            b.followUpDate &&
-            new Date(b.followUpDate) < now &&
-            b.status !== "BOOKED" &&
-            b.status !== "ARCHIVED"
-              ? 1
-              : 0;
-          if (bOverdue !== aOverdue) return bOverdue - aOverdue;
-          return (b.leadScore ?? 0) - (a.leadScore ?? 0);
-        });
-      return acc;
-    },
-    {}
-  );
+  const byStatus = useMemo(() => {
+    const now = new Date();
+    return KANBAN_STATUSES.reduce<Record<string, KanbanInquiry[]>>(
+      (acc, col) => {
+        acc[col.id] = inquiries
+          .filter((i) => i.status === col.id)
+          .sort((a, b) => {
+            const aOverdue =
+              a.followUpDate &&
+              new Date(a.followUpDate) < now &&
+              a.status !== "BOOKED" &&
+              a.status !== "ARCHIVED"
+                ? 1
+                : 0;
+            const bOverdue =
+              b.followUpDate &&
+              new Date(b.followUpDate) < now &&
+              b.status !== "BOOKED" &&
+              b.status !== "ARCHIVED"
+                ? 1
+                : 0;
+            if (bOverdue !== aOverdue) return bOverdue - aOverdue;
+            return (b.leadScore ?? 0) - (a.leadScore ?? 0);
+          });
+        return acc;
+      },
+      {}
+    );
+  }, [inquiries]);
 
   function handleDragStart(event: DragStartEvent) {
     setActiveId(event.active.id as string);
