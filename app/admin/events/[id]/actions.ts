@@ -91,32 +91,72 @@ export async function updateEventTitle(
   revalidatePath("/admin");
 }
 
-// ─── Update Shoot Dates ───────────────────────────────────────────────────────
+// ─── Update Event Status ────────────────────────────────────────────────────────
+
+export async function updateEventStatus(
+  eventId: string,
+  status: "UPCOMING" | "COMPLETED"
+): Promise<{ success: boolean; error?: string }> {
+  await requireAdmin();
+
+  const eventDoc = await adminDb.collection("events").doc(eventId).get();
+  if (!eventDoc.exists) return { success: false, error: "Event not found" };
+
+  const eventData = eventDoc.data();
+
+  await adminDb.collection("events").doc(eventId).update({
+    status,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  // If marked as Completed and linked to a booking, close the booking
+  if (status === "COMPLETED" && eventData?.bookingId) {
+    await adminDb.collection("bookingInquiries").doc(eventData.bookingId).update({
+      status: "ARCHIVED", // or whatever represents closed out
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  }
+
+  revalidatePath(`/admin/events/${eventId}`);
+  revalidatePath("/admin/events");
+  revalidatePath("/admin/bookings");
+  return { success: true };
+}
+
+// ─── Update Shoot Scheduling ──────────────────────────────────────────────────
 
 export async function updateShootDates(
   eventId: string,
-  shootDate: string | null,
-  shootEndDate: string | null
+  updates: {
+    startDate?: string | null;
+    endDate?: string | null;
+    startTime?: string | null;
+    endTime?: string | null;
+    isMultiDay?: boolean;
+    location?: string | null;
+  }
 ): Promise<void> {
   await requireAdmin();
 
-  const update: Record<string, unknown> = {
+  const updatePayload: Record<string, unknown> = {
     updatedAt: FieldValue.serverTimestamp(),
   };
 
-  if (shootDate) {
-    update.shootDate = Timestamp.fromDate(new Date(shootDate + "T12:00:00"));
-  } else {
-    update.shootDate = FieldValue.delete();
+  if (updates.startDate !== undefined) updatePayload.startDate = updates.startDate;
+  if (updates.endDate !== undefined) updatePayload.endDate = updates.endDate;
+  if (updates.startTime !== undefined) updatePayload.startTime = updates.startTime;
+  if (updates.endTime !== undefined) updatePayload.endTime = updates.endTime;
+  if (updates.isMultiDay !== undefined) updatePayload.isMultiDay = updates.isMultiDay;
+  if (updates.location !== undefined) updatePayload.location = updates.location;
+
+  // Clear fields if explicitly set to null
+  for (const key of Object.keys(updatePayload)) {
+    if (updatePayload[key] === null) {
+      updatePayload[key] = FieldValue.delete();
+    }
   }
 
-  if (shootEndDate) {
-    update.shootEndDate = Timestamp.fromDate(new Date(shootEndDate + "T12:00:00"));
-  } else {
-    update.shootEndDate = FieldValue.delete();
-  }
-
-  await adminDb.collection("events").doc(eventId).update(update);
+  await adminDb.collection("events").doc(eventId).update(updatePayload);
 
   revalidatePath(`/admin/events/${eventId}`);
   revalidatePath("/admin/events");

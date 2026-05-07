@@ -10,7 +10,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = { title: "Events | Admin" };
 export const dynamic = "force-dynamic";
 
-type EventStatus = "draft" | "scheduled" | "delivered" | "archived";
+type EventStatus = "UPCOMING" | "COMPLETED";
 
 async function getEvents(): Promise<SerializedEventRow[]> {
   const snapshot = await adminDb
@@ -28,24 +28,17 @@ async function getEvents(): Promise<SerializedEventRow[]> {
       ]);
 
       const createdAt = data.createdAt?.toDate() ?? new Date();
-      const shootDate = data.shootDate?.toDate() ?? null;
 
       return {
         id: doc.id,
         title: data.title as string,
-        status: (data.status as EventStatus) ?? "draft",
+        status: (data.status as EventStatus) || "UPCOMING",
         createdAt: createdAt.toLocaleDateString("en-US", {
           month: "short",
           day: "numeric",
           year: "numeric",
         }),
-        shootDate: shootDate
-          ? shootDate.toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            })
-          : null,
+        shootDate: data.startDate || null,
         photoCount: photosSnap.data().count,
         clientCount: accessSnap.data().count,
       };

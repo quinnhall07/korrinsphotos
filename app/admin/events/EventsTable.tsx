@@ -10,13 +10,11 @@ import Link from "next/link";
 import { deleteEvent } from "./actions";
 import { toast } from "@/components/ui/Toaster";
 
-type EventStatus = "draft" | "scheduled" | "delivered" | "archived";
+type EventStatus = "UPCOMING" | "COMPLETED";
 
 const STATUS_BADGES: Record<EventStatus, { bg: string; color: string; label: string }> = {
-  draft: { bg: "rgba(42,42,40,0.08)", color: "var(--charcoal-muted)", label: "Draft" },
-  scheduled: { bg: "#DBEAFE", color: "#1D4ED8", label: "Scheduled" },
-  delivered: { bg: "#D1FAE5", color: "#065F46", label: "Delivered" },
-  archived: { bg: "#FEF3C7", color: "#92400E", label: "Archived" },
+  UPCOMING: { bg: "#DBEAFE", color: "#1D4ED8", label: "Upcoming" },
+  COMPLETED: { bg: "#D1FAE5", color: "#065F46", label: "Completed" },
 };
 
 export interface SerializedEventRow {
@@ -139,7 +137,7 @@ export function EventsTable({ events }: EventsTableProps) {
               </tr>
             )}
             {filtered.map((ev) => {
-              const badge = STATUS_BADGES[ev.status] ?? STATUS_BADGES.draft;
+              const badge = STATUS_BADGES[ev.status] ?? STATUS_BADGES.UPCOMING;
               return (
                 <tr key={ev.id}>
                   <td style={tdStyle}>

@@ -24,14 +24,43 @@ export async function updateBookingStatus(
   await requireAdmin();
 
   const doc = await adminDb.collection("bookingInquiries").doc(id).get();
+  const data = doc.data();
   const name = doc.exists
-    ? `${doc.data()?.firstName ?? ""} ${doc.data()?.lastName ?? ""}`.trim()
+    ? `${data?.firstName ?? ""} ${data?.lastName ?? ""}`.trim()
     : "Unknown";
 
   await adminDb.collection("bookingInquiries").doc(id).update({
     status,
     updatedAt: FieldValue.serverTimestamp(),
   });
+
+  // Automated Pipeline: Booking -> Event Synchronization
+  if (status === "BOOKED" && data && !data.eventId) {
+    const newEventRef = adminDb.collection("events").doc();
+    const eventTitle = `${name} - ${data.sessionType || "Session"}`;
+    
+    await newEventRef.set({
+      title: eventTitle,
+      bookingId: id,
+      clientEmail: data.email,
+      clientName: name,
+      status: "UPCOMING",
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    await adminDb.collection("bookingInquiries").doc(id).update({
+      eventId: newEventRef.id,
+      eventName: eventTitle,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    await logActivity(
+      "STATUS_CHANGED",
+      `Event "${eventTitle}" auto-generated from approved booking`,
+      { eventId: newEventRef.id, inquiryId: id }
+    ).catch(() => {});
+  }
 
   // Log to activity feed
   await logActivity(
@@ -495,6 +524,17 @@ export async function linkEventToInquiry(
         return { success: false, error: "Event not found." };
       }
       eventName = (eventDoc.data()?.title as string) ?? null;
+
+      const inquiryDoc = await adminDb.collection("bookingInquiries").doc(inquiryId).get();
+      if (inquiryDoc.exists) {
+        const inquiryData = inquiryDoc.data();
+        await adminDb.collection("events").doc(eventId).update({
+          bookingId: inquiryId,
+          clientEmail: inquiryData?.email || null,
+          clientName: `${inquiryData?.firstName ?? ""} ${inquiryData?.lastName ?? ""}`.trim() || null,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
     }
 
     await adminDb.collection("bookingInquiries").doc(inquiryId).update({

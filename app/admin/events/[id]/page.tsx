@@ -78,20 +78,25 @@ async function getEventData(eventId: string) {
   const eventData = eventDoc.data()!;
 
   // Parse shoot dates
-  const shootDate = eventData.shootDate?.toDate?.() ?? null;
-  const shootEndDate = eventData.shootEndDate?.toDate?.() ?? null;
-  const calendarDate = shootDate ?? eventData.createdAt?.toDate?.() ?? new Date();
+  const calendarDate = eventData.startDate 
+    ? new Date(eventData.startDate + (eventData.startTime ? `T${eventData.startTime}` : "T12:00:00"))
+    : (eventData.createdAt?.toDate?.() ?? new Date());
 
   return {
     event: {
       id: eventId,
       title: eventData.title as string,
+      status: (eventData.status as "UPCOMING" | "COMPLETED") || "UPCOMING",
       createdAt: eventData.createdAt?.toDate?.() ?? new Date(),
       createdAtFormatted: eventData.createdAt?.toDate?.()?.toLocaleDateString("en-US", {
         month: "long", day: "numeric", year: "numeric",
       }) ?? "—",
-      shootDate: shootDate ? shootDate.toISOString().slice(0, 10) : "",
-      shootEndDate: shootEndDate ? shootEndDate.toISOString().slice(0, 10) : "",
+      startDate: (eventData.startDate as string) || "",
+      endDate: (eventData.endDate as string) || "",
+      startTime: (eventData.startTime as string) || "",
+      endTime: (eventData.endTime as string) || "",
+      isMultiDay: (eventData.isMultiDay as boolean) || false,
+      location: (eventData.location as string) || "",
       calendarDate: calendarDate.toISOString(),
     },
     photos,
@@ -123,8 +128,13 @@ export default async function EventDetailPage({ params }: Props) {
           <TitleEditor eventId={event.id} initialTitle={event.title} />
           <ShootDateEditor
             eventId={event.id}
-            initialShootDate={event.shootDate}
-            initialShootEndDate={event.shootEndDate}
+            initialStartDate={event.startDate}
+            initialEndDate={event.endDate}
+            initialStartTime={event.startTime}
+            initialEndTime={event.endTime}
+            initialIsMultiDay={event.isMultiDay}
+            initialLocation={event.location}
+            initialStatus={event.status}
           />
           <p style={{ fontSize: "0.8rem", color: "var(--charcoal-muted)", marginTop: "0.5rem" }}>
             {photos.length} photo{photos.length !== 1 ? "s" : ""} · {clients.length} client{clients.length !== 1 ? "s" : ""} · Created {event.createdAtFormatted}

@@ -56,6 +56,21 @@ export interface EventDoc {
   id: string;
   title: string;
   coverPhotoUrl?: string;
+
+  // ─── Booking Linkage ────────────────────────────────────────────────────────
+  bookingId?: string;
+  clientEmail?: string;
+  clientName?: string;
+
+  // ─── Scheduling ─────────────────────────────────────────────────────────────
+  status?: "UPCOMING" | "COMPLETED";
+  startDate?: string;
+  endDate?: string;
+  startTime?: string;
+  endTime?: string;
+  isMultiDay?: boolean;
+  location?: string;
+
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
