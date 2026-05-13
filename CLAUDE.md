@@ -12,8 +12,10 @@
 | Audience | Routes | Auth |
 |---|---|---|
 | Public visitors | `/`, `/portfolio`, `/booking`, `/login` | None |
-| Admin (Korrin) | `/admin/**` | Firebase session cookie + `role: "ADMIN"` claim |
+| Admin (Korrin) | `/admin`, `/admin/bookings`, `/admin/projects`, `/admin/events`, `/admin/users` | Firebase session cookie + `role: "ADMIN"` claim |
 | Clients | `/gallery/**` | Firebase session cookie + `eventAccess` Firestore doc |
+
+`/admin/projects` is the new pipeline workspace built around the unified Client/Project model (see `docs/architecture/unified-client-lifecycle.md`). It runs alongside the legacy `/admin/bookings` Kanban while the data migration completes.
 
 The codebase is **proprietary** (see `LICENSE.md`). Do not copy, publish, or reference external repositories.
 
@@ -23,50 +25,89 @@ The codebase is **proprietary** (see `LICENSE.md`). Do not copy, publish, or ref
 
 ```
 korrin-photos/
-├── app/                        # Next.js App Router pages & API routes
-│   ├── admin/                  # Admin dashboard (server-guarded)
-│   │   ├── bookings/           # Kanban CRM pipeline
-│   │   ├── events/             # Event management + [id] detail
-│   │   └── users/              # User management
+├── app/                              # Next.js App Router pages & API routes
+│   ├── admin/                        # Admin dashboard (server-guarded)
+│   │   ├── bookings/                 # Legacy Kanban CRM pipeline (reads bookingInquiries)
+│   │   ├── events/                   # Event management + [id] detail (gallery editor lives here)
+│   │   ├── projects/                 # Unified pipeline (reads projects + clients)
+│   │   │   ├── [id]/page.tsx
+│   │   │   ├── actions.ts            # updateProjectStatus, updateProjectDetails
+│   │   │   ├── contract-actions.ts   # createDraftContract, sendContract
+│   │   │   ├── invoice-actions.ts    # sendInvoice (creates Stripe payment link)
+│   │   │   ├── page.tsx
+│   │   │   └── ProjectsPipelineClientPage.tsx
+│   │   ├── users/                    # User management
+│   │   ├── layout.tsx                # requireAdmin() guard + AdminSidebar
+│   │   └── page.tsx                  # Dashboard
 │   ├── api/
-│   │   ├── auth/session/       # POST: exchange idToken → session cookie
-│   │   ├── auth/signout/       # POST: clear session cookie
-│   │   ├── events-list/        # GET: dropdown data for event linking
-│   │   ├── invite/             # POST: grant access + send magic link
-│   │   ├── upload/             # POST: generate R2 pre-signed URL
-│   │   └── upload/confirm/     # POST: ingest into Cloudflare Images + Firestore
-│   ├── booking/                # Public booking inquiry form
-│   ├── gallery/                # Client portal: [id] private event gallery
-│   ├── login/                  # Magic link + OAuth login
-│   ├── portfolio/              # Public portfolio with category filter
-│   ├── settings/               # Client account settings
-│   ├── error.tsx               # Global error boundary
-│   ├── globals.css             # Design tokens + global styles
-│   ├── layout.tsx              # Root layout (Navbar, AuthProvider, Toaster)
-│   ├── loading.tsx             # Root loading state
-│   └── page.tsx                # Home page
+│   │   ├── auth/session/             # POST: exchange idToken → session cookie
+│   │   ├── auth/signout/             # POST: clear session cookie
+│   │   ├── cron/run-tasks/           # GET: cron worker (Vercel daily schedule)
+│   │   ├── events-list/              # GET: dropdown data for event linking
+│   │   ├── invite/                   # POST: grant access + send magic link
+│   │   ├── upload/                   # POST: generate single-PUT R2 pre-signed URL
+│   │   ├── upload/confirm/           # POST: ingest into Cloudflare Images + Firestore
+│   │   ├── upload/multipart/init/    # POST: start multipart upload, return part URLs
+│   │   ├── upload/multipart/complete/# POST: finalize multipart upload + write Photo doc
+│   │   └── webhooks/stripe/          # POST: Stripe webhook (verifies signature)
+│   ├── booking/                      # Public booking inquiry form + actions.ts
+│   ├── gallery/                      # Client portal: [id] private event gallery
+│   ├── login/                        # Magic link + OAuth login
+│   ├── portfolio/                    # Public portfolio with category filter
+│   ├── settings/                     # Client account settings
+│   ├── error.tsx                     # Global error boundary
+│   ├── globals.css                   # Design tokens + global styles
+│   ├── layout.tsx                    # Root layout (Navbar, AuthProvider, Toaster)
+│   ├── loading.tsx                   # Root loading state
+│   ├── not-found.tsx
+│   └── page.tsx                      # Home page
 ├── components/
-│   ├── admin/AdminSidebar.tsx  # Admin nav sidebar (canonical version)
-│   ├── ui/Toaster.tsx          # Global toast system
-│   ├── AuthProvider.tsx        # Firebase Auth context + magic link completion
+│   ├── admin/AdminSidebar.tsx        # Canonical admin nav sidebar
+│   ├── ui/Toaster.tsx                # Global toast system
+│   ├── AuthProvider.tsx              # Firebase Auth context + magic link completion
 │   ├── Footer.tsx
 │   ├── HeroSlideshow.tsx
 │   ├── Lightbox.tsx
 │   ├── MasonryGrid.tsx
-│   ├── Navbar.tsx
-│   └── SecureImage.tsx         # Right-click / drag protected image wrapper
+│   └── Navbar.tsx
+├── docs/
+│   └── architecture/
+│       └── unified-client-lifecycle.md   # Canonical reference for the Client/Project schema
 ├── lib/
-│   ├── booking-kanban.ts       # LeadStatus types + Kanban column config
-│   ├── cloudflare.ts           # R2 presign, Cloudflare Images upload/delete
-│   ├── firebase-admin.ts       # Admin SDK singleton (server-only)
-│   ├── firebase-email.ts       # Identity Toolkit magic link sender (server-only)
-│   ├── firebase.ts             # Client SDK singleton (client-only)
-│   ├── firestore.ts            # All Firestore collection helpers + types
-│   ├── lead-scoring.ts         # 0-100 lead score algorithm
-│   └── session.ts              # Session cookie create/verify/clear + requireAdmin/requireSession
-├── middleware.ts               # Edge cookie presence check for /admin and /gallery
-├── styles/main.css             # Legacy CSS (prototype artifact — do not delete)
-├── index.html                  # Legacy prototype HTML (do not delete)
+│   ├── db/                           # Per-collection Firestore helpers (canonical DB layer)
+│   │   ├── activity.ts
+│   │   ├── bookings.ts               # Legacy bookingInquiries (read by /admin/bookings)
+│   │   ├── clients.ts                # Universal Client record (email = key)
+│   │   ├── contracts.ts
+│   │   ├── event-access.ts
+│   │   ├── events.ts
+│   │   ├── invoices.ts
+│   │   ├── mail.ts                   # Firebase Trigger Email queue
+│   │   ├── photos.ts
+│   │   ├── projects.ts               # Master state machine (ProjectDoc, ProjectStatus, MessageDoc)
+│   │   └── users.ts
+│   ├── domain/
+│   │   └── events.ts                 # deleteEventAndAssets, clearEventGallery (cross-collection ops)
+│   ├── storage/
+│   │   ├── images.ts                 # Cloudflare Images upload/delete + buildCdnUrl
+│   │   └── r2.ts                     # R2 presign (single + multipart), delete, get-URL
+│   ├── booking-kanban.ts             # LeadStatus types + Kanban column config (legacy)
+│   ├── cloudflare.ts                 # Deprecated re-export facade for lib/storage/*
+│   ├── contract-renderer.ts          # Merges project + client data into HTML contract template
+│   ├── date.ts                       # toDate / formatDisplayDate / formatDateTime helpers
+│   ├── firebase-admin.ts             # Admin SDK singleton (server-only)
+│   ├── firebase-email.ts             # Identity Toolkit magic link sender (server-only)
+│   ├── firebase.ts                   # Client SDK singleton (client-only)
+│   ├── lead-scoring.ts               # 0-100 lead score algorithm (typed against BookingInquiryDoc)
+│   ├── project-transitions.ts        # handleProjectTransition + lifecycle hooks
+│   ├── session.ts                    # Session cookie create/verify/clear + requireAdmin/requireSession
+│   ├── stripe.ts                     # Stripe SDK + createPaymentLinkForInvoice
+│   └── upload.ts                     # Client-side multipart upload orchestrator
+├── middleware.ts                     # Edge cookie check (admin/gallery) + __origin UTM cookie
+├── scripts/                          # One-off Node scripts (migrations, backfills)
+├── styles/main.css                   # Legacy CSS (prototype artifact — do not delete)
+├── index.html                        # Legacy prototype HTML (do not delete)
+├── vercel.json                       # Vercel Cron schedule for /api/cron/run-tasks
 ├── next.config.ts
 ├── tailwind.config.ts
 ├── tsconfig.json
@@ -99,7 +140,7 @@ FIREBASE_PRIVATE_KEY          # Full PEM; Vercel stores \n literally — lib/fir
 
 ### Auth & App
 ```
-ADMIN_EMAILS                  # Comma-separated list of admin email addresses
+ADMIN_EMAILS                  # Comma-separated list of admin email addresses (ADMIN_EMAIL also accepted)
 NEXT_PUBLIC_APP_URL           # https://yourdomain.com (no trailing slash)
 ```
 
@@ -118,6 +159,17 @@ CLOUDFLARE_IMAGES_API_TOKEN
 NEXT_PUBLIC_CLOUDFLARE_IMAGES_URL   # https://imagedelivery.net/<HASH>
 ```
 
+### Stripe
+```
+STRIPE_SECRET_KEY             # sk_live_... or sk_test_...; lib/stripe.ts warns if missing
+STRIPE_WEBHOOK_SECRET         # whsec_...; required by /api/webhooks/stripe to verify signatures
+```
+
+### Cron Worker
+```
+CRON_SECRET                   # Bearer token enforced by /api/cron/run-tasks (skipped if unset, but required in prod)
+```
+
 ---
 
 ## Critical Architecture Rules
@@ -128,8 +180,12 @@ NEXT_PUBLIC_CLOUDFLARE_IMAGES_URL   # https://imagedelivery.net/<HASH>
 |---|---|
 | `lib/firebase-admin.ts` | Server Components, API Routes, Server Actions, `lib/session.ts` |
 | `lib/firebase.ts` | Client Components only (files with `"use client"`) |
-| `lib/cloudflare.ts` | Server-only (contains AWS SDK calls) |
+| `lib/storage/*` (and `lib/cloudflare.ts` re-export) | Server-only (contains AWS SDK and CF API calls) |
+| `lib/stripe.ts` | Server-only |
 | `lib/session.ts` | Server-only |
+| `lib/db/*` | Server-only (uses `adminDb`) |
+| `lib/domain/*` | Server-only |
+| `lib/project-transitions.ts`, `lib/contract-renderer.ts` | Server-only |
 
 Violating this boundary causes build failures. If a client component needs auth state, use `useAuth()` from `AuthProvider.tsx`.
 
@@ -144,57 +200,116 @@ The session cookie (`__session`) is an HTTP-only 14-day Firebase session cookie.
 4. Server verifies, upserts Firestore user doc, sets cookie.
 5. **Admin first login only:** Server returns `{ needsRefresh: true }` → client force-refreshes the Firebase token → POSTs again → session cookie is now created with `role: "ADMIN"`.
 
-**Verification:** Every protected server route calls `await requireAdmin()` or `await requireSession()` from `lib/session.ts`. These redirect to `/login` if invalid.
+**Verification:** Every protected server route calls `await requireAdmin()` or `await requireSession()` from `lib/session.ts`. These redirect to `/login` if invalid. `requireAdmin()` first reads the JWT claim, then falls back to a Firestore `users/{uid}.role` lookup to handle legacy sessions minted before the claim was applied.
 
 **Middleware** (`middleware.ts`) only checks cookie *presence* at the Edge (no Admin SDK on Edge). Actual token verification happens inside Server Components.
 
 ### 3. Image Upload Pipeline
 
+There are two pipelines. Use the single-PUT pipeline for ordinary photos (JPEG/PNG/WebP/HEIC); use the multipart pipeline for files large enough that a single PUT is unreliable (RAW exports, multi-GB deliverables). The client-side orchestrator `lib/upload.ts` drives the multipart path.
+
+**Single-PUT pipeline (`/api/upload` + `/api/upload/confirm`):**
 ```
-Browser
-  │  POST /api/upload  { eventId, fileName, contentType }
-  ▼
-API Route (server)
-  │  Generates R2 pre-signed PUT URL (15min expiry)
-  │  Returns { presignedUrl, key }
-  ▼
-Browser
-  │  PUT {presignedUrl}  (file body, bypasses Vercel 4.5MB limit)
-  ▼
-Cloudflare R2
-  │
-  ▼
-Browser
-  │  POST /api/upload/confirm  { key, eventId, label }
-  ▼
-API Route (server)
-  │  Constructs R2 object URL
-  │  Calls uploadToCloudflareImages() → gets imageId
-  │  Writes Photo doc to events/{eventId}/photos subcollection
-  │  Returns { photo }
+Browser → POST /api/upload  { eventId, fileName, contentType }
+        ← { presignedUrl, key }
+Browser → PUT  {presignedUrl}  (file body, bypasses Vercel 4.5MB limit)
+       (R2 stores the object)
+Browser → POST /api/upload/confirm  { key, eventId, label, category }
+        Server: uploadToCloudflareImages() → writes Photo doc in events/{id}/photos
+        ← { photo }
 ```
 
-**Never** expose raw R2 URLs in the DOM. Always use `buildCdnUrl(imageId, variant)` from `lib/cloudflare.ts`.
+**Multipart pipeline (`/api/upload/multipart/init` + `/api/upload/multipart/complete`):**
+```
+Browser → POST /api/upload/multipart/init  { eventId, fileName, contentType, parts }
+        ← { uploadId, key, partUrls[] }
+Browser → PUT each part to its presigned URL (parallel, capture ETag from response)
+Browser → POST /api/upload/multipart/complete  { eventId, key, uploadId, parts: [{PartNumber, ETag}] }
+        Server: completeMultipartUpload() → writes Photo doc with storageKey (no CF Images ingestion)
+        ← { success, id }
+```
 
-### 4. Firestore Data Model
+**Never** expose raw R2 URLs in the DOM. Always use `buildCdnUrl(imageId, variant)` from `lib/storage/images.ts` (re-exported from `lib/cloudflare.ts`).
+
+### 4. Database Access Layer
+
+The canonical DB layer lives in `lib/db/<collection>.ts`. Each module exports:
+- A `<collection>Col()` getter for the underlying `CollectionReference`.
+- A typed `Doc` interface for that collection.
+- Pure async helpers (`get`, `list`, `create`, `update`, etc).
+
+**Rule:** All new code MUST import from `@/lib/db/<collection>`. Do not write a new `firestore.ts` monolith — that file existed historically and was split deliberately (see DECISION.md ADR-013). When adding a new collection, create a new file in `lib/db/` and follow the same module shape; document the schema in `docs/architecture/unified-client-lifecycle.md` if it participates in the lifecycle.
+
+Cross-collection orchestrations (delete-all-photos-and-access for an event, etc.) live in `lib/domain/`. Lifecycle hooks live in `lib/project-transitions.ts`.
+
+### 5. Component Conventions
+
+- **`"use client"`** at the top of any file that uses hooks, browser APIs, or event handlers.
+- **Server Components** fetch data directly (no `useEffect`). Pass serialisable props down to client children.
+- **Server Actions** live in `actions.ts` files co-located with their page. Always call `await requireAdmin()` as the first line.
+- **Toaster:** Import `toast` from `@/components/ui/Toaster` (event-driven, no context needed).
+- **Routing after mutations:** Call `router.refresh()` (not `router.push`) to revalidate server data while staying on the page.
+
+---
+
+## Firestore Data Model
+
+The repo is mid-transition. Both the legacy Event-centric collections and the new Client/Project collections exist live. New code should target the Client/Project model.
+
+### New collections (Client/Project lifecycle)
+
+```
+clients/{clientId}
+  email (unique), firstName, lastName, phone, avatarUrl, role,
+  referralCode, referredBy, referralCredit, totalSessionsBooked,
+  firstTouchSource, firstTouchMedium, firstTouchCampaign, firstTouchLandingUrl, firstTouchAt,
+  createdAt, updatedAt
+
+projects/{projectId}
+  clientId, status (ProjectStatus), sessionType, title,
+  shootDate, shootEndDate, shootLocation, packageName, packagePriceUsd, discountApplied,
+  depositPaidAt, balancePaidAt, contractSignedAt, deliveredAt, referralLinkSentAt,
+  leadScore, leadSource, tags, estimatedValue, followUpDate, lastContactedAt, lastRespondedAt,
+  notes, createdAt, updatedAt
+  └── messages/{messageId}
+        direction (INBOUND|OUTBOUND), channel, subject, body, adminUid, sentAt, isAutomatic
+
+contracts/{contractId}
+  projectId, clientId, status (DRAFT|SENT|SIGNED|VOIDED), templateId,
+  renderedHtml, signerIp, signerUserAgent, sentAt, signedAt, createdAt
+
+invoices/{invoiceId}
+  projectId, clientId, type (DEPOSIT|BALANCE|FULL), status (DRAFT|SENT|PAID|OVERDUE|VOID),
+  amountCents, dueDate, paidAt, sentAt,
+  stripePaymentIntentId, stripePaymentLinkId, stripePaymentLinkUrl, createdAt
+
+scheduledTasks/{taskId}
+  type (e.g. SEND_REFERRAL, AUTO_FOLLOW_UP), status (PENDING|COMPLETED),
+  runAt, completedAt, projectId, clientId, createdAt
+  (Consumed by /api/cron/run-tasks on the daily schedule.)
+```
+
+`ProjectStatus` is defined in `lib/db/projects.ts` and runs the full lifecycle: `SITE_VISIT → INQUIRY → QUALIFYING → PROPOSAL_SENT → NEGOTIATING → CONTRACT_SENT → DEPOSIT_PENDING → BOOKED → SHOOT_READY → IN_EDITING → GALLERY_DELIVERED → REFERRAL_SENT → COMPLETED` (with `LOST` and `ARCHIVED` as terminal off-ramps).
+
+### Legacy collections (still live, written for compatibility)
 
 ```
 users/{uid}
   email, role ("ADMIN"|"CLIENT"), displayName, photoURL, createdAt, updatedAt
 
 events/{eventId}
-  title, status, shootDate?, shootEndDate?, createdAt, updatedAt
+  title, status, shootDate?, shootEndDate?, projectId?, clientId?, createdAt, updatedAt
   └── photos/{photoId}
         cloudflareUrl, cloudflareImageId, label?, category?,
-        galleryReady?, uploadedAt, r2Key?
+        galleryReady?, uploadedAt, r2Key?, storageKey? (multipart), status?, isRaw?
 
-eventAccess/{uid}_{eventId}
-  userId, eventId, createdAt
+eventAccess/{eventId_userId}
+  userId, eventId, email, createdAt
 
 bookingInquiries/{id}
   firstName, lastName, email, sessionType, preferredDate?, message,
   status (PENDING|QUALIFIED|SENT_PROPOSAL|CONTRACT_SENT|BOOKED|ARCHIVED),
-  notes, pricing?, leadScore, tags[], leadSource?,
+  notes, pricing, leadScore, tags[], leadSource?,
   estimatedValue?, followUpDate?, lastContactedAt?, lastRespondedAt?,
   communicationLog[{id, timestamp, channel, summary, adminUid}],
   eventId?, eventName?, createdAt, updatedAt
@@ -206,15 +321,27 @@ activityFeed/{id}
   action, message, timestamp, metadata?
 ```
 
-**Subcollection queries** that cross multiple events require `collectionGroup()`. Always pair `where("field", "!=", null)` with `orderBy("field")` before any secondary `orderBy` or Firestore will reject the query.
+### Booking dual-write (transition state)
 
-### 5. Component Conventions
+`app/booking/actions.ts` (`submitBooking`) writes to **both** sides on every public form submission:
+1. Finds or creates a `clients/{clientId}` doc (keyed by email).
+2. Creates a `projects/{projectId}` doc in status `INQUIRY` with `clientId`.
+3. Adds the first inbound message to `projects/{projectId}/messages`.
+4. Also writes a legacy `bookingInquiries/{id}` doc so the existing `/admin/bookings` Kanban keeps working.
 
-- **`"use client"`** at the top of any file that uses hooks, browser APIs, or event handlers.
-- **Server Components** fetch data directly (no `useEffect`). Pass serialisable props down to client children.
-- **Server Actions** live in `actions.ts` files co-located with their page. Always call `await requireAdmin()` as the first line.
-- **Toaster:** Import `toast` from `@/components/ui/Toaster` (event-driven, no context needed).
-- **Routing after mutations:** Call `router.refresh()` (not `router.push`) to revalidate server data while staying on the page.
+The dual write is intentional and temporary — see the "In-flight" section of `PROGRESS.md` for the punch-list to remove it. **Subcollection queries** that cross multiple events require `collectionGroup()`. Always pair `where("field", "!=", null)` with `orderBy("field")` before any secondary `orderBy` or Firestore will reject the query.
+
+---
+
+## Middleware Responsibilities
+
+`middleware.ts` runs on every page request matched by `config.matcher` (everything except `/api`, static assets, and metadata files). It does two things:
+
+1. **Auth cookie presence check.** On `/admin/**` or `/gallery/**`, if no `__session` cookie is present, redirect to `/login`. The Edge runtime cannot run the Admin SDK, so this only enforces cookie *presence*; actual verification (`verifySessionCookie`) happens in Server Components via `requireAdmin()` / `requireSession()`.
+
+2. **`__origin` UTM-attribution cookie.** If the request has no `__origin` cookie yet, the middleware writes one (30-day `maxAge`, `httpOnly: false`, `sameSite: "lax"`) containing JSON `{ source, medium, campaign, referralCode, landingUrl, ts }`. Values come from `utm_source` / `utm_medium` / `utm_campaign` / `ref` query parameters; if absent, the source is inferred from the `referer` header (`instagram.com` → `INSTAGRAM`, `google.com` → `GOOGLE`, any other referer → `OTHER`, no referer → `DIRECT`). The cookie is intentionally JS-readable so client-side analytics can mirror it. It is read on the server by `app/booking/actions.ts`, which copies the values into the new `clients` doc as `firstTouchSource` / `firstTouchMedium` / `firstTouchCampaign` / `firstTouchLandingUrl` / `firstTouchAt`.
+
+Because the cookie is set with `if (!req.cookies.get("__origin"))`, first-touch attribution is preserved across the entire 30-day window — subsequent visits never overwrite it.
 
 ---
 
@@ -259,8 +386,7 @@ export const dynamic = "force-dynamic"; // or revalidate = N for ISR
 
 export default async function SomePage() {
   await requireAdmin(); // or requireSession()
-  const snap = await adminDb.collection("events").orderBy("createdAt", "desc").get();
-  const events = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const events = await listEvents();           // from lib/db/events
   return <ClientComponent events={events} />;
 }
 ```
@@ -270,13 +396,15 @@ export default async function SomePage() {
 // app/admin/something/actions.ts
 "use server";
 import { requireAdmin } from "@/lib/session";
+import { updateProject } from "@/lib/db/projects";
 import { revalidatePath } from "next/cache";
 
 export async function doSomething(id: string): Promise<{ success: boolean; error?: string }> {
   await requireAdmin();
   try {
-    await adminDb.collection("things").doc(id).update({ ... });
-    revalidatePath("/admin/something");
+    await updateProject(id, { /* ... */ });
+    revalidatePath("/admin/projects");
+    revalidatePath(`/admin/projects/${id}`);
     return { success: true };
   } catch (err) {
     return { success: false, error: "Failed." };
@@ -287,39 +415,47 @@ export async function doSomething(id: string): Promise<{ success: boolean; error
 ### Toasting from a Client Component
 ```tsx
 import { toast } from "@/components/ui/Toaster";
-// ...
 toast("Photo deleted successfully");
 ```
 
 ### Building a CDN URL
 ```ts
-import { buildCdnUrl } from "@/lib/cloudflare";
-const src = buildCdnUrl(photo.cloudflareImageId, "gallery");   // or "thumbnail" | "download" | "public"
+import { buildCdnUrl } from "@/lib/storage/images";   // (or from "@/lib/cloudflare")
+const src = buildCdnUrl(photo.cloudflareImageId, "gallery");
+```
+
+### Advancing a Project Through Its Lifecycle
+```ts
+import { updateProjectStatus } from "@/app/admin/projects/actions";
+// Server Action: writes status, calls handleProjectTransition() for side effects.
+await updateProjectStatus(projectId, "BOOKED");
 ```
 
 ---
 
 ## Known Gotchas
 
-1. **Duplicate AdminSidebar:** There are two versions — `app/admin/AdminSidebar.tsx` (legacy) and `components/admin/AdminSidebar.tsx` (canonical). `app/admin/layout.tsx` imports from `./AdminSidebar` (the legacy one). Both are functionally identical. Don't delete either without updating the import.
+1. **Firestore composite index requirement:** Any query combining `where("field", "!=", null)` with `orderBy("uploadedAt")` requires a composite index. If you see a Firestore index error in logs, follow the link in the error to create it in the Firebase Console. `listPublicPhotos()` in `lib/db/photos.ts` triggers this.
 
-2. **Firestore composite index requirement:** Any query combining `where("field", "!=", null)` with `orderBy("uploadedAt")` requires a composite index. If you see a Firestore index error in logs, follow the link in the error to create it in the Firebase Console.
+2. **FIREBASE_PRIVATE_KEY newlines:** The raw PEM has `\n` characters. Vercel stores them as literal `\n` strings. `lib/firebase-admin.ts` handles this with `.replace(/\\n/g, "\n")` — don't change this.
 
-3. **FIREBASE_PRIVATE_KEY newlines:** The raw PEM has `\n` characters. Vercel stores them as literal `\n` strings. `lib/firebase-admin.ts` handles this with `.replace(/\\n/g, "\n")` — don't change this.
+3. **`collectionGroup` requires Firestore rules:** If adding new collectionGroup queries, ensure Firestore Security Rules permit them. Check the Firebase Console.
 
-4. **`collectionGroup` requires Firestore rules:** If adding new collectionGroup queries, ensure Firestore Security Rules permit them. Check the Firebase Console.
+4. **Vercel 4.5MB body limit:** Never POST image data to a Next.js API route. Always use the pre-signed R2 URL pipeline — single-PUT for normal photos, multipart for very large files.
 
-5. **Vercel 4.5MB body limit:** Never POST image data to a Next.js API route. Always use the pre-signed R2 URL pipeline.
+5. **`cookies()` is async in Next.js 15:** `await cookies()` is required before calling `.get()` or `.set()`. Already handled in `lib/session.ts` and `app/booking/actions.ts`.
 
-6. **`cookies()` is async in Next.js 15:** `await cookies()` is required before calling `.get()` or `.set()`. This is already handled in `lib/session.ts`.
+6. **`searchParams` is async in Next.js 15:** Page props `searchParams` must be `await`ed. Already handled in `app/login/page.tsx`.
 
-7. **`searchParams` is async in Next.js 15:** Page props `searchParams` must be `await`ed. Already handled in `app/login/page.tsx`.
+7. **`params` is async in Next.js 15:** `const { id } = await params` is required in dynamic routes. Already handled throughout.
 
-8. **`params` is async in Next.js 15:** `const { id } = await params` is required in dynamic routes. Already handled throughout.
+8. **`revalidatePath` scope:** After a Server Action mutation, call `revalidatePath` for every route that displays that data — both the detail page and any list pages. `updateProjectStatus` in `app/admin/projects/actions.ts` revalidates both `/admin/projects` and `/admin/projects/[id]` — follow the same pattern.
 
-9. **`revalidatePath` scope:** After a Server Action mutation, call `revalidatePath` for every route that displays that data — both the detail page and any list pages.
+9. **Lead score recalculation:** `calculateLeadScore()` must be called any time `tags`, `estimatedValue`, `sessionType`, `message`, `preferredDate`, or `leadSource` changes. See `lib/lead-scoring.ts`. Note that the function is typed against `BookingInquiryDoc` — when scoring a `ProjectDoc`, pass a structurally-compatible subset.
 
-10. **Lead score recalculation:** `calculateLeadScore()` must be called any time `tags`, `estimatedValue`, `sessionType`, `message`, `preferredDate`, or `leadSource` changes. See `lib/lead-scoring.ts`.
+10. **Booking → Project dual write.** `app/booking/actions.ts` writes to **both** `clients` + `projects` (new) and `bookingInquiries` (legacy). The legacy `/admin/bookings` Kanban reads only from `bookingInquiries`; `/admin/projects` reads only from `projects`. If you change one side, mirror the change on the other until the migration is complete and the legacy collection is retired. The "Temporary Migration Step" comment in `submitBooking()` marks the line that should be deleted last.
+
+11. **Stripe webhook side effects.** `app/api/webhooks/stripe/route.ts` updates project status when a deposit or balance invoice is paid (`DEPOSIT_PENDING → BOOKED`, `IN_EDITING → GALLERY_DELIVERED`). The Stripe → status transition also calls `handleProjectTransition`, which in turn auto-creates events, grants gallery access, increments client session counts, and queues referral emails (`lib/project-transitions.ts`). Do not duplicate these side effects elsewhere.
 
 ---
 
@@ -343,9 +479,10 @@ TypeScript strict mode is enabled. Fix all type errors before committing.
 - [ ] Public routes load without auth
 - [ ] `/login` → magic link flow → `/gallery` redirect works
 - [ ] Admin login (first-time and returning) → `/admin` redirect works
-- [ ] Photo upload pipeline completes (all 3 steps)
+- [ ] Photo upload pipeline completes (all 3 steps for single-PUT; multipart for large files)
 - [ ] Client invite flow sends email and grants `eventAccess`
-- [ ] Booking form submission appears in `/admin/bookings`
-- [ ] Kanban drag-and-drop updates status
+- [ ] Booking form submission appears in `/admin/bookings` AND creates a `clients` + `projects` doc visible in `/admin/projects`
+- [ ] Kanban drag-and-drop updates status (both `/admin/bookings` and `/admin/projects`)
+- [ ] Stripe webhook test event (`checkout.session.completed`) advances a paid project's status
 - [ ] Lightbox keyboard nav (←, →, Escape) works
 - [ ] Right-click on images is blocked

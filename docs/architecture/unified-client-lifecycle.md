@@ -1,4 +1,7 @@
 # Unified Client Lifecycle Architecture
+> Originally drafted as `NEW UNIFIED CLIENT ARCHITECTURE.txt` at the repo root. Moved here 2026-05-13 as part of repo cleanup. This is the canonical reference for the Client/Project schema. See DECISION.md ADR-014 for the rationale.
+
+# Unified Client Lifecycle Architecture
 ## Korrin's Photos — Full-Stack CRM & Pipeline Redesign
 
 ---

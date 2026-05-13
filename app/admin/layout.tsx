@@ -3,7 +3,7 @@
 // requireAdmin() reads the Firebase session cookie; redirects to /login if missing or invalid.
 
 import { requireAdmin } from "@/lib/session";
-import { AdminSidebar } from "./AdminSidebar";
+import { AdminSidebar } from "@/components/admin/AdminSidebar";
 
 export default async function AdminLayout({
   children,

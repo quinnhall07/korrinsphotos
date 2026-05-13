@@ -10,7 +10,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { z }          from "zod";
 import { cookies }    from "next/headers";
 import { calculateLeadScore } from "@/lib/lead-scoring";
-import { logActivity } from "@/lib/firestore";
+import { logActivity } from "@/lib/db/activity";
 import type { LeadStatus } from "@/lib/booking-kanban";
 
 const BookingSchema = z.object({

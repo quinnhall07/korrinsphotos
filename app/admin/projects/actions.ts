@@ -6,7 +6,7 @@ import { requireAdmin } from "@/lib/session";
 import { FieldValue } from "firebase-admin/firestore";
 import { ProjectStatus } from "@/lib/db/projects";
 import { handleProjectTransition } from "@/lib/project-transitions";
-import { logActivity } from "@/lib/firestore";
+import { logActivity } from "@/lib/db/activity";
 
 export async function updateProjectStatus(
   projectId: string,

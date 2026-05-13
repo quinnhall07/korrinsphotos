@@ -5,7 +5,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { requireAdmin } from "@/lib/session";
 import { FieldValue } from "firebase-admin/firestore";
 import { calculateLeadScore } from "@/lib/lead-scoring";
-import { logActivity } from "@/lib/firestore";
+import { logActivity } from "@/lib/db/activity";
 import type { LeadStatus, LeadSource } from "@/lib/booking-kanban";
 
 // ─── Update Status ────────────────────────────────────────────────────────────

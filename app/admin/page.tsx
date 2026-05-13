@@ -4,7 +4,7 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/session";
 import { adminDb } from "@/lib/firebase-admin";
-import { listRecentActivity } from "@/lib/firestore";
+import { listRecentActivity } from "@/lib/db/activity";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "Dashboard | Admin" };

@@ -183,6 +183,8 @@
 
 ## ADR-012: Dual AdminSidebar Files
 
+> **Status (2026-05-13): Resolved.** Consolidated to `components/admin/AdminSidebar.tsx`; the legacy `app/admin/AdminSidebar.tsx` was removed.
+
 **Decision:** Two `AdminSidebar` files exist and are intentionally retained until a cleanup task resolves the import.
 
 **Files:**
@@ -192,3 +194,70 @@
 **Why this exists:** The canonical version was created in `components/admin/` during a refactor, but `app/admin/layout.tsx` was not updated to point to it. Both are functionally identical except for the footer link.
 
 **Resolution:** Update the import in `app/admin/layout.tsx` to `@/components/admin/AdminSidebar`, then delete `app/admin/AdminSidebar.tsx`. This is a safe 2-line change but requires a build verification.
+
+---
+
+## ADR-013: Split `lib/firestore.ts` into per-collection `lib/db/*` modules
+
+**Decision:** Replace the monolithic `lib/firestore.ts` facade with one file per collection under `lib/db/` (`activity.ts`, `bookings.ts`, `clients.ts`, `contracts.ts`, `event-access.ts`, `events.ts`, `invoices.ts`, `mail.ts`, `photos.ts`, `projects.ts`, `users.ts`).
+
+**Rationale:**
+- The single file was approaching 800 lines and growing fast — every new collection (clients, projects, contracts, invoices) widened the bundle and made the schema harder to reason about.
+- Per-collection modules keep each `Doc` interface adjacent to the helpers that read and write it, so a contributor (or Claude) can load the full context for one schema in a single file.
+- Tree-shaking is more predictable: a server route that only touches `projects` no longer transitively imports type definitions for every other collection.
+- Each module follows the same shape: `<collection>Col()` getter, exported `Doc` interface, async helpers. This regularity is easy to extend.
+
+**Trade-offs:**
+- More import lines per consumer file. The trade is intentional — each import is now precise, and grep-based navigation works without ambiguity.
+
+**Status (2026-05-13):** Migration complete; `lib/firestore.ts` has been removed. New code MUST import from `@/lib/db/<collection>`. Cross-collection orchestration belongs in `lib/domain/` (e.g. `deleteEventAndAssets`).
+
+---
+
+## ADR-014: Unified Client/Project Model
+
+**Decision:** Introduce a `clients` collection (universal record keyed by email) and a `projects` collection (the master lifecycle state machine). Phase out `bookingInquiries`. See `docs/architecture/unified-client-lifecycle.md` for the full schema and rollout plan.
+
+**Rationale:**
+- The original schema had `bookingInquiries` and `events` as top-level collections with no shared key, which made it impossible to follow a single person across the inquiry → booking → delivery → referral lifecycle without ad-hoc denormalisation.
+- A `clients` doc can exist before the user has a Firebase Auth account — an email is enough. When the same person later authenticates, the `users/{uid}` doc joins to the `clients/{clientId}` doc by email.
+- `projects/{projectId}` carries the full `ProjectStatus` state machine (`SITE_VISIT → … → COMPLETED`), so every downstream artifact (contracts, invoices, events, photos, referrals) can foreign-key cleanly into one entity.
+- Communication history moves from a flat `communicationLog[]` array on the inquiry into a structured `projects/{id}/messages` subcollection, which is queryable and supports per-message metadata (channel, automation flag, admin uid).
+
+**Trade-offs:**
+- Dual-write transition window. `app/booking/actions.ts` currently writes BOTH the new `clients` + `projects` docs AND a legacy `bookingInquiries` doc, so the existing `/admin/bookings` Kanban keeps working until the UI fully migrates. The "Temporary Migration Step" comment in `submitBooking()` marks the line to delete last.
+- Lead scoring (`lib/lead-scoring.ts`) is still typed against `BookingInquiryDoc`. It works on `ProjectDoc` shapes today only because the relevant fields overlap; a follow-up will retype it against `ProjectDoc`.
+
+**Canonical reference:** `docs/architecture/unified-client-lifecycle.md` (originally `NEW UNIFIED CLIENT ARCHITECTURE.txt` at the repo root; moved here on 2026-05-13).
+
+---
+
+## ADR-015: Stripe + Cron Worker Introduction
+
+**Decision:** Add Stripe as the payments rail (deposit + balance invoices) and a Vercel Cron worker for scheduled jobs.
+
+**Rationale:**
+- The Unified Client/Project lifecycle requires payment infrastructure: `PROPOSAL_SENT` auto-creates a DEPOSIT invoice, `IN_EDITING` auto-creates a BALANCE invoice (`lib/project-transitions.ts`). Stripe Payment Links are the simplest path that supports custom amounts, metadata for webhook correlation, and post-payment redirect to a confirmation page.
+- Stripe webhook → project status auto-advance closes the loop without admin intervention. `app/api/webhooks/stripe/route.ts` listens for `checkout.session.completed` and `payment_intent.succeeded`, marks the invoice `PAID`, and advances the project (`DEPOSIT_PENDING → BOOKED` or `IN_EDITING → GALLERY_DELIVERED`). It then calls `handleProjectTransition`, which triggers the downstream side effects.
+- Scheduled tasks (`scheduledTasks/{taskId}` with `runAt` + `status: PENDING`) are consumed by `app/api/cron/run-tasks/route.ts` on the Vercel Cron schedule defined in `vercel.json` (`0 2 * * *` — daily at 02:00 UTC). Today this handles `SEND_REFERRAL` (7-day post-delivery referral email) with `AUTO_FOLLOW_UP` stubbed for the proposal-stuck-too-long sequence.
+
+**Trade-offs:**
+- More env vars to keep in sync (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `CRON_SECRET`).
+- Webhook signature verification is non-optional in production. `lib/stripe.ts` falls back to a mock client when `STRIPE_SECRET_KEY` is missing for local dev, but the webhook route fails fast if `STRIPE_WEBHOOK_SECRET` is unset.
+- Cron auth is a simple bearer-token check against `CRON_SECRET`. If `CRON_SECRET` is unset the route runs unauthenticated, which is fine locally but must be set in production.
+
+---
+
+## ADR-016: `__origin` UTM Attribution Cookie
+
+**Decision:** `middleware.ts` writes a JS-readable `__origin` cookie on the first page request that lacks one. It carries `{ source, medium, campaign, referralCode, landingUrl, ts }`. `app/booking/actions.ts` reads it (server-side via `cookies()`) and stamps the values onto the new `clients` doc as `firstTouch*` fields.
+
+**Rationale:**
+- Tying anonymous site visits to inquiry submissions enables first-touch attribution — we know whether a booking came from an Instagram story, a Google search, a paid campaign with UTM tags, or a referral code (`?ref=...`).
+- Setting the cookie at the Edge means attribution is captured on the very first page hit, including landing pages the visitor might bounce off before reaching `/booking`.
+- The fallback inference (`referer` header → `INSTAGRAM` / `GOOGLE` / `OTHER` / `DIRECT`) covers visitors who arrive without explicit UTM params.
+
+**Trade-offs:**
+- The cookie is `httpOnly: false` because client-side analytics may need to mirror it. This means it is technically readable by injected scripts; it carries no PII and no auth material, so the exposure is acceptable.
+- 30-day expiry. After 30 days the cookie expires and the next visit re-attributes. This is by design — we treat a 30-day-old session as a new touchpoint.
+- Because the cookie is set with `if (!req.cookies.get("__origin"))`, the first-touch source is never overwritten within a single window. Repeated visits from a different referrer during the window will not update attribution. This is the correct behaviour for first-touch attribution; multi-touch attribution would require a separate `__visits` log (see `siteVisits/{visitId}` in `docs/architecture/unified-client-lifecycle.md`).

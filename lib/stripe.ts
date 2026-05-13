@@ -6,7 +6,7 @@ if (!process.env.STRIPE_SECRET_KEY) {
 }
 
 export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "sk_test_mock", {
-  apiVersion: "2024-06-20", // Use the latest supported version or the one installed
+  apiVersion: "2026-04-22.dahlia",
 });
 
 export async function createPaymentLinkForInvoice(

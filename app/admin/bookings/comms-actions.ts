@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { adminDb } from "@/lib/firebase-admin";
 import { requireAdmin } from "@/lib/session";
 import { FieldValue } from "firebase-admin/firestore";
-import { logActivity } from "@/lib/firestore";
+import { logActivity } from "@/lib/db/activity";
 import type { LeadStatus, CommunicationChannel } from "@/lib/booking-kanban";
 import { randomUUID } from "crypto";
 import { z } from "zod";

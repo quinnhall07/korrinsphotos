@@ -14,7 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminAuth }                 from "@/lib/firebase-admin";
 import { createSession }             from "@/lib/session";
-import { upsertUser }                from "@/lib/firestore";
+import { upsertUser }                from "@/lib/db/users";
 
 export async function POST(req: NextRequest) {
   try {

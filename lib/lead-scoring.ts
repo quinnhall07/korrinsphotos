@@ -3,7 +3,7 @@
 // Higher scores = higher priority + higher likelihood to book.
 // Call this on inquiry creation and on any field update that affects score.
 
-import type { BookingInquiryDoc } from "@/lib/firestore";
+import type { BookingInquiryDoc } from "@/lib/db/bookings";
 
 // ─── Session value weights ─────────────────────────────────────────────────────
 const SESSION_WEIGHTS: Record<string, number> = {
