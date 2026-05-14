@@ -5,12 +5,25 @@
 import { adminDb } from "@/lib/firebase-admin";
 import { createEvent } from "./actions";
 import { EventsTable, type SerializedEventRow } from "./EventsTable";
+import type { EventStatus } from "@/lib/db/events";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "Events | Admin" };
 export const dynamic = "force-dynamic";
 
-type EventStatus = "UPCOMING" | "COMPLETED";
+const VALID_EVENT_STATUSES: ReadonlySet<EventStatus> = new Set([
+  "UPCOMING",
+  "ACTIVE",
+  "COMPLETED",
+  "DELIVERED",
+  "ARCHIVED",
+]);
+
+function coerceEventStatus(raw: unknown): EventStatus {
+  return typeof raw === "string" && VALID_EVENT_STATUSES.has(raw as EventStatus)
+    ? (raw as EventStatus)
+    : "UPCOMING";
+}
 
 async function getEvents(): Promise<SerializedEventRow[]> {
   const snapshot = await adminDb
@@ -32,7 +45,7 @@ async function getEvents(): Promise<SerializedEventRow[]> {
       return {
         id: doc.id,
         title: data.title as string,
-        status: (data.status as EventStatus) || "UPCOMING",
+        status: coerceEventStatus(data.status),
         createdAt: createdAt.toLocaleDateString("en-US", {
           month: "short",
           day: "numeric",

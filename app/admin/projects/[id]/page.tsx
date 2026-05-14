@@ -3,6 +3,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { requireAdmin } from "@/lib/session";
 import { notFound } from "next/navigation";
 import type { ProjectStatus } from "@/lib/db/projects";
+import { listQuestionnairesForProject } from "@/lib/db/questionnaires";
 import { ProjectWorkspaceClient } from "./ProjectWorkspaceClient";
 
 export const metadata: Metadata = { title: "Project Detail | Admin" };
@@ -117,6 +118,13 @@ export type SerialContract = {
   sentAt: string | null;
   signedAt: string | null;
   createdAt: string | null;
+};
+
+export type SerialQuestionnaire = {
+  id: string;
+  status: "PENDING" | "COMPLETED";
+  sentAt: string | null;
+  completedAt: string | null;
 };
 
 export type SerialInvoice = {
@@ -296,6 +304,21 @@ export default async function ProjectDetailPage({ params }: Props) {
 
   const eventId: string | null = eventsSnap.empty ? null : eventsSnap.docs[0].id;
 
+  // Pull every questionnaire instance for this project so the workspace can
+  // show PENDING/COMPLETED state in the Overview tab.
+  let questionnaires: SerialQuestionnaire[] = [];
+  try {
+    const docs = await listQuestionnairesForProject(id);
+    questionnaires = docs.map((q) => ({
+      id: q.id,
+      status: q.status,
+      sentAt: ts(q.sentAt),
+      completedAt: ts(q.completedAt),
+    }));
+  } catch (err) {
+    console.error("[ProjectDetailPage] Failed to load questionnaires", err);
+  }
+
   return (
     <ProjectWorkspaceClient
       project={project}
@@ -304,6 +327,7 @@ export default async function ProjectDetailPage({ params }: Props) {
       invoices={invoices}
       contract={contract}
       eventId={eventId}
+      questionnaires={questionnaires}
       nextBestAction={getNextBestAction(project.status)}
     />
   );

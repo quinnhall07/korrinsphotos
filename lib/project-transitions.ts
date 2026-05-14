@@ -3,6 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { ProjectStatus } from "./db/projects";
 import { listSequencesByStatusTrigger } from "./db/sequences";
 import { enrollInSequence } from "./db/sequence-enrollments";
+import { applyReferralAttribution } from "./domain/referrals";
 
 // Called when project status changes
 export async function handleProjectTransition(projectId: string, fromStatus: ProjectStatus, toStatus: ProjectStatus) {
@@ -152,6 +153,25 @@ async function onProjectBooked(projectId: string) {
   await adminDb.collection("clients").doc(project.clientId).update({
     totalSessionsBooked: FieldValue.increment(1),
   });
+
+  // 3b. Tiered referral engine (Phase 4.4).
+  //
+  // If this client was attributed to a referrer at booking time, credit the
+  // referrer now. `applyReferralAttribution` is idempotent — re-running the
+  // BOOKED hook (Stripe retry, manual re-trigger) is safe. Best-effort: any
+  // failure here must not abort the rest of the BOOKED transition.
+  if (client.referredBy) {
+    try {
+      await applyReferralAttribution(client.referredBy as string, projectId);
+    } catch (err) {
+      console.error("[onProjectBooked] Referral attribution failed", {
+        projectId,
+        clientId: project.clientId,
+        referredBy: client.referredBy,
+        err,
+      });
+    }
+  }
 
   // 4. Auto-send questionnaire (Placeholder for mail trigger)
   await adminDb.collection("mail").add({

@@ -8,6 +8,7 @@ import { updateProjectStatus, updateProjectDetails, archiveProject } from "../ac
 import { createDraftContract, sendContract } from "../contract-actions";
 import { sendInvoice, markInvoicePaidManually } from "../invoice-actions";
 import { sendProjectMessage } from "../message-actions";
+import { sendQuestionnaireForProjectAction } from "@/app/admin/questionnaires/templates/actions";
 // AI components — supplied by Agent 5 (AI features) in the same merge.
 // Imported eagerly so the parent's npm build wires the dependency edge.
 // TODO(agent-5): confirm export paths once Agent 5 lands.
@@ -19,6 +20,7 @@ import type {
   SerialMessage,
   SerialInvoice,
   SerialContract,
+  SerialQuestionnaire,
 } from "./page";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -194,6 +196,7 @@ interface Props {
   invoices: SerialInvoice[];
   contract: SerialContract | null;
   eventId: string | null;
+  questionnaires: SerialQuestionnaire[];
   nextBestAction: string;
 }
 
@@ -206,6 +209,7 @@ export function ProjectWorkspaceClient({
   invoices,
   contract,
   eventId,
+  questionnaires,
   nextBestAction,
 }: Props) {
   const [tab, setTab] = useState<TabId>("overview");
@@ -333,7 +337,11 @@ export function ProjectWorkspaceClient({
         {/* Main */}
         <main style={{ ...CARD, minHeight: "600px" }}>
           {tab === "overview" && (
-            <OverviewTab project={project} nextBestAction={nextBestAction} />
+            <OverviewTab
+              project={project}
+              nextBestAction={nextBestAction}
+              questionnaires={questionnaires}
+            />
           )}
           {tab === "messages" && (
             <MessagesTab projectId={project.id} messages={messages} />
@@ -467,9 +475,11 @@ function TabNav({ active, onChange }: { active: TabId; onChange: (t: TabId) => v
 function OverviewTab({
   project,
   nextBestAction,
+  questionnaires,
 }: {
   project: SerialProject;
   nextBestAction: string;
+  questionnaires: SerialQuestionnaire[];
 }) {
   return (
     <div>
@@ -551,11 +561,103 @@ function OverviewTab({
         </p>
       </div>
 
+      <QuestionnaireBlock projectId={project.id} questionnaires={questionnaires} />
+
       <div style={{ display: "flex", gap: "1.5rem", fontSize: "0.8rem", color: "var(--charcoal-muted)", flexWrap: "wrap" }}>
         <span>Status changes: <strong style={{ color: "var(--charcoal)" }}>{project.statusHistory.length}</strong></span>
         <span>Last contacted: <strong style={{ color: "var(--charcoal)" }}>{fmtDate(project.lastContactedAt)}</strong></span>
         <span>Last responded: <strong style={{ color: "var(--charcoal)" }}>{fmtDate(project.lastRespondedAt)}</strong></span>
         <span>Created: <strong style={{ color: "var(--charcoal)" }}>{fmtDate(project.createdAt)}</strong></span>
+      </div>
+    </div>
+  );
+}
+
+// ─── Questionnaire block (rendered inside Overview tab) ──────────────────────
+
+function QuestionnaireBlock({
+  projectId,
+  questionnaires,
+}: {
+  projectId: string;
+  questionnaires: SerialQuestionnaire[];
+}) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+
+  // Show the latest instance — by completedAt if any, else by sentAt.
+  const latest = questionnaires.slice().sort((a, b) => {
+    const ax = a.completedAt ?? a.sentAt ?? "";
+    const bx = b.completedAt ?? b.sentAt ?? "";
+    return bx.localeCompare(ax);
+  })[0];
+
+  const handleSend = () => {
+    startTransition(async () => {
+      const res = await sendQuestionnaireForProjectAction(projectId);
+      if (res.success) {
+        toast("Questionnaire sent");
+        router.refresh();
+      } else {
+        toast(res.error);
+      }
+    });
+  };
+
+  let statusLine: React.ReactNode;
+  if (!latest) {
+    statusLine = (
+      <span style={{ color: "var(--charcoal-muted)" }}>Not sent yet</span>
+    );
+  } else if (latest.status === "COMPLETED") {
+    statusLine = (
+      <span style={{ color: "var(--olive)" }}>
+        Completed{latest.completedAt ? ` · ${fmtDate(latest.completedAt)}` : ""}
+      </span>
+    );
+  } else {
+    statusLine = (
+      <span style={{ color: "var(--charcoal-light)" }}>
+        Pending{latest.sentAt ? ` · sent ${fmtDate(latest.sentAt)}` : ""}
+      </span>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        marginBottom: "1.5rem",
+        border: "0.5px solid var(--border)",
+        padding: "1rem 1.1rem",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: "0.75rem",
+          flexWrap: "wrap",
+        }}
+      >
+        <div>
+          <p style={{ ...EYEBROW, margin: "0 0 0.3rem 0" }}>Questionnaire</p>
+          <p style={{ margin: 0, fontSize: "0.88rem" }}>{statusLine}</p>
+        </div>
+        <button
+          type="button"
+          style={BTN_GHOST}
+          onClick={handleSend}
+          disabled={isPending || latest?.status === "COMPLETED"}
+        >
+          {isPending
+            ? "Sending…"
+            : latest
+            ? latest.status === "COMPLETED"
+              ? "Submitted"
+              : "Resend"
+            : "Send"}
+        </button>
       </div>
     </div>
   );

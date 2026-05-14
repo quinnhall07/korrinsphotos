@@ -1,0 +1,219 @@
+rules_version = '2';
+
+// =============================================================================
+// Korrin's Photos — Firestore Security Rules (production)
+// =============================================================================
+//
+// THREAT MODEL
+// ------------
+// All privileged reads/writes in this app go through the Firebase Admin SDK
+// (`lib/firebase-admin.ts > adminDb`), which BYPASSES these rules entirely.
+// These rules therefore only protect against the client-side Web SDK
+// (`lib/firebase.ts`), which currently exposes ONLY `firebaseAuth` and does
+// not initialise Firestore on the client. Default-deny is the safe baseline.
+//
+// We still grant a few narrowly-scoped allow rules so that if a future client
+// component does call Firestore directly, it has a least-privilege path:
+//   - A signed-in user may read/write their own users/{uid} doc.
+//   - A signed-in user may read their own eventAccess/{uid}_{eventId} grant.
+//   - A signed-in user may read events/{eventId} and events/{eventId}/photos
+//     if they hold a matching eventAccess grant (or are an admin).
+//   - Admins (`request.auth.token.role == "ADMIN"`) bypass everything.
+//
+// Every other collection (clients, projects, contracts, invoices, bookingInquiries,
+// scheduledTasks, activityFeed, mail, sequences, sequenceEnrollments, inboxItems,
+// savedViews, segments, locations, vendors, etc.) is admin-only. Public visitors
+// never authenticate, so they cannot read anything via the client SDK — the
+// public homepage and portfolio render via Server Components using adminDb.
+//
+// DOC ID CONVENTIONS USED BY RULES
+// --------------------------------
+//   users/{uid}                              — uid = Firebase Auth UID
+//   eventAccess/{uid}_{eventId}              — composite ID, uid is prefix
+//   events/{eventId}/photos/{photoId}
+//
+// =============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.role == "ADMIN";
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // True when `accessId` begins with the signed-in user's UID followed by "_".
+    // Matches the eventAccess/{uid}_{eventId} doc ID convention.
+    function ownsAccessId(accessId) {
+      return isSignedIn() && accessId.matches('^' + request.auth.uid + '_.*');
+    }
+
+    // True when the signed-in user has an eventAccess doc for the given event.
+    // Uses get() to look up the {uid}_{eventId} doc.
+    function hasEventAccess(eventId) {
+      return isSignedIn() && exists(
+        /databases/$(database)/documents/eventAccess/$(request.auth.uid + '_' + eventId)
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // users/{uid}
+    //   - User reads/writes own profile.
+    //   - Admin reads/writes any user.
+    //   - Sign-up flow (POST /api/auth/session) creates these docs server-side
+    //     via the Admin SDK, so client-side `create` is not required but is
+    //     allowed for the owner for future flexibility.
+    // -------------------------------------------------------------------------
+    match /users/{uid} {
+      allow read:   if isOwner(uid) || isAdmin();
+      allow write:  if isOwner(uid) || isAdmin();
+    }
+
+    // -------------------------------------------------------------------------
+    // eventAccess/{accessId}
+    //   - Doc ID format: {uid}_{eventId}
+    //   - User reads their own grants (so a future client can list "my events").
+    //   - Only admins (server-side) write — grants are minted in /api/invite
+    //     and lib/project-transitions.ts.
+    // -------------------------------------------------------------------------
+    match /eventAccess/{accessId} {
+      allow read:   if ownsAccessId(accessId) || isAdmin();
+      allow write:  if isAdmin();
+    }
+
+    // -------------------------------------------------------------------------
+    // events/{eventId} (+ photos subcollection)
+    //   - Admin: full access.
+    //   - Client: read-only if they hold an eventAccess grant for this event.
+    //   - Writes: admin-only (uploads happen server-side via /api/upload/*).
+    // -------------------------------------------------------------------------
+    match /events/{eventId} {
+      allow read:   if isAdmin() || hasEventAccess(eventId);
+      allow write:  if isAdmin();
+
+      match /photos/{photoId} {
+        allow read:  if isAdmin() || hasEventAccess(eventId);
+        allow write: if isAdmin();
+      }
+
+      // Defensive default for any future event subcollections (e.g. comments,
+      // favorites). Inherits the parent access model: clients read if granted,
+      // admins do everything.
+      match /{subcollection}/{docId} {
+        allow read:  if isAdmin() || hasEventAccess(eventId);
+        allow write: if isAdmin();
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // Admin-only collections
+    //
+    // These are exclusively touched by Server Components, Server Actions, and
+    // API routes via the Admin SDK. The client Web SDK has no business reading
+    // or writing them. Default-deny applies to anything not listed; we make
+    // the admin-only intent explicit here for auditability.
+    // -------------------------------------------------------------------------
+
+    // Unified Client/Project lifecycle
+    match /clients/{clientId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /projects/{projectId} {
+      allow read, write: if isAdmin();
+
+      // projects/{projectId}/messages/{messageId} — inbound + outbound channel log
+      match /messages/{messageId} {
+        allow read, write: if isAdmin();
+      }
+
+      // Catch-all for any future project subcollections.
+      match /{subcollection}/{docId} {
+        allow read, write: if isAdmin();
+      }
+    }
+
+    match /contracts/{contractId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /invoices/{invoiceId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /scheduledTasks/{taskId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /activityFeed/{entryId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Firebase Trigger Email queue — server-only writes, but the extension's
+    // own service-account reads it. Admin-only is correct here (the extension
+    // bypasses rules just like our Admin SDK does).
+    match /mail/{mailId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Legacy Kanban (still live during migration)
+    match /bookingInquiries/{inquiryId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Email / SMS sequences + per-project enrollments
+    match /sequences/{sequenceId} {
+      allow read, write: if isAdmin();
+
+      match /steps/{stepId} {
+        allow read, write: if isAdmin();
+      }
+    }
+
+    match /sequenceEnrollments/{enrollmentId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Unified inbox queue
+    match /inboxItems/{itemId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Saved Kanban views, segment definitions, location library, vendor list
+    match /savedViews/{viewId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /segments/{segmentId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /locations/{locationId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /vendors/{vendorId} {
+      allow read, write: if isAdmin();
+    }
+
+    // -------------------------------------------------------------------------
+    // Default deny
+    //
+    // Any collection not explicitly matched above is denied for all client SDK
+    // access. Admin SDK is unaffected (rules do not apply to it).
+    // -------------------------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

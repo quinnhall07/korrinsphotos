@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { adminDb } from "@/lib/firebase-admin";
 import { requireAdmin } from "@/lib/session";
 import { FieldValue } from "firebase-admin/firestore";
-import { calculateLeadScore } from "@/lib/lead-scoring";
+import { calculateLeadScore, type LeadScoreInput } from "@/lib/lead-scoring";
 import { logActivity } from "@/lib/db/activity";
 import type { LeadStatus, LeadSource } from "@/lib/booking-kanban";
 
@@ -84,7 +84,7 @@ export async function updateBookingDetails(
         const newScore = calculateLeadScore({
           ...data,
           estimatedValue: details.estimatedValue,
-        } as Parameters<typeof calculateLeadScore>[0]);
+        } as LeadScoreInput);
         scoreUpdate = { leadScore: newScore };
       }
     }
@@ -129,7 +129,7 @@ export async function updateLeadSource(
 
     const freshDoc = await adminDb.collection("bookingInquiries").doc(id).get();
     const newScore = calculateLeadScore(
-      freshDoc.data() as Parameters<typeof calculateLeadScore>[0]
+      freshDoc.data() as LeadScoreInput
     );
     await adminDb
       .collection("bookingInquiries")

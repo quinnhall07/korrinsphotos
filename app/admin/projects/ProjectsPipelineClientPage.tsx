@@ -5,7 +5,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ProjectStatus } from "@/lib/db/projects";
 import { toast } from "@/components/ui/Toaster";
-import { bulkArchiveProjects } from "./actions";
+import {
+  bulkArchiveProjects,
+  createMySavedView,
+  deleteMySavedView,
+  listMySavedViews,
+  type SavedViewPayload,
+} from "./actions";
 
 type PipelineProject = {
   id: string;
@@ -78,7 +84,6 @@ export function stageSla(status: ProjectStatus | string): number {
 const ROT_RED = "#B91C1C";
 
 const VIEW_STORAGE_KEY = "korrin.pipeline.view";
-const SAVED_VIEWS_STORAGE_KEY = "korrin.pipeline.savedViews";
 
 type ViewMode = "kanban" | "table";
 
@@ -234,15 +239,18 @@ export function ProjectsPipelineClientPage({ projects }: Props) {
   const [now] = useState<number>(() => Date.now());
 
   const [viewMode, setViewMode] = useState<ViewMode>("kanban");
-  const [savedViews, setSavedViews] = useState<SavedView[]>(DEFAULT_SAVED_VIEWS);
+  // User-saved views live in Firestore (users/{uid}/views). Defaults are static.
+  const [userSavedViews, setUserSavedViews] = useState<SavedViewPayload[]>([]);
   const [activeViewId, setActiveViewId] = useState<string>("all");
+  const [isSavingView, setIsSavingView] = useState(false);
 
   // Table-view state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [sortKey, setSortKey] = useState<SortKey>("leadScore");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
-  // Hydrate persisted preferences from localStorage on mount.
+  // Hydrate kanban/table preference from localStorage (purely a UI affordance,
+  // not a saved view) and load saved views from Firestore on mount.
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -253,23 +261,9 @@ export function ProjectsPipelineClientPage({ projects }: Props) {
     } catch {
       /* ignore */
     }
-    try {
-      const raw = window.localStorage.getItem(SAVED_VIEWS_STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as SavedView[];
-        if (Array.isArray(parsed)) {
-          // Merge: defaults first, then any user-saved that aren't a default id.
-          const defaultIds = new Set(DEFAULT_SAVED_VIEWS.map((v) => v.id));
-          const userViews = parsed.filter((v) => v && v.id && !defaultIds.has(v.id));
-          setSavedViews([...DEFAULT_SAVED_VIEWS, ...userViews]);
-        }
-      }
-    } catch {
-      /* ignore */
-    }
   }, []);
 
-  // Persist view mode whenever it changes.
+  // Persist view mode (kanban/table toggle) — not a "saved view".
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -279,15 +273,34 @@ export function ProjectsPipelineClientPage({ projects }: Props) {
     }
   }, [viewMode]);
 
-  // Persist saved views whenever they change.
+  // Load this admin's saved views from Firestore once on mount.
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(SAVED_VIEWS_STORAGE_KEY, JSON.stringify(savedViews));
-    } catch {
-      /* ignore */
-    }
-  }, [savedViews]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await listMySavedViews();
+        if (!cancelled) setUserSavedViews(rows);
+      } catch (err) {
+        console.error("[ProjectsPipeline] listMySavedViews failed:", err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Concatenation: built-ins first, then persisted user views.
+  const savedViews: SavedView[] = useMemo(
+    () => [
+      ...DEFAULT_SAVED_VIEWS,
+      ...userSavedViews.map((v) => ({
+        id: v.id,
+        name: v.name,
+        filter: v.filter as SavedViewFilter,
+      })),
+    ],
+    [userSavedViews]
+  );
 
   // Resolve active view → filtered project set.
   const activeView = useMemo(
@@ -383,7 +396,8 @@ export function ProjectsPipelineClientPage({ projects }: Props) {
     });
   };
 
-  const handleSaveCurrentView = () => {
+  const handleSaveCurrentView = async () => {
+    if (isSavingView) return;
     const name = window.prompt(
       "Name this view:",
       `${activeView.name} (copy)`
@@ -391,14 +405,41 @@ export function ProjectsPipelineClientPage({ projects }: Props) {
     if (!name) return;
     const trimmed = name.trim();
     if (!trimmed) return;
-    const newView: SavedView = {
-      id: `user-${Date.now()}`,
-      name: trimmed,
-      filter: activeView.filter,
-    };
-    setSavedViews((prev) => [...prev, newView]);
-    setActiveViewId(newView.id);
-    toast(`Saved view "${trimmed}"`);
+
+    setIsSavingView(true);
+    try {
+      const res = await createMySavedView({
+        name: trimmed,
+        filter: activeView.filter,
+      });
+      if (res.success && res.view) {
+        setUserSavedViews((prev) => [...prev, res.view!]);
+        setActiveViewId(res.view.id);
+        toast(`Saved view "${trimmed}"`);
+      } else {
+        toast(res.error ?? "Failed to save view");
+      }
+    } catch (err) {
+      console.error("createMySavedView failed:", err);
+      toast("Failed to save view");
+    } finally {
+      setIsSavingView(false);
+    }
+  };
+
+  const handleDeleteActiveView = async () => {
+    if (activeView.builtIn) return;
+    const confirmed = window.confirm(`Delete saved view "${activeView.name}"?`);
+    if (!confirmed) return;
+    const idToDelete = activeView.id;
+    const res = await deleteMySavedView(idToDelete);
+    if (res.success) {
+      setUserSavedViews((prev) => prev.filter((v) => v.id !== idToDelete));
+      setActiveViewId("all");
+      toast("View deleted");
+    } else {
+      toast(res.error ?? "Failed to delete view");
+    }
   };
 
   return (
@@ -497,6 +538,7 @@ export function ProjectsPipelineClientPage({ projects }: Props) {
           <button
             type="button"
             onClick={handleSaveCurrentView}
+            disabled={isSavingView}
             style={{
               fontFamily: "'Jost', sans-serif",
               fontSize: "0.75rem",
@@ -506,12 +548,34 @@ export function ProjectsPipelineClientPage({ projects }: Props) {
               border: "0.5px solid var(--border-strong)",
               background: "transparent",
               color: "var(--charcoal)",
-              cursor: "pointer",
+              cursor: isSavingView ? "wait" : "pointer",
+              opacity: isSavingView ? 0.6 : 1,
             }}
             title="Save current filter as a new view"
           >
-            Save view
+            {isSavingView ? "Saving…" : "Save view"}
           </button>
+
+          {!activeView.builtIn && (
+            <button
+              type="button"
+              onClick={handleDeleteActiveView}
+              style={{
+                fontFamily: "'Jost', sans-serif",
+                fontSize: "0.75rem",
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+                padding: "0.5rem 0.85rem",
+                border: "0.5px solid var(--border-strong)",
+                background: "transparent",
+                color: "var(--charcoal)",
+                cursor: "pointer",
+              }}
+              title="Delete this saved view"
+            >
+              Delete view
+            </button>
+          )}
 
           {/* Kanban / Table toggle */}
           <div

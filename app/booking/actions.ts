@@ -160,19 +160,66 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
       tags: autoTags,
     });
 
+    // ── Resolve referrer (Phase 4.4 tiered referral engine) ────────────────
+    //
+    // The `__origin` cookie may contain a `referralCode` from the `?ref=` URL
+    // parameter (middleware.ts captures this on first visit; first-touch is
+    // immutable per ADR-016). If present, resolve it to a clientId so we can
+    // stamp `referredBy` on a brand-new client. Lookup is best-effort — a
+    // bad/expired code must not block the submission.
+    let referredByClientId: string | null = null;
+    const incomingReferralCode: string | null =
+      typeof origin?.referralCode === "string" && origin.referralCode.trim() !== ""
+        ? origin.referralCode.trim()
+        : null;
+    if (incomingReferralCode) {
+      try {
+        const referrerSnap = await adminDb
+          .collection("clients")
+          .where("referralCode", "==", incomingReferralCode)
+          .limit(1)
+          .get();
+        if (!referrerSnap.empty) {
+          referredByClientId = referrerSnap.docs[0].id;
+        }
+      } catch (err) {
+        console.error("Referral code resolution failed", { incomingReferralCode, err });
+      }
+    }
+
     // 1. Find or create Client
     let clientId: string;
     const clientSnap = await adminDb.collection("clients").where("email", "==", email).limit(1).get();
-    
+
     if (!clientSnap.empty) {
-      clientId = clientSnap.docs[0].id;
+      // Returning client — never overwrite an existing `referredBy`. First-touch
+      // attribution is sticky. Only backfill if the existing client has none.
+      const existingDoc = clientSnap.docs[0];
+      clientId = existingDoc.id;
+      const existingReferredBy = existingDoc.data()?.referredBy;
+      const selfReferral = referredByClientId === clientId;
+      if (
+        referredByClientId &&
+        !selfReferral &&
+        (existingReferredBy === undefined || existingReferredBy === null)
+      ) {
+        try {
+          await existingDoc.ref.update({
+            referredBy: referredByClientId,
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+        } catch (err) {
+          console.error("Failed to backfill referredBy", { clientId, err });
+        }
+      }
     } else {
       const slug = firstName.toLowerCase().replace(/[^a-z0-9]/g, "");
       const randomChars = Math.random().toString(36).substring(2, 6);
       const referralCode = `${slug}-${randomChars}`;
-      
+
       const clientRef = adminDb.collection("clients").doc();
       clientId = clientRef.id;
+      const selfReferral = referredByClientId === clientId;
       await clientRef.set({
         email,
         firstName,
@@ -180,6 +227,7 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
         phone: phone ?? null,
         role: "CLIENT",
         referralCode,
+        referredBy: referredByClientId && !selfReferral ? referredByClientId : null,
         referralCredit: 0,
         totalSessionsBooked: 0,
         firstTouchSource: origin.source ?? "WEBSITE",

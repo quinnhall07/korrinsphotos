@@ -7,6 +7,12 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { ProjectStatus, StatusHistoryEntry } from "@/lib/db/projects";
 import { handleProjectTransition } from "@/lib/project-transitions";
 import { logActivity } from "@/lib/db/activity";
+import {
+  createSavedView,
+  deleteSavedView,
+  listSavedViews,
+  type SavedViewFilter,
+} from "@/lib/db/saved-views";
 
 export async function updateProjectStatus(
   projectId: string,
@@ -160,5 +166,62 @@ export async function archiveProject(
   } catch (err) {
     console.error("archiveProject error:", err);
     return { success: false, error: "Failed to archive project." };
+  }
+}
+
+/* ─────────────────────────  Saved Views (per-admin)  ───────────────────── */
+
+/** Plain-serialisable shape returned to client components. */
+export type SavedViewPayload = {
+  id: string;
+  name: string;
+  filter: SavedViewFilter;
+};
+
+/**
+ * List the current admin's user-saved pipeline views. Built-in defaults
+ * (DEFAULT_SAVED_VIEWS in the pipeline UI) are not stored — the client
+ * concatenates them with this list.
+ */
+export async function listMySavedViews(): Promise<SavedViewPayload[]> {
+  const session = await requireAdmin();
+  const rows = await listSavedViews(session.uid);
+  return rows.map((v) => ({ id: v.id, name: v.name, filter: v.filter }));
+}
+
+/**
+ * Persist a new saved view for the current admin. Returns the created doc
+ * (with its server-generated id) so the client can update local state.
+ */
+export async function createMySavedView(
+  data: { name: string; filter: SavedViewFilter }
+): Promise<{ success: boolean; view?: SavedViewPayload; error?: string }> {
+  const session = await requireAdmin();
+  try {
+    const created = await createSavedView(session.uid, data);
+    return {
+      success: true,
+      view: { id: created.id, name: created.name, filter: created.filter },
+    };
+  } catch (err) {
+    console.error("createMySavedView error:", err);
+    const message =
+      err instanceof Error ? err.message : "Failed to save view.";
+    return { success: false, error: message };
+  }
+}
+
+/** Delete a user-saved view by id. Built-in views are not deletable here. */
+export async function deleteMySavedView(
+  viewId: string
+): Promise<{ success: boolean; error?: string }> {
+  const session = await requireAdmin();
+  if (!viewId) return { success: false, error: "Missing view id." };
+  try {
+    await deleteSavedView(session.uid, viewId);
+    return { success: true };
+  } catch (err) {
+    console.error("deleteMySavedView error:", err);
+    return { success: false, error: "Failed to delete view." };
   }
 }

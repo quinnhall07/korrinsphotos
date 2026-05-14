@@ -15,9 +15,24 @@ import { TitleEditor } from "./TitleEditor";
 import { ShootDateEditor } from "./ShootDateEditor";
 import { EventActions } from "./EventActions";
 import { formatDisplayDate } from "@/lib/date";
+import type { EventStatus } from "@/lib/db/events";
 import type { Metadata } from "next";
 
 export const dynamic = "force-dynamic";
+
+const VALID_EVENT_STATUSES: ReadonlySet<EventStatus> = new Set([
+  "UPCOMING",
+  "ACTIVE",
+  "COMPLETED",
+  "DELIVERED",
+  "ARCHIVED",
+]);
+
+function coerceEventStatus(raw: unknown): EventStatus {
+  return typeof raw === "string" && VALID_EVENT_STATUSES.has(raw as EventStatus)
+    ? (raw as EventStatus)
+    : "UPCOMING";
+}
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -85,7 +100,7 @@ async function getEventData(eventId: string) {
     event: {
       id: eventId,
       title: eventData.title as string,
-      status: (eventData.status as "UPCOMING" | "COMPLETED") || "UPCOMING",
+      status: coerceEventStatus(eventData.status),
       createdAt: eventData.createdAt?.toDate?.() ?? new Date(),
       createdAtFormatted: formatDisplayDate(eventData.createdAt) ?? "—",
       startDate: (eventData.startDate as string) || "",

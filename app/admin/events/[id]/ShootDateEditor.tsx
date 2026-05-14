@@ -7,6 +7,15 @@ import { useRouter } from "next/navigation";
 import { updateShootDates, updateEventStatus } from "./actions";
 import { toast } from "@/components/ui/Toaster";
 
+// Mirrors EventStatus in lib/db/events.ts. Duplicated because this is a
+// "use client" file and cannot import the server-only db module.
+type EventStatus =
+  | "UPCOMING"
+  | "ACTIVE"
+  | "COMPLETED"
+  | "DELIVERED"
+  | "ARCHIVED";
+
 interface ShootDateEditorProps {
   eventId: string;
   initialStartDate: string;
@@ -15,7 +24,7 @@ interface ShootDateEditorProps {
   initialEndTime: string;
   initialIsMultiDay: boolean;
   initialLocation: string;
-  initialStatus: "UPCOMING" | "COMPLETED";
+  initialStatus: EventStatus;
 }
 
 export function ShootDateEditor({ 
@@ -55,7 +64,11 @@ export function ShootDateEditor({
   }
 
   function handleStatusToggle() {
-    const newStatus = status === "UPCOMING" ? "COMPLETED" : "UPCOMING";
+    // Two-state toggle on top of a five-value union: COMPLETED flips back to
+    // UPCOMING; anything else (UPCOMING/ACTIVE/DELIVERED/ARCHIVED) advances to
+    // COMPLETED. Keeps the simple "mark done / undo" UX while tolerating any
+    // legacy status landing in initialStatus.
+    const newStatus: EventStatus = status === "COMPLETED" ? "UPCOMING" : "COMPLETED";
     startTransition(async () => {
       await updateEventStatus(eventId, newStatus);
       setStatus(newStatus);

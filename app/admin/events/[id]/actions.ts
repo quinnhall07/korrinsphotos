@@ -11,6 +11,7 @@ import {
   deleteFromCloudflareImages,
   deleteFromR2,
 } from "@/lib/cloudflare";
+import type { EventStatus } from "@/lib/db/events";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 
 // ─── Delete Photo ─────────────────────────────────────────────────────────────
@@ -95,7 +96,7 @@ export async function updateEventTitle(
 
 export async function updateEventStatus(
   eventId: string,
-  status: "UPCOMING" | "COMPLETED"
+  status: EventStatus
 ): Promise<{ success: boolean; error?: string }> {
   await requireAdmin();
 
@@ -109,10 +110,16 @@ export async function updateEventStatus(
     updatedAt: FieldValue.serverTimestamp(),
   });
 
-  // If marked as Completed and linked to a booking, close the booking
-  if (status === "COMPLETED" && eventData?.bookingId) {
+  // If marked terminal (COMPLETED/DELIVERED/ARCHIVED) and linked to a booking,
+  // close the booking out.
+  const TERMINAL_FOR_BOOKING: ReadonlySet<EventStatus> = new Set([
+    "COMPLETED",
+    "DELIVERED",
+    "ARCHIVED",
+  ]);
+  if (TERMINAL_FOR_BOOKING.has(status) && eventData?.bookingId) {
     await adminDb.collection("bookingInquiries").doc(eventData.bookingId).update({
-      status: "ARCHIVED", // or whatever represents closed out
+      status: "ARCHIVED", // legacy bookingInquiries terminal status
       updatedAt: FieldValue.serverTimestamp(),
     });
   }
