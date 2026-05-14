@@ -4,6 +4,7 @@ import { requireAdmin } from "@/lib/session";
 import { notFound } from "next/navigation";
 import type { ProjectStatus } from "@/lib/db/projects";
 import { listQuestionnairesForProject } from "@/lib/db/questionnaires";
+import { listReviewRequestsForProject } from "@/lib/db/reviews";
 import { ProjectWorkspaceClient } from "./ProjectWorkspaceClient";
 
 export const metadata: Metadata = { title: "Project Detail | Admin" };
@@ -81,6 +82,8 @@ export type SerialProject = {
   createdAt: string | null;
   updatedAt: string | null;
   statusHistory: { status: string; at: string; byUid?: string | null }[];
+  clientNps: 1 | 2 | 3 | 4 | 5 | null;
+  clientNpsAt: string | null;
 };
 
 export type SerialClient = {
@@ -125,6 +128,16 @@ export type SerialQuestionnaire = {
   status: "PENDING" | "COMPLETED";
   sentAt: string | null;
   completedAt: string | null;
+};
+
+export type SerialReviewRequest = {
+  id: string;
+  platform: "GOOGLE" | "KNOT" | "FACEBOOK";
+  status: "QUEUED" | "SENT" | "CLICKED" | "SUBMITTED";
+  scheduledFor: string | null;
+  sentAt: string | null;
+  clickedAt: string | null;
+  submittedAt: string | null;
 };
 
 export type SerialInvoice = {
@@ -230,6 +243,13 @@ export default async function ProjectDetailPage({ params }: Props) {
           byUid: h.byUid ?? null,
         }))
       : [],
+    clientNps:
+      typeof projectData.clientNps === "number" &&
+      projectData.clientNps >= 1 &&
+      projectData.clientNps <= 5
+        ? (projectData.clientNps as 1 | 2 | 3 | 4 | 5)
+        : null,
+    clientNpsAt: ts(projectData.clientNpsAt),
   };
 
   const client: SerialClient = {
@@ -319,6 +339,24 @@ export default async function ProjectDetailPage({ params }: Props) {
     console.error("[ProjectDetailPage] Failed to load questionnaires", err);
   }
 
+  // Phase 4.6: pull review request rotation state so the Overview tab can
+  // render the "{n} of 3 sent" badge alongside the NPS score.
+  let reviewRequests: SerialReviewRequest[] = [];
+  try {
+    const docs = await listReviewRequestsForProject(id);
+    reviewRequests = docs.map((r) => ({
+      id: r.id,
+      platform: r.platform,
+      status: r.status,
+      scheduledFor: ts(r.scheduledFor),
+      sentAt: ts(r.sentAt),
+      clickedAt: ts(r.clickedAt),
+      submittedAt: ts(r.submittedAt),
+    }));
+  } catch (err) {
+    console.error("[ProjectDetailPage] Failed to load review requests", err);
+  }
+
   return (
     <ProjectWorkspaceClient
       project={project}
@@ -328,6 +366,7 @@ export default async function ProjectDetailPage({ params }: Props) {
       contract={contract}
       eventId={eventId}
       questionnaires={questionnaires}
+      reviewRequests={reviewRequests}
       nextBestAction={getNextBestAction(project.status)}
     />
   );

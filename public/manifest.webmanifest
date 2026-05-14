@@ -1,0 +1,26 @@
+{
+  "name": "Korrin's Photography",
+  "short_name": "Korrin",
+  "description": "Korrin's Photography — North Carolina photographer",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#2A2A28",
+  "background_color": "#FAF9F6",
+  "categories": ["business", "photo", "lifestyle"],
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "192x192",
+      "type": "image/x-icon",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon.ico",
+      "sizes": "512x512",
+      "type": "image/x-icon",
+      "purpose": "any"
+    }
+  ]
+}

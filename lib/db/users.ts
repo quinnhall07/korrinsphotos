@@ -8,6 +8,20 @@ export interface NotificationPrefs {
   bookingReminders?: boolean;
 }
 
+/**
+ * Per-recipe automation overrides keyed by `AutomationRecipe.key`
+ * (see `lib/automations/recipes.ts`). Persisted as a plain map so new
+ * recipes can be added without a schema migration. `paramsJson` stores
+ * the recipe's parameter bag as a JSON-encoded string so Firestore does
+ * not have to round-trip arbitrary nested shapes.
+ */
+export interface AutomationConfigEntry {
+  enabled: boolean;
+  paramsJson?: string;
+}
+
+export type AutomationConfigMap = { [recipeKey: string]: AutomationConfigEntry };
+
 export interface UserDoc {
   uid: string;
   email: string;
@@ -16,6 +30,7 @@ export interface UserDoc {
   role: Role;
   phone?: string;
   notificationPrefs?: NotificationPrefs;
+  automationConfig?: AutomationConfigMap;
   createdAt: Timestamp;
   updatedAt?: Timestamp;
 }
@@ -56,4 +71,35 @@ export async function updateUserPreferences(
     { ...prefs, updatedAt: FieldValue.serverTimestamp() },
     { merge: true }
   );
+}
+
+/**
+ * Replace the user's full `automationConfig` map. Callers should merge
+ * with `AUTOMATION_RECIPES` defaults at the read site rather than
+ * persisting defaults — that way new recipes adopt their default
+ * enabled/params values for free.
+ */
+export async function updateUserAutomationConfig(
+  uid: string,
+  config: AutomationConfigMap
+): Promise<void> {
+  const ref = usersCol().doc(uid);
+  await ref.set(
+    { automationConfig: config, updatedAt: FieldValue.serverTimestamp() },
+    { merge: true }
+  );
+}
+
+/**
+ * Find the first user with `role == "ADMIN"`. The automation config
+ * is a per-user document, but project transitions don't currently know
+ * which admin owns the action — see the comment on
+ * `getEffectiveAutomationConfig` in `lib/automations/recipes.ts`.
+ * Returns `null` if no admin exists yet.
+ */
+export async function getFirstAdminUser(): Promise<UserDoc | null> {
+  const snap = await usersCol().where("role", "==", "ADMIN").limit(1).get();
+  if (snap.empty) return null;
+  const doc = snap.docs[0];
+  return { uid: doc.id, ...(doc.data() as Omit<UserDoc, "uid">) };
 }

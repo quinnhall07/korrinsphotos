@@ -5,6 +5,7 @@
 import { requireAdmin } from "@/lib/session";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
 import { CommandPaletteProvider } from "@/components/ui/CommandPaletteProvider";
+import { InstallPrompt } from "@/components/admin/InstallPrompt";
 
 export default async function AdminLayout({
   children,
@@ -29,6 +30,7 @@ export default async function AdminLayout({
           </div>
         </div>
       </div>
+      <InstallPrompt />
     </CommandPaletteProvider>
   );
 }

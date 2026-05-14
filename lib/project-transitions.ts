@@ -1,20 +1,36 @@
 import { adminAuth, adminDb } from "@/lib/firebase-admin";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { ProjectStatus } from "./db/projects";
 import { listSequencesByStatusTrigger } from "./db/sequences";
 import { enrollInSequence } from "./db/sequence-enrollments";
 import { applyReferralAttribution } from "./domain/referrals";
+import {
+  getEffectiveAutomationConfig,
+  isRecipeEnabled,
+  readNumberParam,
+  type ResolvedAutomationConfig,
+} from "./automations/recipes";
 
 // Called when project status changes
 export async function handleProjectTransition(projectId: string, fromStatus: ProjectStatus, toStatus: ProjectStatus) {
   if (fromStatus === toStatus) return;
 
+  // Resolve the admin's automation overrides once per transition. Each
+  // recipe hook below reads from this resolved map; missing keys fall
+  // back to catalog defaults so transitions stay safe even if the
+  // config doc is empty or corrupt.
+  const automationConfig = await getEffectiveAutomationConfig();
+
   if (toStatus === "BOOKED") {
-    await onProjectBooked(projectId);
+    await onProjectBooked(projectId, automationConfig);
   } else if (toStatus === "PROPOSAL_SENT") {
-    await onProposalSent(projectId);
+    await onProposalSent(projectId, automationConfig);
+  } else if (toStatus === "CONTRACT_SENT") {
+    await onContractSent(projectId, automationConfig);
+  } else if (toStatus === "DEPOSIT_PENDING") {
+    await onDepositPending(projectId, automationConfig);
   } else if (toStatus === "GALLERY_DELIVERED") {
-    await onGalleryDelivered(projectId);
+    await onGalleryDelivered(projectId, automationConfig);
   }
 
   // Status-trigger sequence enrollment. Runs regardless of which status we
@@ -76,7 +92,10 @@ async function enrollMatchingStatusSequences(
   }
 }
 
-async function onProjectBooked(projectId: string) {
+async function onProjectBooked(
+  projectId: string,
+  automationConfig: ResolvedAutomationConfig
+) {
   const projectSnap = await adminDb.collection("projects").doc(projectId).get();
   if (!projectSnap.exists) return;
   const project = projectSnap.data()!;
@@ -173,18 +192,38 @@ async function onProjectBooked(projectId: string) {
     }
   }
 
-  // 4. Auto-send questionnaire (Placeholder for mail trigger)
-  await adminDb.collection("mail").add({
-    to: client.email,
-    message: {
-      subject: `Questionnaire for your upcoming ${project.sessionType}`,
-      text: `Please fill out your questionnaire at /questionnaire/${projectId}`,
-    },
-    createdAt: FieldValue.serverTimestamp()
-  });
+  // 4. Auto-send questionnaire (Placeholder for mail trigger) — gated.
+  if (isRecipeEnabled(automationConfig, "auto_send_questionnaire")) {
+    await adminDb.collection("mail").add({
+      to: client.email,
+      message: {
+        subject: `Questionnaire for your upcoming ${project.sessionType}`,
+        text: `Please fill out your questionnaire at /questionnaire/${projectId}`,
+      },
+      createdAt: FieldValue.serverTimestamp()
+    });
+  }
 
-  // 5. Create balance invoice
-  if (project.packagePriceUsd) {
+  // 4b. Auto-send welcome packet — placeholder body until the PDF
+  // generator lands; toggle controls whether we send at all.
+  if (isRecipeEnabled(automationConfig, "auto_send_welcome_packet")) {
+    await adminDb.collection("mail").add({
+      to: client.email,
+      message: {
+        subject: `Welcome — your ${project.sessionType} prep guide`,
+        text: `Hi ${client.firstName ?? ""}, here's everything you need to prep for our shoot. (Welcome packet PDF coming soon.)`,
+      },
+      createdAt: FieldValue.serverTimestamp(),
+    });
+  }
+
+  // 5. Create balance invoice — gated. Roadmap (§1.9) targets
+  // IN_EDITING for this; current behavior fires on BOOKED to maintain
+  // backwards compatibility. Toggle covers both placements.
+  if (
+    isRecipeEnabled(automationConfig, "auto_create_balance_invoice") &&
+    project.packagePriceUsd
+  ) {
     const invoiceRef = adminDb.collection("invoices").doc();
     await invoiceRef.set({
       projectId,
@@ -196,9 +235,41 @@ async function onProjectBooked(projectId: string) {
       createdAt: FieldValue.serverTimestamp(),
     });
   }
+
+  // 6. Sneak-peek email N hours after the shoot. We schedule a task
+  // here (at BOOKED) rather than at shoot time so it's always queued
+  // ahead of the actual shoot. The cron worker (`/api/cron/run-tasks`)
+  // will drain it on/after the scheduled runAt.
+  if (
+    isRecipeEnabled(automationConfig, "sneak_peek_drop_hours") &&
+    project.shootDate
+  ) {
+    const delayHours = readNumberParam(
+      automationConfig,
+      "sneak_peek_drop_hours",
+      "delay_hours",
+      48
+    );
+    const shootMs =
+      project.shootDate instanceof Timestamp
+        ? project.shootDate.toMillis()
+        : new Date(project.shootDate as unknown as string | number).getTime();
+    const runAt = new Date(shootMs + delayHours * 60 * 60 * 1000);
+    await adminDb.collection("scheduledTasks").add({
+      type: "SNEAK_PEEK",
+      projectId,
+      clientId: project.clientId,
+      runAt,
+      status: "PENDING",
+      createdAt: FieldValue.serverTimestamp(),
+    });
+  }
 }
 
-async function onProposalSent(projectId: string) {
+async function onProposalSent(
+  projectId: string,
+  automationConfig: ResolvedAutomationConfig
+) {
   const projectSnap = await adminDb.collection("projects").doc(projectId).get();
   if (!projectSnap.exists) return;
   const project = projectSnap.data()!;
@@ -216,19 +287,70 @@ async function onProposalSent(projectId: string) {
       createdAt: FieldValue.serverTimestamp(),
     });
   }
+
+  // Auto follow-up nudge if proposal sits without movement.
+  await maybeScheduleFollowUp(
+    projectId,
+    project.clientId,
+    automationConfig,
+    "auto_follow_up_proposal"
+  );
 }
 
-async function onGalleryDelivered(projectId: string) {
+async function onContractSent(
+  projectId: string,
+  automationConfig: ResolvedAutomationConfig
+) {
+  const projectSnap = await adminDb.collection("projects").doc(projectId).get();
+  if (!projectSnap.exists) return;
+  const project = projectSnap.data()!;
+
+  await maybeScheduleFollowUp(
+    projectId,
+    project.clientId,
+    automationConfig,
+    "auto_follow_up_contract"
+  );
+}
+
+async function onDepositPending(
+  projectId: string,
+  automationConfig: ResolvedAutomationConfig
+) {
+  const projectSnap = await adminDb.collection("projects").doc(projectId).get();
+  if (!projectSnap.exists) return;
+  const project = projectSnap.data()!;
+
+  await maybeScheduleFollowUp(
+    projectId,
+    project.clientId,
+    automationConfig,
+    "auto_follow_up_deposit"
+  );
+}
+
+async function onGalleryDelivered(
+  projectId: string,
+  automationConfig: ResolvedAutomationConfig
+) {
   const projectSnap = await adminDb.collection("projects").doc(projectId).get();
   if (!projectSnap.exists) return;
   const project = projectSnap.data()!;
 
   // Send gallery notification email (handled elsewhere or by trigger)
-  
-  // Schedule referral email: 7 days out
+
+  // Schedule referral email — gated + delay configurable.
+  if (!isRecipeEnabled(automationConfig, "referral_send_after_delivery")) return;
+
+  const delayDays = readNumberParam(
+    automationConfig,
+    "referral_send_after_delivery",
+    "delay_days",
+    7
+  );
   const runAtDate = new Date();
-  runAtDate.setDate(runAtDate.getDate() + 7);
-  
+  runAtDate.setDate(runAtDate.getDate() + delayDays);
+
   await adminDb.collection("scheduledTasks").add({
     type: "SEND_REFERRAL",
     projectId,
@@ -236,5 +358,38 @@ async function onGalleryDelivered(projectId: string) {
     runAt: runAtDate,
     status: "PENDING",
     createdAt: FieldValue.serverTimestamp()
+  });
+}
+
+/**
+ * Shared helper for the three auto-follow-up recipes. Each one queues a
+ * single `AUTO_FOLLOW_UP` scheduled task with the configured delay.
+ * The cron worker (`/api/cron/run-tasks`) processes the task type;
+ * implementation of the actual nudge email lives there.
+ */
+async function maybeScheduleFollowUp(
+  projectId: string,
+  clientId: string,
+  automationConfig: ResolvedAutomationConfig,
+  recipeKey: string
+) {
+  if (!isRecipeEnabled(automationConfig, recipeKey)) return;
+  const delayDays = readNumberParam(
+    automationConfig,
+    recipeKey,
+    "delay_days",
+    3
+  );
+  const runAt = new Date();
+  runAt.setDate(runAt.getDate() + delayDays);
+
+  await adminDb.collection("scheduledTasks").add({
+    type: "AUTO_FOLLOW_UP",
+    recipeKey,
+    projectId,
+    clientId,
+    runAt,
+    status: "PENDING",
+    createdAt: FieldValue.serverTimestamp(),
   });
 }

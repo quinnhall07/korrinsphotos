@@ -63,6 +63,40 @@ export default async function GalleryEventPage({ params }: Props) {
   const eventData = eventDoc.data()!;
   const photos = await getEventPhotos(id);
 
+  // Phase 2.11 NPS surface: only ADMIN previews and the actual project
+  // owner should see the rating widget. We pull the existing rating (if
+  // any) here so the viewer can decide whether to render or hide the UI.
+  const eventStatus = (eventData.status as string | undefined) ?? null;
+  const projectId = (eventData.projectId as string | undefined) ?? null;
+  let existingNps: 1 | 2 | 3 | 4 | 5 | null = null;
+  let canSubmitNps = false;
+  if (projectId) {
+    const projectSnap = await adminDb.collection("projects").doc(projectId).get();
+    if (projectSnap.exists) {
+      const p = projectSnap.data()!;
+      const raw = p.clientNps as number | undefined;
+      if (raw && raw >= 1 && raw <= 5) {
+        existingNps = raw as 1 | 2 | 3 | 4 | 5;
+      }
+      // Owner check: signed-in email matches the project's client email.
+      if (session.role === "ADMIN") {
+        canSubmitNps = true;
+      } else {
+        const clientId = p.clientId as string | undefined;
+        if (clientId) {
+          const clientSnap = await adminDb.collection("clients").doc(clientId).get();
+          const clientEmail = (clientSnap.data()?.email as string | undefined) ?? "";
+          if (
+            session.email &&
+            clientEmail.toLowerCase() === session.email.toLowerCase()
+          ) {
+            canSubmitNps = true;
+          }
+        }
+      }
+    }
+  }
+
   return (
     <GalleryViewer
       eventId={id}
@@ -73,6 +107,9 @@ export default async function GalleryEventPage({ params }: Props) {
         year: "numeric",
       }) ?? ""}
       photos={photos}
+      eventStatus={eventStatus}
+      existingNps={existingNps}
+      canSubmitNps={canSubmitNps}
     />
   );
 }

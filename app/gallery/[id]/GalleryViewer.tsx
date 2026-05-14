@@ -3,17 +3,28 @@
 // app/gallery/[id]/GalleryViewer.tsx
 // Interactive gallery client component. Receives photo data from the server
 // and renders the masonry grid + lightbox + download bar.
+//
+// Phase 2.11 — Delivery + reaction capture: when the linked event is in
+// DELIVERED status and the project has no `clientNps` yet, we render a
+// 5-star widget at the top of the gallery. Submitting fires the
+// `submitClientNps` Server Action which, on NPS >= 4, triggers the Phase
+// 4.6 review-request rotation (see `lib/domain/reviews.ts`).
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { MasonryGrid, type MasonryPhoto } from "@/components/MasonryGrid";
 import { toast } from "@/components/ui/Toaster";
+import { submitClientNps } from "./actions";
 
 interface GalleryViewerProps {
   eventId: string;
   eventTitle: string;
   eventDate: string;
   photos: MasonryPhoto[];
+  eventStatus: string | null;
+  existingNps: 1 | 2 | 3 | 4 | 5 | null;
+  canSubmitNps: boolean;
 }
 
 export function GalleryViewer({
@@ -21,8 +32,34 @@ export function GalleryViewer({
   eventTitle,
   eventDate,
   photos,
+  eventStatus,
+  existingNps,
+  canSubmitNps,
 }: GalleryViewerProps) {
+  const router = useRouter();
   const [downloading, setDownloading] = useState(false);
+  const [hoverStar, setHoverStar] = useState<number | null>(null);
+  const [localNps, setLocalNps] = useState<1 | 2 | 3 | 4 | 5 | null>(existingNps);
+  const [submitting, startSubmit] = useTransition();
+  const showNpsWidget = eventStatus === "DELIVERED" && canSubmitNps;
+
+  function handleRate(rating: 1 | 2 | 3 | 4 | 5) {
+    if (submitting || localNps !== null) return;
+    startSubmit(async () => {
+      const result = await submitClientNps(eventId, rating);
+      if (!result.success) {
+        toast(result.error ?? "Could not save your rating.");
+        return;
+      }
+      setLocalNps(rating);
+      toast(
+        rating >= 4
+          ? "Thank you! You'll get a quick review prompt by email."
+          : "Thank you for your feedback."
+      );
+      router.refresh();
+    });
+  }
 
   async function requestDownload() {
     if (downloading) return;
@@ -93,6 +130,85 @@ export function GalleryViewer({
         >
           ← Back to galleries
         </Link>
+
+        {/* Phase 2.11 — NPS / reaction capture. Shows once the linked event
+            is DELIVERED. After the first submit, switches to a thank-you
+            line with the locked-in rating. */}
+        {showNpsWidget && (
+          <div
+            style={{
+              padding: "1.4rem 1.5rem",
+              border: "0.5px solid var(--border)",
+              background: "rgba(107,120,69,0.04)",
+              marginBottom: "2rem",
+            }}
+          >
+            <p
+              style={{
+                fontSize: "0.65rem",
+                letterSpacing: "0.2em",
+                textTransform: "uppercase",
+                color: "var(--olive)",
+                marginBottom: "0.5rem",
+              }}
+            >
+              How does this feel?
+            </p>
+            {localNps === null ? (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.5rem",
+                  flexWrap: "wrap",
+                }}
+              >
+                <div style={{ display: "flex", gap: "0.25rem" }}>
+                  {[1, 2, 3, 4, 5].map((n) => {
+                    const active = (hoverStar ?? 0) >= n;
+                    return (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => handleRate(n as 1 | 2 | 3 | 4 | 5)}
+                        onMouseEnter={() => setHoverStar(n)}
+                        onMouseLeave={() => setHoverStar(null)}
+                        disabled={submitting}
+                        aria-label={`${n} star${n === 1 ? "" : "s"}`}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          padding: "0.2rem 0.3rem",
+                          fontSize: "1.6rem",
+                          lineHeight: 1,
+                          color: active ? "var(--olive)" : "var(--charcoal-muted)",
+                          cursor: submitting ? "wait" : "pointer",
+                          transition: "color 0.15s",
+                          fontFamily: "'Jost', sans-serif",
+                        }}
+                      >
+                        ★
+                      </button>
+                    );
+                  })}
+                </div>
+                <span
+                  style={{
+                    fontSize: "0.78rem",
+                    color: "var(--charcoal-muted)",
+                    marginLeft: "0.5rem",
+                  }}
+                >
+                  Tap a star to share your reaction.
+                </span>
+              </div>
+            ) : (
+              <p style={{ fontSize: "0.88rem", color: "var(--charcoal-light)", margin: 0 }}>
+                Thanks — you rated this {localNps} / 5 ★.
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Event header */}
         <div

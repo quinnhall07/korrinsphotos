@@ -21,6 +21,7 @@ import type {
   SerialInvoice,
   SerialContract,
   SerialQuestionnaire,
+  SerialReviewRequest,
 } from "./page";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -197,6 +198,7 @@ interface Props {
   contract: SerialContract | null;
   eventId: string | null;
   questionnaires: SerialQuestionnaire[];
+  reviewRequests: SerialReviewRequest[];
   nextBestAction: string;
 }
 
@@ -210,6 +212,7 @@ export function ProjectWorkspaceClient({
   contract,
   eventId,
   questionnaires,
+  reviewRequests,
   nextBestAction,
 }: Props) {
   const [tab, setTab] = useState<TabId>("overview");
@@ -341,6 +344,7 @@ export function ProjectWorkspaceClient({
               project={project}
               nextBestAction={nextBestAction}
               questionnaires={questionnaires}
+              reviewRequests={reviewRequests}
             />
           )}
           {tab === "messages" && (
@@ -476,29 +480,102 @@ function OverviewTab({
   project,
   nextBestAction,
   questionnaires,
+  reviewRequests,
 }: {
   project: SerialProject;
   nextBestAction: string;
   questionnaires: SerialQuestionnaire[];
+  reviewRequests: SerialReviewRequest[];
 }) {
+  // Phase 4.6 surface metrics for the badge row.
+  const reviewSentCount = reviewRequests.filter(
+    (r) => r.status === "SENT" || r.status === "CLICKED" || r.status === "SUBMITTED"
+  ).length;
+  const reviewTotal = reviewRequests.length;
+  const latestReview = reviewRequests
+    .slice()
+    .sort((a, b) => {
+      const ka =
+        a.sentAt ?? a.scheduledFor ?? "";
+      const kb =
+        b.sentAt ?? b.scheduledFor ?? "";
+      return kb.localeCompare(ka);
+    })[0];
+
   return (
     <div>
       <h2 style={SECTION_HEAD}>Overview</h2>
 
-      {/* NBA chip */}
+      {/* NBA chip + Phase 4.6 NPS / review-request badges */}
       <div
         style={{
-          display: "inline-flex",
+          display: "flex",
+          flexWrap: "wrap",
           alignItems: "center",
           gap: "0.5rem",
-          padding: "0.55rem 0.9rem",
-          background: "var(--olive-dim)",
-          border: "0.5px solid var(--olive)",
           marginBottom: "1.5rem",
         }}
       >
-        <span style={{ ...EYEBROW, fontSize: "0.55rem" }}>Next Best Action</span>
-        <strong style={{ color: "var(--olive)", fontSize: "0.85rem", fontWeight: 500 }}>{nextBestAction}</strong>
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "0.5rem",
+            padding: "0.55rem 0.9rem",
+            background: "var(--olive-dim)",
+            border: "0.5px solid var(--olive)",
+          }}
+        >
+          <span style={{ ...EYEBROW, fontSize: "0.55rem" }}>Next Best Action</span>
+          <strong style={{ color: "var(--olive)", fontSize: "0.85rem", fontWeight: 500 }}>{nextBestAction}</strong>
+        </div>
+
+        {project.clientNps !== null && (
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.4rem",
+              padding: "0.55rem 0.9rem",
+              border: "0.5px solid var(--border-strong)",
+              background: "var(--white)",
+            }}
+            title={project.clientNpsAt ? `Rated ${fmtDate(project.clientNpsAt)}` : undefined}
+          >
+            <span style={{ ...EYEBROW, fontSize: "0.55rem" }}>NPS</span>
+            <strong style={{ fontSize: "0.85rem", fontWeight: 500 }}>
+              {project.clientNps}★
+            </strong>
+          </div>
+        )}
+
+        {reviewTotal > 0 && (
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.4rem",
+              padding: "0.55rem 0.9rem",
+              border: "0.5px solid var(--border-strong)",
+              background: "var(--white)",
+            }}
+            title={
+              latestReview
+                ? `Latest: ${latestReview.platform} · ${latestReview.status}`
+                : undefined
+            }
+          >
+            <span style={{ ...EYEBROW, fontSize: "0.55rem" }}>Reviews</span>
+            <strong style={{ fontSize: "0.85rem", fontWeight: 500 }}>
+              {reviewSentCount} of {reviewTotal} sent
+            </strong>
+            {latestReview && (
+              <span style={{ fontSize: "0.7rem", color: "var(--charcoal-muted)" }}>
+                · {latestReview.platform} {latestReview.status.toLowerCase()}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem", marginBottom: "1.5rem" }}>
