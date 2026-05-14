@@ -10,6 +10,7 @@ import {
   readNumberParam,
   type ResolvedAutomationConfig,
 } from "./automations/recipes";
+import { enqueueTrackedMail } from "./email/tracking";
 
 // Called when project status changes
 export async function handleProjectTransition(projectId: string, fromStatus: ProjectStatus, toStatus: ProjectStatus) {
@@ -194,26 +195,28 @@ async function onProjectBooked(
 
   // 4. Auto-send questionnaire (Placeholder for mail trigger) — gated.
   if (isRecipeEnabled(automationConfig, "auto_send_questionnaire")) {
-    await adminDb.collection("mail").add({
+    await enqueueTrackedMail({
       to: client.email,
-      message: {
-        subject: `Questionnaire for your upcoming ${project.sessionType}`,
-        text: `Please fill out your questionnaire at /questionnaire/${projectId}`,
-      },
-      createdAt: FieldValue.serverTimestamp()
+      subject: `Questionnaire for your upcoming ${project.sessionType}`,
+      html: `<p>Please fill out your questionnaire at <a href="${(process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "")}/questionnaire/${projectId}">/questionnaire/${projectId}</a>.</p>`,
+      text: `Please fill out your questionnaire at /questionnaire/${projectId}`,
+      recipientClientId: project.clientId,
+      projectId,
+      sendKind: "questionnaire-auto",
     });
   }
 
   // 4b. Auto-send welcome packet — placeholder body until the PDF
   // generator lands; toggle controls whether we send at all.
   if (isRecipeEnabled(automationConfig, "auto_send_welcome_packet")) {
-    await adminDb.collection("mail").add({
+    await enqueueTrackedMail({
       to: client.email,
-      message: {
-        subject: `Welcome — your ${project.sessionType} prep guide`,
-        text: `Hi ${client.firstName ?? ""}, here's everything you need to prep for our shoot. (Welcome packet PDF coming soon.)`,
-      },
-      createdAt: FieldValue.serverTimestamp(),
+      subject: `Welcome — your ${project.sessionType} prep guide`,
+      html: `<p>Hi ${client.firstName ?? ""},</p><p>Here's everything you need to prep for our shoot. (Welcome packet PDF coming soon.)</p>`,
+      text: `Hi ${client.firstName ?? ""}, here's everything you need to prep for our shoot. (Welcome packet PDF coming soon.)`,
+      recipientClientId: project.clientId,
+      projectId,
+      sendKind: "welcome-packet",
     });
   }
 
@@ -382,6 +385,19 @@ async function maybeScheduleFollowUp(
   );
   const runAt = new Date();
   runAt.setDate(runAt.getDate() + delayDays);
+
+  // Idempotency guard: re-running handleProjectTransition for the same
+  // (projectId, recipeKey) pair must not enqueue a duplicate follow-up.
+  // Composite index required: scheduledTasks(type ASC, projectId ASC, recipeKey ASC, status ASC).
+  const existing = await adminDb
+    .collection("scheduledTasks")
+    .where("type", "==", "AUTO_FOLLOW_UP")
+    .where("projectId", "==", projectId)
+    .where("recipeKey", "==", recipeKey)
+    .where("status", "==", "PENDING")
+    .limit(1)
+    .get();
+  if (!existing.empty) return;
 
   await adminDb.collection("scheduledTasks").add({
     type: "AUTO_FOLLOW_UP",

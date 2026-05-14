@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { createPaymentLinkForInvoice } from "@/lib/stripe";
 import { FieldValue } from "firebase-admin/firestore";
 import type { InvoiceDoc } from "@/lib/db/invoices";
+import { enqueueTrackedMail } from "@/lib/email/tracking";
 
 export async function sendInvoice(invoiceId: string) {
   await requireAdmin();
@@ -93,18 +94,23 @@ export async function sendInvoice(invoiceId: string) {
       ? `<p>A referral credit of $${(appliedDiscountCents / 100).toFixed(2)} was applied — thank you for sharing Korrin's work.</p>`
       : "";
 
-  // Trigger email to client
-  await adminDb.collection("mail").add({
+  // Trigger email to client (tracked).
+  const { sendId } = await enqueueTrackedMail({
     to: clientEmail,
-    message: {
-      subject: `Your invoice for ${projectTitle} is ready`,
-      html: `<p>Hi there,</p>
-             <p>Your ${invoice.type.toLowerCase()} invoice for $${(finalAmountCents / 100).toFixed(2)} is ready.</p>
-             ${creditLine}
-             <p><a href="${stripeData.url}">Click here to pay securely via Stripe</a></p>
-             <p>Thank you,<br/>Korrin's Photography</p>`
-    }
+    subject: `Your invoice for ${projectTitle} is ready`,
+    html: `<p>Hi there,</p>
+           <p>Your ${invoice.type.toLowerCase()} invoice for $${(finalAmountCents / 100).toFixed(2)} is ready.</p>
+           ${creditLine}
+           <p><a href="${stripeData.url}">Click here to pay securely via Stripe</a></p>
+           <p>Thank you,<br/>Korrin's Photography</p>`,
+    recipientClientId: invoice.clientId,
+    projectId: invoice.projectId,
+    sendKind: "invoice",
   });
+
+  // Persist the sendId so the project workspace can show engagement chips
+  // ("opened 2×, clicked pay link") next to the invoice row.
+  await invoiceRef.update({ lastSendId: sendId });
 
   revalidatePath(`/admin/projects/${invoice.projectId}`);
   return { success: true };

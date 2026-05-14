@@ -10,8 +10,6 @@
 // sees responses land in her inbox.
 
 import { revalidatePath } from "next/cache";
-import { FieldValue } from "firebase-admin/firestore";
-import { adminDb } from "@/lib/firebase-admin";
 import {
   getQuestionnaire,
   getTemplate,
@@ -19,6 +17,7 @@ import {
 } from "@/lib/db/questionnaires";
 import { getProject } from "@/lib/db/projects";
 import { getClient } from "@/lib/db/clients";
+import { enqueueTrackedMail } from "@/lib/email/tracking";
 
 type ActionResult = { success: true } | { success: false; error: string };
 
@@ -75,14 +74,14 @@ export async function submitQuestionnaireAction(
           template?.questions ?? []
         );
 
-        await adminDb.collection("mail").add({
+        await enqueueTrackedMail({
           to: ADMIN_NOTIFICATION_EMAIL,
-          message: {
-            subject: `Questionnaire submitted — ${clientName} (${projectTitle})`,
-            html: `<p><strong>${clientName}</strong> just submitted "${templateName}" for <em>${projectTitle}</em>.</p>${responsesHtml}<p><a href="${projectUrl}">Open project in admin</a></p>`,
-            text: `${clientName} submitted "${templateName}" for ${projectTitle}. Open: ${projectUrl}`,
-          },
-          createdAt: FieldValue.serverTimestamp(),
+          subject: `Questionnaire submitted — ${clientName} (${projectTitle})`,
+          html: `<p><strong>${clientName}</strong> just submitted "${templateName}" for <em>${projectTitle}</em>.</p>${responsesHtml}<p><a href="${projectUrl}">Open project in admin</a></p>`,
+          text: `${clientName} submitted "${templateName}" for ${projectTitle}. Open: ${projectUrl}`,
+          projectId: questionnaire.projectId,
+          recipientClientId: questionnaire.clientId,
+          sendKind: "questionnaire-admin-notify",
         });
       } catch (notifyErr) {
         console.error(

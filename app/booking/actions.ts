@@ -12,6 +12,7 @@ import { cookies }    from "next/headers";
 import { calculateLeadScore } from "@/lib/lead-scoring";
 import { logActivity } from "@/lib/db/activity";
 import { createInboxItem } from "@/lib/db/inbox";
+import { enqueueTrackedMail } from "@/lib/email/tracking";
 import type { LeadStatus } from "@/lib/booking-kanban";
 
 const BookingSchema = z.object({
@@ -300,14 +301,15 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
       { inquiryId: docRef.id, projectId: projectId, sessionType, email }
     ).catch(() => {});
 
-    // Auto-responder: write to `mail` collection for Firebase Trigger Email extension
-    await adminDb.collection("mail").add({
+    // Auto-responder: route through the tracked-mail wrapper so we see
+    // open/click engagement on the very first touch.
+    await enqueueTrackedMail({
       to: email,
-      message: {
-        subject: `Thank you for your inquiry, ${firstName}!`,
-        html: buildAutoResponderHtml({ firstName, sessionType }),
-      },
-      createdAt: FieldValue.serverTimestamp(),
+      subject: `Thank you for your inquiry, ${firstName}!`,
+      html: buildAutoResponderHtml({ firstName, sessionType }),
+      recipientClientId: clientId,
+      projectId,
+      sendKind: "auto-responder",
     });
 
     return { success: true };

@@ -21,6 +21,7 @@
 
 import { adminDb } from "@/lib/firebase-admin";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { enqueueTrackedMail } from "@/lib/email/tracking";
 import {
   clientsCol,
   REFERRAL_TIER_REWARDS,
@@ -191,18 +192,17 @@ export async function applyReferralAttribution(
   // Best-effort tier-up notification (only when an actual new tier crossed).
   if (txResult.rewardAwarded && txResult.earnedTier && txResult.earnedTier > txResult.previousTier) {
     try {
-      await adminDb.collection("mail").add({
+      await enqueueTrackedMail({
         to: referrer.email,
-        message: {
-          subject: `You unlocked a referral reward — Tier ${txResult.earnedTier}`,
-          html: buildTierUpEmailHtml({
-            firstName: referrer.firstName,
-            tier: txResult.earnedTier,
-            reward: txResult.rewardAwarded.reward,
-            referralCount: txResult.newCount,
-          }),
-        },
-        createdAt: FieldValue.serverTimestamp(),
+        subject: `You unlocked a referral reward — Tier ${txResult.earnedTier}`,
+        html: buildTierUpEmailHtml({
+          firstName: referrer.firstName,
+          tier: txResult.earnedTier,
+          reward: txResult.rewardAwarded.reward,
+          referralCount: txResult.newCount,
+        }),
+        recipientClientId: referrer.id,
+        sendKind: "referral-tier-up",
       });
     } catch (err) {
       console.error("[applyReferralAttribution] mail enqueue failed", {

@@ -29,6 +29,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { contractsCol, getContract, type ContractDoc } from "@/lib/db/contracts";
 import { logActivity } from "@/lib/db/activity";
 import { createInboxItem } from "@/lib/db/inbox";
+import { enqueueTrackedMail } from "@/lib/email/tracking";
 
 type SignResult =
   | { success: true; signedAt: string }
@@ -275,21 +276,17 @@ export async function submitSignature(
       read: false,
     }).catch(() => {});
 
-    // Notify admin via mail/. Best-effort.
+    // Notify admin via tracked mail. Best-effort.
     if (ADMIN_NOTIFICATION_EMAIL) {
       const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "");
-      adminDb
-        .collection("mail")
-        .add({
-          to: ADMIN_NOTIFICATION_EMAIL,
-          message: {
-            subject: `Contract signed — ${trimmedName}`,
-            html: `<p><strong>${escapeHtml(trimmedName)}</strong> just signed their contract.</p>
-                   <p><a href="${appUrl}/admin/projects/${contract.projectId}">Open project in admin</a></p>`,
-          },
-          createdAt: FieldValue.serverTimestamp(),
-        })
-        .catch((err) => console.error("[submitSignature] Admin mail failed", err));
+      enqueueTrackedMail({
+        to: ADMIN_NOTIFICATION_EMAIL,
+        subject: `Contract signed — ${trimmedName}`,
+        html: `<p><strong>${escapeHtml(trimmedName)}</strong> just signed their contract.</p>
+               <p><a href="${appUrl}/admin/projects/${contract.projectId}">Open project in admin</a></p>`,
+        projectId: contract.projectId,
+        sendKind: "contract-signed-admin",
+      }).catch((err) => console.error("[submitSignature] Admin mail failed", err));
     }
 
     // Copy-to-client email. Best-effort.
@@ -302,16 +299,16 @@ export async function submitSignature(
         // signed" view and mint a fresh presigned download URL on demand.
         const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "");
         const viewUrl = `${appUrl}/sign-contract/${contractId}`;
-        await adminDb.collection("mail").add({
+        await enqueueTrackedMail({
           to: clientEmail,
-          message: {
-            subject: "Your signed contract — Korrin's Photography",
-            html: `<p>Hi ${escapeHtml(trimmedName.split(" ")[0] ?? "there")},</p>
-                   <p>Thank you for signing. A copy of your contract has been archived. You can revisit it any time at the link below.</p>
-                   <p><a href="${viewUrl}">View your signed contract</a></p>
-                   <p>Best,<br/>Korrin's Photography</p>`,
-          },
-          createdAt: FieldValue.serverTimestamp(),
+          subject: "Your signed contract — Korrin's Photography",
+          html: `<p>Hi ${escapeHtml(trimmedName.split(" ")[0] ?? "there")},</p>
+                 <p>Thank you for signing. A copy of your contract has been archived. You can revisit it any time at the link below.</p>
+                 <p><a href="${viewUrl}">View your signed contract</a></p>
+                 <p>Best,<br/>Korrin's Photography</p>`,
+          recipientClientId: contract.clientId,
+          projectId: contract.projectId,
+          sendKind: "contract-signed-client",
         });
       }
     } catch (clientMailErr) {

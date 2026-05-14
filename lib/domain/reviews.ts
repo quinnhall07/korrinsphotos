@@ -11,8 +11,8 @@
 // review request doc is a no-op. Re-dispatching a SENT row is impossible
 // because the cron query filters by `status == "QUEUED"`.
 
-import { adminDb } from "@/lib/firebase-admin";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { enqueueTrackedMail } from "@/lib/email/tracking";
 import { getClient } from "@/lib/db/clients";
 import { getProject } from "@/lib/db/projects";
 import {
@@ -172,10 +172,17 @@ async function dispatchOne(req: ReviewRequestDoc): Promise<"sent" | "skipped" | 
       trackingUrl,
     });
 
-    await adminDb.collection("mail").add({
+    // NOTE: the `trackingUrl` above already points at our own `/r/review/{id}`
+    // route, which is itself a click tracker. `enqueueTrackedMail`'s rewrite
+    // regex skips internal URLs (shouldRewriteHref → same host as
+    // NEXT_PUBLIC_APP_URL → no rewrite) so we won't double-wrap it.
+    await enqueueTrackedMail({
       to: client.email,
-      message: { subject, html },
-      createdAt: FieldValue.serverTimestamp(),
+      subject,
+      html,
+      recipientClientId: req.clientId,
+      projectId: req.projectId,
+      sendKind: "review-request",
     });
 
     await reviewRequestsCol().doc(req.id).update({

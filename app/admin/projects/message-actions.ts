@@ -4,8 +4,9 @@ import { revalidatePath } from "next/cache";
 import { adminDb } from "@/lib/firebase-admin";
 import { requireAdmin } from "@/lib/session";
 import { FieldValue } from "firebase-admin/firestore";
-import { addProjectMessage } from "@/lib/db/projects";
+import { addProjectMessage, projectMessagesCol } from "@/lib/db/projects";
 import { logActivity } from "@/lib/db/activity";
+import { enqueueTrackedMail } from "@/lib/email/tracking";
 
 /**
  * Append an outbound message to projects/{id}/messages and enqueue an email
@@ -36,7 +37,7 @@ export async function sendProjectMessage(
       (project.title ? `Re: ${project.title}` : "An update from Korrin's Photography");
 
     // Persist the message in the project subcollection.
-    await addProjectMessage(projectId, {
+    const message = await addProjectMessage(projectId, {
       direction: "OUTBOUND",
       channel: "EMAIL",
       subject: finalSubject,
@@ -51,7 +52,9 @@ export async function sendProjectMessage(
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    // Enqueue the outbound email. The Firebase Trigger Email extension watches mail/.
+    // Enqueue the outbound email through the tracked-mail wrapper. The
+    // returned sendId is persisted on the message subcollection doc so the
+    // workspace can render "opened 2×, clicked link" engagement chips.
     if (clientEmail) {
       const safeBody = body
         .trim()
@@ -59,14 +62,19 @@ export async function sendProjectMessage(
         .map((p) => `<p>${escapeHtml(p).replace(/\n/g, "<br/>")}</p>`)
         .join("");
 
-      await adminDb.collection("mail").add({
+      const { sendId } = await enqueueTrackedMail({
         to: clientEmail,
-        message: {
-          subject: finalSubject,
-          html: `${safeBody}<p style="margin-top:2rem;color:#8A8A85;font-size:0.85rem;">— Korrin's Photography</p>`,
-        },
-        createdAt: FieldValue.serverTimestamp(),
+        subject: finalSubject,
+        html: `${safeBody}<p style="margin-top:2rem;color:#8A8A85;font-size:0.85rem;">— Korrin's Photography</p>`,
+        recipientClientId: project.clientId,
+        projectId,
+        sendKind: "project-message",
       });
+      try {
+        await projectMessagesCol(projectId).doc(message.id).update({ sendId });
+      } catch (err) {
+        console.error("[sendProjectMessage] failed to stamp sendId on message", { projectId, messageId: message.id, err });
+      }
     }
 
     await logActivity(

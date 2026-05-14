@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import type { ProjectStatus } from "@/lib/db/projects";
 import { listQuestionnairesForProject } from "@/lib/db/questionnaires";
 import { listReviewRequestsForProject } from "@/lib/db/reviews";
+import { listEmailEventsForProject } from "@/lib/db/email-events";
 import { ProjectWorkspaceClient } from "./ProjectWorkspaceClient";
 
 export const metadata: Metadata = { title: "Project Detail | Admin" };
@@ -107,6 +108,12 @@ export type SerialMessage = {
   adminUid: string | null;
   sentAt: string | null;
   isAutomatic: boolean;
+  /** Phase 1.6 — present on outbound messages enqueued through
+   *  `enqueueTrackedMail`. Used to render engagement chips below. */
+  sendId: string | null;
+  /** Phase 1.6 engagement counts (joined server-side from `emailEvents`). */
+  openCount: number;
+  clickCount: number;
 };
 
 export type SerialContract = {
@@ -264,8 +271,27 @@ export default async function ProjectDetailPage({ params }: Props) {
     totalSessionsBooked: clientData?.totalSessionsBooked ?? 0,
   };
 
+  // Phase 1.6 — fetch all emailEvents for this project and roll up per-sendId
+  // open/click counts. Best-effort: if the query fails (missing index, etc.)
+  // we still render the messages tab without chips.
+  const engagementBySendId = new Map<string, { opened: number; clicked: number }>();
+  try {
+    const events = await listEmailEventsForProject(id);
+    for (const e of events) {
+      if (!e.sendId) continue;
+      const cur = engagementBySendId.get(e.sendId) ?? { opened: 0, clicked: 0 };
+      if (e.type === "opened") cur.opened += 1;
+      else if (e.type === "clicked") cur.clicked += 1;
+      engagementBySendId.set(e.sendId, cur);
+    }
+  } catch (err) {
+    console.error("[ProjectDetailPage] Failed to load email events", err);
+  }
+
   const messages: SerialMessage[] = messagesSnap.docs.map((d) => {
     const m = d.data();
+    const sendId: string | null = typeof m.sendId === "string" ? m.sendId : null;
+    const eng = sendId ? engagementBySendId.get(sendId) : undefined;
     return {
       id: d.id,
       direction: m.direction === "INBOUND" ? "INBOUND" : "OUTBOUND",
@@ -275,6 +301,9 @@ export default async function ProjectDetailPage({ params }: Props) {
       adminUid: m.adminUid ?? null,
       sentAt: ts(m.sentAt),
       isAutomatic: !!m.isAutomatic,
+      sendId,
+      openCount: eng?.opened ?? 0,
+      clickCount: eng?.clicked ?? 0,
     };
   });
 

@@ -842,6 +842,48 @@ function MessagesTab({ projectId, messages }: { projectId: string; messages: Ser
               <p style={{ margin: 0, fontSize: "0.85rem", whiteSpace: "pre-wrap", lineHeight: 1.55, color: "var(--charcoal)" }}>
                 {m.body}
               </p>
+              {/* Phase 1.6 — engagement chips. Only render on outbound messages
+                  that flowed through enqueueTrackedMail (sendId present). */}
+              {m.direction === "OUTBOUND" && m.sendId && (m.openCount > 0 || m.clickCount > 0) && (
+                <div
+                  style={{
+                    marginTop: "0.5rem",
+                    display: "flex",
+                    gap: "0.4rem",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  {m.openCount > 0 && (
+                    <span
+                      style={{
+                        fontSize: "0.65rem",
+                        letterSpacing: "0.12em",
+                        textTransform: "uppercase",
+                        padding: "0.15rem 0.45rem",
+                        background: "var(--olive-dim)",
+                        color: "var(--olive)",
+                        border: "0.5px solid var(--olive)",
+                      }}
+                    >
+                      Opened {m.openCount}×
+                    </span>
+                  )}
+                  {m.clickCount > 0 && (
+                    <span
+                      style={{
+                        fontSize: "0.65rem",
+                        letterSpacing: "0.12em",
+                        textTransform: "uppercase",
+                        padding: "0.15rem 0.45rem",
+                        background: "var(--olive)",
+                        color: "var(--white)",
+                      }}
+                    >
+                      Clicked {m.clickCount}×
+                    </span>
+                  )}
+                </div>
+              )}
             </article>
           ))
         )}

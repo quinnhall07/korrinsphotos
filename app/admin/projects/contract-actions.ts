@@ -6,6 +6,7 @@ import { requireAdmin } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { generateContractForProject } from "@/lib/contract-renderer";
+import { enqueueTrackedMail } from "@/lib/email/tracking";
 
 /**
  * Token lifetime for a public signing link. Once `tokenExpiresAt` has passed,
@@ -59,16 +60,21 @@ export async function sendContract(contractId: string) {
   const appUrl = (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/$/, "");
   const signUrl = `${appUrl}/sign-contract/${contractId}?t=${signingToken}`;
 
-  await adminDb.collection("mail").add({
+  const { sendId } = await enqueueTrackedMail({
     to: clientEmail,
-    message: {
-      subject: `Your Photography Contract is ready to sign`,
-      html: `<p>Hi there,</p>
-             <p>Your contract is ready for your review and signature. The link below is unique to you and expires in ${SIGNING_TOKEN_TTL_DAYS} days.</p>
-             <p><a href="${signUrl}">Click here to review and sign</a></p>
-             <p>Thank you,<br/>Korrin's Photography</p>`,
-    },
+    subject: `Your Photography Contract is ready to sign`,
+    html: `<p>Hi there,</p>
+           <p>Your contract is ready for your review and signature. The link below is unique to you and expires in ${SIGNING_TOKEN_TTL_DAYS} days.</p>
+           <p><a href="${signUrl}">Click here to review and sign</a></p>
+           <p>Thank you,<br/>Korrin's Photography</p>`,
+    recipientClientId: contract.clientId,
+    projectId: contract.projectId,
+    sendKind: "contract",
   });
+
+  // Persist the sendId on the contract doc so engagement aggregation can
+  // join from the contract row back to its emailEvents stream.
+  await contractRef.update({ lastSendId: sendId });
 
   revalidatePath(`/admin/projects/${contract.projectId}`);
   return { success: true };

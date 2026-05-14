@@ -5,6 +5,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { requireAdmin } from "@/lib/session";
 import { FieldValue } from "firebase-admin/firestore";
 import { logActivity } from "@/lib/db/activity";
+import { enqueueTrackedMail } from "@/lib/email/tracking";
 import type { LeadStatus, CommunicationChannel } from "@/lib/booking-kanban";
 import { randomUUID } from "crypto";
 import { z } from "zod";
@@ -78,13 +79,11 @@ export async function sendBookingResponse(
     const doc = await adminDb.collection("bookingInquiries").doc(id).get();
     if (!doc.exists) return { success: false, error: "Booking not found." };
 
-    await adminDb.collection("mail").add({
+    await enqueueTrackedMail({
       to,
-      message: {
-        subject,
-        html: buildResponseHtml({ name, message, subject }),
-      },
-      createdAt: FieldValue.serverTimestamp(),
+      subject,
+      html: buildResponseHtml({ name, message, subject }),
+      sendKind: "booking-response",
     });
 
     const currentStatus = doc.data()?.status as LeadStatus | undefined;

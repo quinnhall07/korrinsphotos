@@ -10,7 +10,7 @@ import { redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/session";
 import { logActivity } from "@/lib/db/activity";
 import { adminDb } from "@/lib/firebase-admin";
-import { FieldValue } from "firebase-admin/firestore";
+import { enqueueTrackedMail } from "@/lib/email/tracking";
 import {
   createTemplate as dbCreateTemplate,
   updateTemplate as dbUpdateTemplate,
@@ -151,16 +151,16 @@ export async function sendQuestionnaireForProjectAction(
     const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "");
     const link = `${appUrl}/questionnaire/${questionnaireId}`;
 
-    await adminDb.collection("mail").add({
+    await enqueueTrackedMail({
       to: client.email,
-      message: {
-        subject: `Questionnaire for your upcoming ${project.sessionType}`,
-        text: `Please fill out your questionnaire: ${link}`,
-        html: `<p>Hi ${client.firstName ?? "there"},</p><p>Please take a few minutes to fill out the questionnaire for your upcoming ${String(
-          project.sessionType
-        ).toLowerCase()}.</p><p><a href="${link}">${link}</a></p>`,
-      },
-      createdAt: FieldValue.serverTimestamp(),
+      subject: `Questionnaire for your upcoming ${project.sessionType}`,
+      text: `Please fill out your questionnaire: ${link}`,
+      html: `<p>Hi ${client.firstName ?? "there"},</p><p>Please take a few minutes to fill out the questionnaire for your upcoming ${String(
+        project.sessionType
+      ).toLowerCase()}.</p><p><a href="${link}">${link}</a></p>`,
+      recipientClientId: client.id,
+      projectId,
+      sendKind: "questionnaire-manual",
     });
 
     await logActivity(

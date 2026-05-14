@@ -1,5 +1,6 @@
 import { adminDb } from "@/lib/firebase-admin";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { enqueueTrackedMail } from "@/lib/email/tracking";
 import {
   getSequence,
   type SequenceDoc,
@@ -77,21 +78,22 @@ async function dispatchStep(args: {
   sequence: SequenceDoc;
   stepIndex: number;
   client: ClientDoc | null;
+  enrollment: SequenceEnrollmentDoc;
 }): Promise<void> {
-  const { step, sequence, stepIndex, client } = args;
+  const { step, sequence, stepIndex, client, enrollment } = args;
   const recipient = client?.email ?? null;
   if (!recipient) {
     throw new Error("No recipient email on client");
   }
 
   if (step.channel === "EMAIL") {
-    await adminDb.collection("mail").add({
+    await enqueueTrackedMail({
       to: recipient,
-      message: {
-        subject: `Sequence step ${stepIndex + 1} from ${sequence.name}`,
-        html: `Template: ${step.templateId}`,
-      },
-      createdAt: FieldValue.serverTimestamp(),
+      subject: `Sequence step ${stepIndex + 1} from ${sequence.name}`,
+      html: `<p>Template: ${step.templateId}</p>`,
+      recipientClientId: enrollment.clientId,
+      projectId: enrollment.projectId ?? null,
+      sendKind: `sequence:${sequence.id}`,
     });
     return;
   }
@@ -180,7 +182,7 @@ async function processEnrollment(
 
   // Dispatch.
   try {
-    await dispatchStep({ step, sequence, stepIndex, client });
+    await dispatchStep({ step, sequence, stepIndex, client, enrollment });
   } catch (err) {
     await failEnrollment(
       enrollment.id,
