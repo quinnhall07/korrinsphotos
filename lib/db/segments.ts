@@ -22,6 +22,11 @@ import type { ProjectStatus } from "./projects";
  */
 export interface SegmentPredicate {
   projectStatus?: ProjectStatus[];
+  /**
+   * Roadmap §4.3 — client lifecycle stage filter.
+   * Matches `clients/{id}.lifecycleStage` (`INQUIRED | BOOKED | DELIVERED | REPEAT | CHURNED`).
+   */
+  lifecycleStage?: string[];
   sessionType?: string[];
   tagsInclude?: string[];   // ALL must match
   tagsExclude?: string[];   // NONE may match
@@ -33,6 +38,10 @@ export interface SegmentPredicate {
   deliveredAfter?: string;  // ISO date — client.lastDeliveredAt OR project.deliveredAt
   deliveredBefore?: string;
   hasReferred?: boolean;    // referralCount > 0
+  /**
+   * Minimum referral tier (1–5). Matches `clients/{id}.referralTier`.
+   */
+  referralTierMin?: number;
 }
 
 export interface SegmentDoc {
@@ -91,4 +100,17 @@ export async function cacheResolvedCount(id: string, count: number): Promise<voi
     lastResolvedCount: count,
     lastResolvedAt: FieldValue.serverTimestamp(),
   });
+}
+
+/**
+ * Idempotency helper used by `scripts/seed-segments.ts`. Returns the first
+ * segment whose `name` matches exactly (case-sensitive), or null.
+ */
+export async function findSegmentByName(
+  name: string
+): Promise<SegmentDoc | null> {
+  const snap = await segmentsCol().where("name", "==", name).limit(1).get();
+  if (snap.empty) return null;
+  const d = snap.docs[0];
+  return { id: d.id, ...d.data() } as SegmentDoc;
 }

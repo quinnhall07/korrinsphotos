@@ -83,29 +83,6 @@ const NAV = [
     group: "Clients",
     items: [
       {
-        label: "Segments",
-        href: "/admin/segments",
-        icon: (
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
-            <circle cx="5" cy="6" r="3" />
-            <circle cx="11" cy="6" r="3" />
-            <circle cx="8" cy="11" r="3" />
-          </svg>
-        ),
-      },
-      {
-        label: "Sequences",
-        href: "/admin/sequences",
-        icon: (
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
-            <circle cx="3" cy="3" r="1.5" />
-            <circle cx="13" cy="8" r="1.5" />
-            <circle cx="3" cy="13" r="1.5" />
-            <path d="M4 4l8 3M4 12l8-3" />
-          </svg>
-        ),
-      },
-      {
         label: "Questionnaires",
         href: "/admin/questionnaires/templates",
         icon: (
@@ -122,6 +99,68 @@ const NAV = [
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <circle cx="8" cy="5" r="3" />
             <path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6" />
+          </svg>
+        ),
+      },
+    ],
+  },
+  {
+    group: "Marketing",
+    items: [
+      {
+        label: "Segments",
+        href: "/admin/segments",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <circle cx="5" cy="6" r="3" />
+            <circle cx="11" cy="6" r="3" />
+            <circle cx="8" cy="11" r="3" />
+          </svg>
+        ),
+      },
+      {
+        label: "Broadcasts",
+        href: "/admin/broadcasts",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <path d="M2 6l12-4-3 12-4-5z" />
+            <path d="M7 9l-1 5" />
+          </svg>
+        ),
+      },
+      {
+        label: "Sequences",
+        href: "/admin/sequences",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <circle cx="3" cy="3" r="1.5" />
+            <circle cx="13" cy="8" r="1.5" />
+            <circle cx="3" cy="13" r="1.5" />
+            <path d="M4 4l8 3M4 12l8-3" />
+          </svg>
+        ),
+      },
+    ],
+  },
+  {
+    group: "Reports",
+    items: [
+      {
+        label: "Finance",
+        href: "/admin/reports/finance",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <path d="M2 14V2M2 14h12M5 11V7M8 11V4M11 11V8" />
+          </svg>
+        ),
+      },
+      {
+        label: "Tax & Expenses",
+        href: "/admin/reports/tax",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <rect x="2" y="2" width="12" height="12" rx="0.5" />
+            <path d="M5 6h6M5 9h4M5 12h6" />
           </svg>
         ),
       },

@@ -12,7 +12,7 @@
 
 import { projectsCol, type ProjectDoc, type ProjectStatus } from "@/lib/db/projects";
 import { clientsCol, type ClientDoc } from "@/lib/db/clients";
-import type { SegmentPredicate } from "@/lib/db/segments";
+import type { SegmentDoc, SegmentPredicate } from "@/lib/db/segments";
 
 const RESULT_CAP = 5000;
 const FIRESTORE_IN_LIMIT = 10;
@@ -26,6 +26,18 @@ export interface SegmentResolution {
 }
 
 /**
+ * Type guard: accept either a raw predicate object or a full SegmentDoc.
+ * Broadcast send paths typically have the SegmentDoc in hand; the preview
+ * endpoint posts a raw predicate.
+ */
+function unwrap(input: SegmentPredicate | SegmentDoc): SegmentPredicate {
+  if (input && typeof input === "object" && "predicate" in input) {
+    return (input as SegmentDoc).predicate;
+  }
+  return input as SegmentPredicate;
+}
+
+/**
  * resolveSegment — runs the predicate against Firestore.
  *
  * Strategy:
@@ -34,11 +46,20 @@ export interface SegmentResolution {
  *      and hydrate the referenced clients in batches of 10.
  *   2. Otherwise, query the `clients` collection directly.
  *   3. In either case, apply remaining filters in memory (tagsExclude,
- *      score ranges, date ranges, hasReferred, totalSessionsBookedMin).
+ *      score ranges, date ranges, hasReferred, totalSessionsBookedMin,
+ *      lifecycleStage, referralTierMin).
+ *
+ * Firestore-indexable fields (single `where` clause): `projectStatus`,
+ * `sessionType`, `leadSource`, `firstTouchSource`, `lifecycleStage`,
+ * `tagsInclude[0]` (via `array-contains`).
+ * In-memory only: `tagsExclude`, score/tier numeric ranges, date ranges,
+ * `hasReferred`, `totalSessionsBookedMin`, additional tags in `tagsInclude`,
+ * `referralTierMin`.
  */
 export async function resolveSegment(
-  predicate: SegmentPredicate
+  input: SegmentPredicate | SegmentDoc
 ): Promise<SegmentResolution> {
+  const predicate = unwrap(input);
   const projectFirst =
     (predicate.projectStatus && predicate.projectStatus.length > 0) ||
     (predicate.sessionType && predicate.sessionType.length > 0) ||
@@ -124,9 +145,17 @@ async function resolveFromClients(
 ): Promise<SegmentResolution> {
   let query = clientsCol() as FirebaseFirestore.Query;
 
+  // Firestore composite-query limit: at most one `where(... "in" ...)` per
+  // query (with the new SDKs allowing combined arrays only via OR queries we
+  // don't use here). Prefer firstTouchSource; fall back to lifecycleStage if
+  // firstTouchSource is unset.
   if (predicate.firstTouchSource && predicate.firstTouchSource.length > 0) {
     if (predicate.firstTouchSource.length <= 30) {
       query = query.where("firstTouchSource", "in", predicate.firstTouchSource);
+    }
+  } else if (predicate.lifecycleStage && predicate.lifecycleStage.length > 0) {
+    if (predicate.lifecycleStage.length <= 30) {
+      query = query.where("lifecycleStage", "in", predicate.lifecycleStage);
     }
   }
 
@@ -218,6 +247,17 @@ function matchesPredicate(
       const count = client.referralCount ?? 0;
       if (predicate.hasReferred && count <= 0) return false;
       if (!predicate.hasReferred && count > 0) return false;
+    }
+    if (
+      predicate.lifecycleStage &&
+      predicate.lifecycleStage.length > 0 &&
+      !predicate.lifecycleStage.includes((client.lifecycleStage as string) ?? "")
+    ) {
+      return false;
+    }
+    if (typeof predicate.referralTierMin === "number") {
+      const tier = client.referralTier ?? 0;
+      if (tier < predicate.referralTierMin) return false;
     }
   }
 

@@ -55,6 +55,8 @@ type Photo = {
   label: string | null;
   cloudflareImageId: string;
   r2Key: string | null;
+  favoritedBy: string[];
+  tags: string[];
 };
 
 async function getEventData(eventId: string) {
@@ -74,6 +76,8 @@ async function getEventData(eventId: string) {
       label: data.label ?? null,
       cloudflareImageId: data.cloudflareImageId as string,
       r2Key: data.r2Key ?? null,
+      favoritedBy: (data.favoritedBy as string[] | undefined) ?? [],
+      tags: (data.tags as string[] | undefined) ?? [],
     };
   });
 
@@ -86,6 +90,36 @@ async function getEventData(eventId: string) {
         email: (userDoc.data()?.email as string) ?? "unknown",
         invitedAt: formatDisplayDate(data.createdAt) ?? "—",
       };
+    })
+  );
+
+  // Phase 2.5 — resolve every clientId surfaced by `photos[].favoritedBy`
+  // into a display label so the favorites modal can render real names. The
+  // `admin:<uid>` namespace (used when an admin previews-as-client) falls
+  // back to a generic label so we don't hit Firestore for non-existent docs.
+  const allClientIds = new Set<string>();
+  for (const p of photos) {
+    for (const cid of p.favoritedBy) allClientIds.add(cid);
+  }
+  const clientLabels: Record<string, string> = {};
+  await Promise.all(
+    Array.from(allClientIds).map(async (cid) => {
+      if (cid.startsWith("admin:")) {
+        clientLabels[cid] = "Admin preview";
+        return;
+      }
+      try {
+        const snap = await adminDb.collection("clients").doc(cid).get();
+        if (snap.exists) {
+          const d = snap.data()!;
+          const name = `${(d.firstName as string) ?? ""} ${(d.lastName as string) ?? ""}`.trim();
+          clientLabels[cid] = name || (d.email as string) || cid;
+        } else {
+          clientLabels[cid] = cid;
+        }
+      } catch {
+        clientLabels[cid] = cid;
+      }
     })
   );
 
@@ -113,6 +147,7 @@ async function getEventData(eventId: string) {
     },
     photos,
     clients,
+    clientLabels,
   };
 }
 
@@ -123,7 +158,7 @@ export default async function EventDetailPage({ params }: Props) {
   const data = await getEventData(id);
   if (!data) notFound();
 
-  const { event, photos, clients } = data;
+  const { event, photos, clients, clientLabels } = data;
 
   return (
     <div className="page-fade-in">
@@ -220,7 +255,7 @@ export default async function EventDetailPage({ params }: Props) {
             </span>
           </div>
           <div style={{ padding: "1rem" }}>
-            <PhotoGrid eventId={event.id} photos={photos} />
+            <PhotoGrid eventId={event.id} photos={photos} clientLabels={clientLabels} />
           </div>
         </div>
       )}

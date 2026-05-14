@@ -75,6 +75,7 @@ korrin-photos/
 ├── lib/
 │   ├── db/                           # Per-collection Firestore helpers (canonical DB layer)
 │   │   ├── activity.ts
+│   │   ├── analytics-cache.ts        # Pre-aggregated analytics snapshots (Finance dashboard et al)
 │   │   ├── clients.ts                # Universal Client record (email = key)
 │   │   ├── contracts.ts
 │   │   ├── event-access.ts
@@ -85,6 +86,7 @@ korrin-photos/
 │   │   ├── projects.ts               # Master state machine (ProjectDoc, ProjectStatus, MessageDoc)
 │   │   └── users.ts
 │   ├── domain/
+│   │   ├── analytics.ts              # computeFinanceSnapshot + recomputeFinanceCache (cron drain)
 │   │   └── events.ts                 # deleteEventAndAssets, clearEventGallery (cross-collection ops)
 │   ├── storage/
 │   │   ├── images.ts                 # Cloudflare Images upload/delete + buildCdnUrl
@@ -285,6 +287,19 @@ scheduledTasks/{taskId}
   type (e.g. SEND_REFERRAL, AUTO_FOLLOW_UP), status (PENDING|COMPLETED),
   runAt, completedAt, projectId, clientId, createdAt
   (Consumed by /api/cron/run-tasks on the daily schedule.)
+
+expenses/{expenseId}
+  date, vendor?, description, amountCents, scheduleCLine (ScheduleCLine union — Schedule C lines 8–27 + OTHER),
+  projectId?, mileageMiles?, isReimbursable?, receiptR2Key?, taxDeductible,
+  createdAt, updatedAt
+  (Read by /admin/reports/tax. CSV export at /api/expenses/export?year=YYYY.)
+
+assets/{assetId}
+  name, description?, purchaseDate, purchasePriceCents,
+  depreciationMethod (MACRS_5|MACRS_7|SECTION_179|BONUS|NONE),
+  placedInServiceDate, section179Cents?, salvageValueCents?, retiredAt?, photoR2Key?,
+  createdAt, updatedAt
+  (Depreciable equipment ledger. `currentYearDepreciationCents(asset, year)` is a pure helper.)
 ```
 
 `ProjectStatus` is defined in `lib/db/projects.ts` and runs the full lifecycle: `SITE_VISIT → INQUIRY → QUALIFYING → PROPOSAL_SENT → NEGOTIATING → CONTRACT_SENT → DEPOSIT_PENDING → BOOKED → SHOOT_READY → IN_EDITING → GALLERY_DELIVERED → REFERRAL_SENT → COMPLETED` (with `LOST` and `ARCHIVED` as terminal off-ramps).

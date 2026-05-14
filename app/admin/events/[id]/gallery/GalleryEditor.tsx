@@ -5,7 +5,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { toggleGalleryReady } from "./actions";
+import { toggleGalleryReady, toggleKorrinsPick } from "./actions";
 import { toast } from "@/components/ui/Toaster";
 
 type Photo = {
@@ -15,6 +15,7 @@ type Photo = {
   label: string | null;
   cloudflareImageId: string;
   galleryReady: boolean;
+  isKorrinsPick: boolean;
 };
 
 interface GalleryEditorProps {
@@ -57,6 +58,18 @@ export function GalleryEditor({ eventId, photos }: GalleryEditorProps) {
   function handleSingleToggle(photoId: string, galleryReady: boolean) {
     startTransition(async () => {
       await toggleGalleryReady(eventId, [photoId], galleryReady);
+      router.refresh();
+    });
+  }
+
+  function handleTogglePick(photoId: string) {
+    startTransition(async () => {
+      const result = await toggleKorrinsPick(eventId, photoId);
+      if (!result.success) {
+        toast(result.error ?? "Failed to update tag.");
+        return;
+      }
+      toast(result.tagged ? "Tagged as Korrin's pick" : "Removed from Korrin's picks");
       router.refresh();
     });
   }
@@ -157,6 +170,38 @@ export function GalleryEditor({ eventId, photos }: GalleryEditorProps) {
                 }}
               >
                 {photo.galleryReady ? "✓" : "·"}
+              </div>
+
+              {/* Phase 13.5 — Korrin's pick toggle. Star fills when tagged. */}
+              <div
+                style={{
+                  position: "absolute",
+                  top: "0.4rem",
+                  right: "2rem",
+                  width: "24px",
+                  height: "24px",
+                  borderRadius: "50%",
+                  background: photo.isKorrinsPick
+                    ? "var(--olive)"
+                    : "rgba(42,42,40,0.5)",
+                  color: photo.isKorrinsPick ? "var(--white)" : "rgba(250,249,246,0.85)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "0.78rem",
+                  cursor: "pointer",
+                }}
+                title={
+                  photo.isKorrinsPick
+                    ? "Korrin's pick — click to remove"
+                    : "Tag as Korrin's pick"
+                }
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleTogglePick(photo.id);
+                }}
+              >
+                ★
               </div>
 
               {/* Selection checkbox */}

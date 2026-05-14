@@ -23,6 +23,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { requireSession } from "@/lib/session";
 import { maybeScheduleReviewRequests } from "@/lib/domain/reviews";
+import { getClientByEmail } from "@/lib/db/clients";
 
 export type SubmitNpsResult =
   | { success: true; scheduled: number }
@@ -101,3 +102,102 @@ export async function submitClientNps(
   revalidatePath(`/admin/projects/${projectId}`);
   return { success: true, scheduled };
 }
+
+// --------------------------------------------------------------------------
+// Phase 2.5 — Gallery favorites + proofing
+// --------------------------------------------------------------------------
+//
+// `toggleFavorite` flips a client's favoriting on a single photo in
+// `events/{eventId}/photos/{photoId}.favoritedBy`. The doc is written via
+// `arrayUnion` / `arrayRemove` so concurrent favorites from multiple devices
+// merge cleanly.
+//
+// Auth model (mirrors `submitClientNps` above):
+//   1. `requireSession()` — must be signed in. Anonymous heart taps short-
+//      circuit in the UI with a "Sign in to save your picks" prompt; the
+//      server still rejects unauthenticated calls defensively.
+//   2. `eventAccess/{uid}_{eventId}` (or ADMIN role) — gates per-event access.
+//   3. The session email resolves to a `clients/{id}` doc. That `id` is what
+//      we store in `favoritedBy`. Without a matching client doc the action
+//      refuses (you can't "favorite as nobody").
+//
+// TODO(multi-list): v1 stores a single boolean per (client, photo) — no
+// list name. Phase 2.5 plans for multiple lists ("Mom's picks", "for the
+// album", "share with vendors"). When that lands, replace `favoritedBy:
+// string[]` with `favorites: Record<listName, string[]>` and migrate
+// existing data into a default `"My picks"` list.
+
+export type ToggleFavoriteResult =
+  | { success: true; favorited: boolean }
+  | { success: false; error: string; needsAuth?: boolean };
+
+export async function toggleFavorite(
+  eventId: string,
+  photoId: string
+): Promise<ToggleFavoriteResult> {
+  if (!eventId || typeof eventId !== "string") {
+    return { success: false, error: "Missing event." };
+  }
+  if (!photoId || typeof photoId !== "string") {
+    return { success: false, error: "Missing photo." };
+  }
+
+  const session = await requireSession();
+
+  // Access gate: explicit eventAccess doc OR ADMIN session.
+  const accessId = `${session.uid}_${eventId}`;
+  const accessDoc = await adminDb.collection("eventAccess").doc(accessId).get();
+  if (!accessDoc.exists && session.role !== "ADMIN") {
+    return { success: false, error: "Not authorised for this event." };
+  }
+
+  // Resolve session.email → clientId. Admins reuse their session uid so the
+  // admin "preview as client" mode behaves predictably (favorites tagged by
+  // the admin show up in their own bucket).
+  let clientId: string | null = null;
+  if (session.role === "ADMIN") {
+    clientId = `admin:${session.uid}`;
+  } else if (session.email) {
+    const client = await getClientByEmail(session.email);
+    clientId = client?.id ?? null;
+  }
+  if (!clientId) {
+    return {
+      success: false,
+      error: "Sign in to save your picks.",
+      needsAuth: true,
+    };
+  }
+
+  const photoRef = adminDb
+    .collection("events")
+    .doc(eventId)
+    .collection("photos")
+    .doc(photoId);
+
+  const photoSnap = await photoRef.get();
+  if (!photoSnap.exists) {
+    return { success: false, error: "Photo not found." };
+  }
+  const existing = (photoSnap.data()?.favoritedBy as string[] | undefined) ?? [];
+  const isFavorited = existing.includes(clientId);
+
+  try {
+    await photoRef.update({
+      favoritedBy: isFavorited
+        ? FieldValue.arrayRemove(clientId)
+        : FieldValue.arrayUnion(clientId),
+    });
+  } catch (err) {
+    console.error("[toggleFavorite] update failed", { eventId, photoId, err });
+    return { success: false, error: "Failed to save your pick." };
+  }
+
+  revalidatePath(`/gallery/${eventId}`);
+  revalidatePath(`/admin/events/${eventId}`);
+  return { success: true, favorited: !isFavorited };
+}
+
+// NOTE: `toggleKorrinsPick` (Phase 13.5) lives in
+// `app/admin/events/[id]/gallery/actions.ts` since the toggle button only
+// renders inside the admin gallery editor.

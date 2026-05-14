@@ -1,70 +1,47 @@
 "use client";
 
-// app/admin/segments/SegmentsClientPage.tsx
-// List view + "new segment" entry point for /admin/segments.
+// app/admin/broadcasts/BroadcastsListClientPage.tsx
+// List view + "new broadcast" entry point for /admin/broadcasts.
 // Server-only modules are never imported from this file.
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "@/components/ui/Toaster";
-import { createNewSegment, removeSegment, resolveSegmentNow } from "./actions";
+import { createNewBroadcast, removeBroadcast } from "./actions";
 
-// ─── Re-declared local types (server boundary) ───────────────────────────────
+export type BroadcastStatusLiteral = "DRAFT" | "SCHEDULED" | "SENDING" | "SENT";
 
-type ProjectStatusLiteral =
-  | "SITE_VISIT"
-  | "INQUIRY"
-  | "QUALIFYING"
-  | "PROPOSAL_SENT"
-  | "NEGOTIATING"
-  | "CONTRACT_SENT"
-  | "DEPOSIT_PENDING"
-  | "BOOKED"
-  | "SHOOT_READY"
-  | "IN_EDITING"
-  | "GALLERY_DELIVERED"
-  | "REFERRAL_SENT"
-  | "COMPLETED"
-  | "LOST"
-  | "ARCHIVED";
-
-export interface LocalSegmentPredicate {
-  projectStatus?: ProjectStatusLiteral[];
-  sessionType?: string[];
-  tagsInclude?: string[];
-  tagsExclude?: string[];
-  leadScoreMin?: number;
-  leadScoreMax?: number;
-  leadSource?: string[];
-  totalSessionsBookedMin?: number;
-  firstTouchSource?: string[];
-  deliveredAfter?: string;
-  deliveredBefore?: string;
-  hasReferred?: boolean;
-}
-
-export interface SerializedSegment {
+export interface SerializedBroadcastRow {
   id: string;
   name: string;
-  description: string | null;
-  predicate: LocalSegmentPredicate;
-  lastResolvedCount: number | null;
-  lastResolvedAt: string | null;
+  subject: string;
+  segmentId: string;
+  status: BroadcastStatusLiteral;
+  scheduledFor: string | null;
+  sentAt: string | null;
+  recipientCount: number | null;
+  sentCount: number | null;
   createdAt: string;
   updatedAt: string;
 }
 
-interface Props {
-  segments: SerializedSegment[];
+export interface SerializedSegmentOption {
+  id: string;
+  name: string;
+  lastResolvedCount: number | null;
 }
 
-export function SegmentsClientPage({ segments }: Props) {
+interface Props {
+  broadcasts: SerializedBroadcastRow[];
+  segments: SerializedSegmentOption[];
+}
+
+export function BroadcastsListClientPage({ broadcasts, segments }: Props) {
   const [modalOpen, setModalOpen] = useState(false);
 
   return (
     <div className="page-fade-in">
-      {/* Header */}
       <div
         style={{
           display: "flex",
@@ -76,8 +53,8 @@ export function SegmentsClientPage({ segments }: Props) {
         }}
       >
         <div>
-          <p style={eyebrow}>Audience Engine</p>
-          <h2 style={pageTitle}>Segments</h2>
+          <p style={eyebrow}>Marketing</p>
+          <h2 style={pageTitle}>Broadcasts</h2>
           <p
             style={{
               fontSize: "0.78rem",
@@ -86,21 +63,27 @@ export function SegmentsClientPage({ segments }: Props) {
               letterSpacing: "0.04em",
             }}
           >
-            {segments.length} saved segment{segments.length === 1 ? "" : "s"}
+            {broadcasts.length} broadcast{broadcasts.length === 1 ? "" : "s"}
           </p>
         </div>
 
         <button
           type="button"
           onClick={() => setModalOpen(true)}
-          style={btnOlive}
+          disabled={segments.length === 0}
+          style={segments.length === 0 ? btnDisabled : btnOlive}
+          title={
+            segments.length === 0
+              ? "Create a segment first"
+              : "Compose a new broadcast"
+          }
         >
-          + New segment
+          + New broadcast
         </button>
       </div>
 
-      {segments.length === 0 ? (
-        <EmptyState />
+      {broadcasts.length === 0 ? (
+        <EmptyState hasSegments={segments.length > 0} />
       ) : (
         <div
           style={{
@@ -108,11 +91,10 @@ export function SegmentsClientPage({ segments }: Props) {
             background: "var(--white)",
           }}
         >
-          {/* Table header */}
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 2fr) 8rem 7rem",
+              gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1.4fr) 7rem 7rem 6rem",
               gap: "1rem",
               padding: "0.9rem 1.25rem",
               borderBottom: "0.5px solid var(--border)",
@@ -123,62 +105,55 @@ export function SegmentsClientPage({ segments }: Props) {
             }}
           >
             <span>Name</span>
-            <span>Predicate</span>
-            <span>Last count</span>
+            <span>Subject</span>
+            <span>Status</span>
+            <span>Sent</span>
             <span style={{ textAlign: "right" }}>&nbsp;</span>
           </div>
 
-          {segments.map((s, i) => (
-            <SegmentRow
-              key={s.id}
-              segment={s}
-              isLast={i === segments.length - 1}
+          {broadcasts.map((b, i) => (
+            <BroadcastRow
+              key={b.id}
+              row={b}
+              segments={segments}
+              isLast={i === broadcasts.length - 1}
             />
           ))}
         </div>
       )}
 
-      {modalOpen && <NewSegmentModal onClose={() => setModalOpen(false)} />}
+      {modalOpen && (
+        <NewBroadcastModal segments={segments} onClose={() => setModalOpen(false)} />
+      )}
     </div>
   );
 }
 
 // ─── Row ─────────────────────────────────────────────────────────────────────
 
-function SegmentRow({
-  segment,
+function BroadcastRow({
+  row,
+  segments,
   isLast,
 }: {
-  segment: SerializedSegment;
+  row: SerializedBroadcastRow;
+  segments: SerializedSegmentOption[];
   isLast: boolean;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
+  const segmentName =
+    segments.find((s) => s.id === row.segmentId)?.name ?? "(missing segment)";
+
   function handleDelete(e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
-    if (!confirm(`Delete segment "${segment.name}"?`)) return;
-
+    if (!confirm(`Delete broadcast "${row.name}"?`)) return;
     startTransition(async () => {
-      const result = await removeSegment(segment.id);
+      const result = await removeBroadcast(row.id);
       if (result.success) {
-        toast("Segment deleted");
-        router.refresh();
-      } else {
-        toast(result.error);
-      }
-    });
-  }
-
-  function handleResolve(e: React.MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    startTransition(async () => {
-      const result = await resolveSegmentNow(segment.id);
-      if (result.success) {
-        const tail = result.data.capped ? " (capped)" : "";
-        toast(`Resolved: ${result.data.count} match(es)${tail}`);
+        toast("Broadcast deleted");
         router.refresh();
       } else {
         toast(result.error);
@@ -190,7 +165,7 @@ function SegmentRow({
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 2fr) 8rem 7rem",
+        gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1.4fr) 7rem 7rem 6rem",
         gap: "1rem",
         padding: "1.1rem 1.25rem",
         borderBottom: isLast ? "none" : "0.5px solid var(--border)",
@@ -199,7 +174,7 @@ function SegmentRow({
     >
       <div style={{ minWidth: 0 }}>
         <Link
-          href={`/admin/segments/${segment.id}`}
+          href={`/admin/broadcasts/${row.id}`}
           style={{
             fontFamily: "'Cormorant Garamond', serif",
             fontSize: "1.2rem",
@@ -210,44 +185,47 @@ function SegmentRow({
             display: "block",
           }}
         >
-          {segment.name}
+          {row.name}
         </Link>
-        {segment.description && (
-          <p
-            style={{
-              fontSize: "0.78rem",
-              color: "var(--charcoal-muted)",
-              marginTop: "0.3rem",
-              lineHeight: 1.4,
-            }}
-          >
-            {segment.description}
-          </p>
-        )}
+        <p
+          style={{
+            fontSize: "0.7rem",
+            color: "var(--charcoal-muted)",
+            marginTop: "0.25rem",
+            letterSpacing: "0.04em",
+          }}
+        >
+          to: {segmentName}
+        </p>
       </div>
 
       <p
         style={{
-          fontSize: "0.78rem",
+          fontSize: "0.82rem",
           color: "var(--charcoal-light)",
           lineHeight: 1.5,
           minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
         }}
       >
-        {summarisePredicate(segment.predicate)}
+        {row.subject}
       </p>
+
+      <StatusBadge status={row.status} />
 
       <div>
         <p
           style={{
-            fontSize: "1.1rem",
+            fontSize: "1.05rem",
             fontFamily: "'Cormorant Garamond', serif",
             color: "var(--charcoal)",
           }}
         >
-          {segment.lastResolvedCount ?? "—"}
+          {row.sentCount ?? "—"}
         </p>
-        {segment.lastResolvedAt && (
+        {row.sentAt && (
           <p
             style={{
               fontSize: "0.62rem",
@@ -256,49 +234,83 @@ function SegmentRow({
               marginTop: "0.2rem",
             }}
           >
-            {formatShortDate(segment.lastResolvedAt)}
+            {formatShortDate(row.sentAt)}
+          </p>
+        )}
+        {!row.sentAt && row.scheduledFor && (
+          <p
+            style={{
+              fontSize: "0.62rem",
+              color: "var(--charcoal-muted)",
+              letterSpacing: "0.06em",
+              marginTop: "0.2rem",
+            }}
+          >
+            for {formatShortDate(row.scheduledFor)}
           </p>
         )}
       </div>
 
       <div
-        style={{
-          display: "flex",
-          gap: "0.4rem",
-          justifyContent: "flex-end",
-        }}
+        style={{ display: "flex", gap: "0.4rem", justifyContent: "flex-end" }}
       >
-        <button
-          type="button"
-          onClick={handleResolve}
-          disabled={isPending}
-          style={btnOutlineSm}
-          title="Re-run the resolver and cache the count"
-        >
-          {isPending ? "…" : "Resolve"}
-        </button>
-        <Link href={`/admin/segments/${segment.id}`} style={btnOutlineSm}>
+        <Link href={`/admin/broadcasts/${row.id}`} style={btnOutlineSm}>
           Open
         </Link>
-        <button
-          type="button"
-          onClick={handleDelete}
-          disabled={isPending}
-          style={{ ...btnGhostSm, color: "#991B1B" }}
-          title="Delete segment"
-        >
-          {isPending ? "…" : "×"}
-        </button>
+        {row.status !== "SENT" && (
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={isPending}
+            style={{ ...btnGhostSm, color: "#991B1B" }}
+            title="Delete broadcast"
+          >
+            {isPending ? "…" : "×"}
+          </button>
+        )}
       </div>
     </div>
   );
 }
 
-// ─── New segment modal ───────────────────────────────────────────────────────
+function StatusBadge({ status }: { status: BroadcastStatusLiteral }) {
+  const palette: Record<BroadcastStatusLiteral, { bg: string; fg: string }> = {
+    DRAFT: { bg: "rgba(42,42,40,0.06)", fg: "var(--charcoal-light)" },
+    SCHEDULED: { bg: "rgba(245,158,11,0.12)", fg: "#92400E" },
+    SENDING: { bg: "rgba(107,120,69,0.12)", fg: "var(--olive)" },
+    SENT: { bg: "rgba(34,197,94,0.12)", fg: "#15803D" },
+  };
+  const c = palette[status];
+  return (
+    <span
+      style={{
+        fontSize: "0.62rem",
+        letterSpacing: "0.14em",
+        textTransform: "uppercase",
+        background: c.bg,
+        color: c.fg,
+        padding: "0.35rem 0.55rem",
+        display: "inline-block",
+        fontFamily: "'Jost', sans-serif",
+      }}
+    >
+      {status}
+    </span>
+  );
+}
 
-function NewSegmentModal({ onClose }: { onClose: () => void }) {
+// ─── New broadcast modal ─────────────────────────────────────────────────────
+
+function NewBroadcastModal({
+  segments,
+  onClose,
+}: {
+  segments: SerializedSegmentOption[];
+  onClose: () => void;
+}) {
   const [isPending, startTransition] = useTransition();
   const [name, setName] = useState("");
+  const [segmentId, setSegmentId] = useState(segments[0]?.id ?? "");
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -307,21 +319,17 @@ function NewSegmentModal({ onClose }: { onClose: () => void }) {
       toast("Name is required");
       return;
     }
+    if (!segmentId) {
+      toast("Pick a segment");
+      return;
+    }
     startTransition(async () => {
-      // Server action redirects on success — we never return here on the
-      // happy path.
       try {
-        await createNewSegment(trimmed);
+        await createNewBroadcast(trimmed, segmentId);
       } catch (err) {
-        // redirect() throws a NEXT_REDIRECT signal; ignore it.
-        if (
-          err instanceof Error &&
-          err.message.includes("NEXT_REDIRECT")
-        ) {
-          return;
-        }
+        if (err instanceof Error && err.message.includes("NEXT_REDIRECT")) return;
         console.error(err);
-        toast("Failed to create segment");
+        toast("Failed to create broadcast");
       }
     });
   }
@@ -347,12 +355,12 @@ function NewSegmentModal({ onClose }: { onClose: () => void }) {
         style={{
           background: "var(--white)",
           width: "100%",
-          maxWidth: "30rem",
+          maxWidth: "32rem",
           padding: "2rem",
           border: "0.5px solid var(--border-strong)",
         }}
       >
-        <p style={eyebrow}>Audience Engine</p>
+        <p style={eyebrow}>Marketing</p>
         <h3
           style={{
             fontFamily: "'Cormorant Garamond', serif",
@@ -362,29 +370,34 @@ function NewSegmentModal({ onClose }: { onClose: () => void }) {
             marginTop: "0.3rem",
           }}
         >
-          New segment
+          New broadcast
         </h3>
 
-        <label
-          style={{
-            display: "block",
-            fontSize: "0.65rem",
-            letterSpacing: "0.16em",
-            textTransform: "uppercase",
-            color: "var(--charcoal-muted)",
-            marginBottom: "0.4rem",
-          }}
-        >
-          Name
-        </label>
+        <label style={miniLabel}>Name</label>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. Past clients — 12+ months"
+          placeholder="e.g. Spring 2026 mini-session announcement"
           style={inputStyle}
           required
           autoFocus
         />
+
+        <label style={{ ...miniLabel, marginTop: "1rem" }}>Segment</label>
+        <select
+          value={segmentId}
+          onChange={(e) => setSegmentId(e.target.value)}
+          style={inputStyle}
+        >
+          {segments.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+              {typeof s.lastResolvedCount === "number"
+                ? ` (~${s.lastResolvedCount})`
+                : ""}
+            </option>
+          ))}
+        </select>
 
         <div
           style={{
@@ -403,7 +416,7 @@ function NewSegmentModal({ onClose }: { onClose: () => void }) {
             Cancel
           </button>
           <button type="submit" disabled={isPending} style={btnOlive}>
-            {isPending ? "Creating…" : "Create segment"}
+            {isPending ? "Creating…" : "Create broadcast"}
           </button>
         </div>
       </form>
@@ -413,7 +426,7 @@ function NewSegmentModal({ onClose }: { onClose: () => void }) {
 
 // ─── Empty state ─────────────────────────────────────────────────────────────
 
-function EmptyState() {
+function EmptyState({ hasSegments }: { hasSegments: boolean }) {
   return (
     <div
       style={{
@@ -435,35 +448,23 @@ function EmptyState() {
           margin: "0 auto",
         }}
       >
-        No segments saved yet. Build one — saved predicates power every
-        broadcast, every drip campaign, every targeted offer.
+        {hasSegments
+          ? "No broadcasts yet. Compose a block-based update and send it to one of your segments."
+          : "Build at least one segment first — broadcasts always target a saved segment."}
       </p>
+      {!hasSegments && (
+        <Link
+          href="/admin/segments"
+          style={{ ...btnOutline, display: "inline-block", marginTop: "1.5rem" }}
+        >
+          Go to segments
+        </Link>
+      )}
     </div>
   );
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function summarisePredicate(p: LocalSegmentPredicate): string {
-  const bits: string[] = [];
-  if (p.projectStatus?.length) bits.push(`status: ${p.projectStatus.join(", ")}`);
-  if (p.sessionType?.length) bits.push(`session: ${p.sessionType.join(", ")}`);
-  if (p.tagsInclude?.length) bits.push(`tags include: ${p.tagsInclude.join(", ")}`);
-  if (p.tagsExclude?.length) bits.push(`tags exclude: ${p.tagsExclude.join(", ")}`);
-  if (typeof p.leadScoreMin === "number") bits.push(`score ≥ ${p.leadScoreMin}`);
-  if (typeof p.leadScoreMax === "number") bits.push(`score ≤ ${p.leadScoreMax}`);
-  if (p.leadSource?.length) bits.push(`source: ${p.leadSource.join(", ")}`);
-  if (typeof p.totalSessionsBookedMin === "number") {
-    bits.push(`sessions ≥ ${p.totalSessionsBookedMin}`);
-  }
-  if (p.firstTouchSource?.length) bits.push(`first touch: ${p.firstTouchSource.join(", ")}`);
-  if (p.deliveredAfter) bits.push(`delivered after ${p.deliveredAfter}`);
-  if (p.deliveredBefore) bits.push(`delivered before ${p.deliveredBefore}`);
-  if (typeof p.hasReferred === "boolean") {
-    bits.push(p.hasReferred ? "has referred" : "no referrals");
-  }
-  return bits.length ? bits.join(" · ") : "Matches everyone";
-}
 
 function formatShortDate(iso: string): string {
   try {
@@ -503,6 +504,15 @@ const inputStyle: React.CSSProperties = {
   outline: "none",
 };
 
+const miniLabel: React.CSSProperties = {
+  display: "block",
+  fontSize: "0.65rem",
+  letterSpacing: "0.16em",
+  textTransform: "uppercase",
+  color: "var(--charcoal-muted)",
+  marginBottom: "0.4rem",
+};
+
 const btnOlive: React.CSSProperties = {
   padding: "0.85rem 2.2rem",
   fontSize: "0.72rem",
@@ -515,6 +525,13 @@ const btnOlive: React.CSSProperties = {
   fontFamily: "'Jost', sans-serif",
 };
 
+const btnDisabled: React.CSSProperties = {
+  ...btnOlive,
+  background: "rgba(42,42,40,0.12)",
+  color: "var(--charcoal-muted)",
+  cursor: "not-allowed",
+};
+
 const btnOutline: React.CSSProperties = {
   padding: "0.85rem 1.6rem",
   fontSize: "0.72rem",
@@ -525,6 +542,7 @@ const btnOutline: React.CSSProperties = {
   border: "0.5px solid var(--border-strong)",
   cursor: "pointer",
   fontFamily: "'Jost', sans-serif",
+  textDecoration: "none",
 };
 
 const btnOutlineSm: React.CSSProperties = {

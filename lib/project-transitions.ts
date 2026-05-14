@@ -327,6 +327,10 @@ async function onProposalSent(
       amountCents: (project.packagePriceUsd * 0.5) * 100, // 50% deposit
       dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // Due in 7 days
       createdAt: FieldValue.serverTimestamp(),
+      // TODO (Phase 3.11 — Sales tax engine): when `users/{uid}.taxRules` is
+      // populated, look up the rate for the project's shipping/jurisdiction
+      // and add `salesTaxCents` + `salesTaxRate` + `salesTaxJurisdiction` here
+      // (fields already exist on InvoiceDoc).
     });
   }
 

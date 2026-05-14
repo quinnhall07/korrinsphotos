@@ -2,6 +2,8 @@ import { adminDb } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { runDueSequences } from "@/lib/sequences/engine";
 import { dispatchPendingReviewRequests } from "@/lib/domain/reviews";
+import { recomputeFinanceCache } from "@/lib/domain/analytics";
+import { dispatchScheduledBroadcasts } from "@/lib/broadcasts/sender";
 import { NextResponse } from "next/server";
 import { createInboxItem } from "@/lib/db/inbox";
 import { addProjectMessage } from "@/lib/db/projects";
@@ -120,12 +122,36 @@ export async function GET(request: Request) {
       console.error("Review request dispatch error:", reviewErr);
     }
 
+    // Phase 3.1 / 4.5: recompute the daily finance analytics snapshot at
+    // `analyticsCache/finance:YYYY-MM-DD`. Idempotent — overwriting the same
+    // day's row is intentional. Errors are swallowed inside
+    // `recomputeFinanceCache` so a Firestore hiccup cannot poison the cron.
+    const financeCacheRefreshed = await recomputeFinanceCache(now);
+
+    // Phase 4.3: drain due scheduled broadcasts. Picks up rows where
+    // `status == "SCHEDULED" && scheduledFor <= now`, then runs the standard
+    // send flow (same code path as "Send now"). Per-row errors are caught
+    // inside `dispatchScheduledBroadcasts` so one stuck broadcast cannot
+    // poison the batch.
+    let scheduledBroadcastsProcessed = 0;
+    let scheduledBroadcastsSent = 0;
+    try {
+      const bResult = await dispatchScheduledBroadcasts(now);
+      scheduledBroadcastsProcessed = bResult.processed;
+      scheduledBroadcastsSent = bResult.sent;
+    } catch (bErr) {
+      console.error("Scheduled broadcasts dispatch error:", bErr);
+    }
+
     return NextResponse.json({
       success: true,
       processed: processedCount,
       sequenceEnrollmentsProcessed,
       reviewRequestsProcessed,
       reviewRequestsSent,
+      financeCacheRefreshed,
+      scheduledBroadcastsProcessed,
+      scheduledBroadcastsSent,
     });
   } catch (err) {
     console.error("Cron Error:", err);

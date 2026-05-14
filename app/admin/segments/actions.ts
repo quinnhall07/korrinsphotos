@@ -105,6 +105,46 @@ export async function saveSegment(
   }
 }
 
+// ─── Resolve now ─────────────────────────────────────────────────────────────
+
+/**
+ * Re-runs the resolver for one segment and caches the count without
+ * touching the predicate itself. Wired to the "Resolve now" button in the
+ * list view (Phase 4.3 task spec).
+ */
+export async function resolveSegmentNow(
+  id: string
+): Promise<ActionResult<{ count: number; capped?: boolean }>> {
+  await requireAdmin();
+
+  try {
+    const { getSegment } = await import("@/lib/db/segments");
+    const segment = await getSegment(id);
+    if (!segment) {
+      return { success: false, error: "Segment not found" };
+    }
+    const resolution = await resolveSegment(segment.predicate);
+    await cacheResolvedCount(id, resolution.count);
+
+    revalidatePath("/admin/segments");
+    revalidatePath(`/admin/segments/${id}`);
+
+    return {
+      success: true,
+      data: {
+        count: resolution.count,
+        ...(resolution.capped ? { capped: true } : {}),
+      },
+    };
+  } catch (err) {
+    console.error("resolveSegmentNow error:", err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to resolve segment.",
+    };
+  }
+}
+
 // ─── Remove ──────────────────────────────────────────────────────────────────
 
 export async function removeSegment(id: string): Promise<ActionResult> {

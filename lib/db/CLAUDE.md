@@ -60,10 +60,14 @@ NEVER reintroduce a `lib/firestore.ts` (or `lib/db/index.ts`) that re-exports ev
 | File | Collection | One-liner |
 |---|---|---|
 | `activity.ts` | `activityFeed` | Append-only feed for admin dashboard; `logActivity` + `listRecentActivity`. |
+| `analytics-cache.ts` | `analyticsCache` | Pre-aggregated analytics snapshots keyed by period (e.g. `finance:YYYY-MM-DD`). `AnalyticsSnapshotDoc` carries `revenue`, `funnel`, `sources`, `byType`, `depositLiability`. Daily refresh by `lib/domain/analytics.ts > recomputeFinanceCache`. |
+| `assets.ts` | `assets` | Depreciable equipment register (Phase 3.2). `DepreciationMethod = MACRS_5\|MACRS_7\|SECTION_179\|BONUS\|NONE`; pure helper `currentYearDepreciationCents(asset, year)` runs half-year-convention MACRS tables. |
+| `broadcasts.ts` | `broadcasts` | Block-based segment-targeted email blasts. `BroadcastDoc` carries `blocks: BroadcastBlock[]`, `segmentId`, `status: DRAFT\|SCHEDULED\|SENDING\|SENT`, `sendIdsByRecipient`. Ships `renderBroadcastHtml(broadcast)` for inline-CSS table-based email output. Send orchestration lives in `lib/broadcasts/sender.ts`. |
 | `clients.ts` | `clients` | Universal Client record (email = unique). Referral fields (`referralCode`, `referralCount`, `referralTier`, `referralRewardsLog`, `referralAttributions`, `referralCredit`, `referredBy`) + first-touch attribution. `generateReferralCode()` lives here. |
 | `contracts.ts` | `contracts` | Per-project signed agreements; `DRAFT|SENT|SIGNED|VOIDED`; token-validated signing flow stores `signingToken`, `tokenExpiresAt`, `signerIp`/`signerUserAgent`, `signedPdfR2Key`. |
 | `email-events.ts` | `emailEvents` | Open / click / sent / bounced / unsub tracking rows written by `lib/email/tracking.ts > enqueueTrackedMail`. |
 | `events.ts` | `events` | Event/shoot record. Canonical `EventStatus = UPCOMING|ACTIVE|COMPLETED|DELIVERED|ARCHIVED`. Photos live in the `events/{id}/photos` subcollection. |
+| `expenses.ts` | `expenses` | Manual-entry expense ledger (Phase 3.2). `ScheduleCLine` enumerates IRS Schedule C lines 8–27 + `OTHER`. `MILEAGE_RATE_2025_CENTS_PER_MILE = 70`. `listExpensesForYear` / `listExpensesForMonth` are the canonical reads (month is 1-indexed). |
 | `inbox.ts` | `inboxItems` | Aggregated triage feed (inquiries / payments / signings / disputes / refunds / unmatched mail). |
 | `invoices.ts` | `invoices` | `DEPOSIT|BALANCE|FULL` invoices with Stripe payment link metadata + refund/dispute ledger fields (`refundCents`, `disputeStatus`, etc.). |
 | `locations.ts` | `locations` | Reusable shoot-location records (schema reserved for Phase 3.5). |

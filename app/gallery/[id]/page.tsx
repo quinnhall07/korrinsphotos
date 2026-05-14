@@ -8,8 +8,8 @@ import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { adminDb } from "@/lib/firebase-admin";
 import { buildCdnUrl } from "@/lib/cloudflare";
-import { GalleryViewer } from "./GalleryViewer";
-import type { MasonryPhoto } from "@/components/MasonryGrid";
+import { getClientByEmail } from "@/lib/db/clients";
+import { GalleryViewer, type GalleryPhoto } from "./GalleryViewer";
 import type { Metadata } from "next";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +23,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return { title, description: `Private photo gallery — ${title}` };
 }
 
-async function getEventPhotos(eventId: string): Promise<MasonryPhoto[]> {
+async function getEventPhotos(eventId: string): Promise<GalleryPhoto[]> {
   const snap = await adminDb
     .collection("events")
     .doc(eventId)
@@ -40,6 +40,8 @@ async function getEventPhotos(eventId: string): Promise<MasonryPhoto[]> {
       thumbnailSrc: buildCdnUrl(data.cloudflareImageId, "thumbnail"),
       label: data.label ?? undefined,
       category: data.category ?? undefined,
+      favoritedBy: (data.favoritedBy as string[] | undefined) ?? [],
+      tags: (data.tags as string[] | undefined) ?? [],
     };
   });
 }
@@ -62,6 +64,17 @@ export default async function GalleryEventPage({ params }: Props) {
 
   const eventData = eventDoc.data()!;
   const photos = await getEventPhotos(id);
+
+  // Phase 2.5 — resolve session.email → clientId so the viewer can mark
+  // hearts as active for the signed-in client. Admins share an "admin:<uid>"
+  // namespace so admin-preview favorites don't pollute a real client's list.
+  let viewerClientId: string | null = null;
+  if (session.role === "ADMIN") {
+    viewerClientId = `admin:${session.uid}`;
+  } else if (session.email) {
+    const client = await getClientByEmail(session.email);
+    viewerClientId = client?.id ?? null;
+  }
 
   // Phase 2.11 NPS surface: only ADMIN previews and the actual project
   // owner should see the rating widget. We pull the existing rating (if
@@ -110,6 +123,7 @@ export default async function GalleryEventPage({ params }: Props) {
       eventStatus={eventStatus}
       existingNps={existingNps}
       canSubmitNps={canSubmitNps}
+      viewerClientId={viewerClientId}
     />
   );
 }
