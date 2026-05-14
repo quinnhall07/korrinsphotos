@@ -1,26 +1,26 @@
 # PROGRESS.md — Korrin's Photos
 
-> Last updated: 2026-05-14 (post-Wave-5)
+> Last updated: 2026-05-14 (post-Wave-6)
 > Source of truth for "what state is the codebase actually in." Update on feature completion, bug discovery/fix, or task abandonment.
 
 ---
 
 ## Overall Status
 
-Single unified Client/Project pipeline is the canonical surface; the legacy `bookingInquiries` Kanban + `/admin/bookings` directory have been fully retired (May 2026). Phase 0 cleanup, Phase 1 CRM, the questionnaire/welcome-packet/NPS/review-request loop (Phase 2 partials), the sequence engine (Phase 4.2), the tiered referral engine (Phase 4.4), the email open/click tracking layer (Phase 1.6), JSON-LD schema markup (Phase 4.12), Stripe refund + dispute ledger (Phase 3.12), PWA install (Phase 1.10), Firestore Security Rules + firebase.json, the public `/investment` page (Phase 2.3), the Phase 3.1 finance dashboard, Phase 3.2 tax/expenses dashboard, Phase 3.5 location scouting, Phase 3.8 vendor CRM, Phase 4.3 segments + broadcast composer, Phase 2.5 gallery favorites, Phase 13.5 Korrin's-picks overlay, and Phase 13.8 tax-saving calendar are all live. Remaining work tracks the Phase 2.x portal redesign, the rest of Phase 3 ops stack (shoot brief, weather wiring, gear checklist, editing tracker, capacity heatmap), Phase 4.x growth surfaces, Phase 5 AI assists beyond draft reply / thread summary, and the long tail of Phase 6 / Phase 13 "original ideas".
+Single unified Client/Project pipeline is the canonical surface; the legacy `bookingInquiries` Kanban + `/admin/bookings` directory have been fully retired (May 2026). Phase 0 cleanup, Phase 1 CRM, the questionnaire/welcome-packet/NPS/review-request loop (Phase 2 partials), the sequence engine (Phase 4.2), the tiered referral engine (Phase 4.4), the email open/click tracking layer (Phase 1.6), JSON-LD schema markup (Phase 4.12), Stripe refund + dispute ledger (Phase 3.12), PWA install (Phase 1.10), Firestore Security Rules + firebase.json, the public `/investment` page (Phase 2.3), the Phase 3.1 finance dashboard, Phase 3.2 tax/expenses dashboard, Phase 3.4 shoot-brief auto-generator, Phase 3.5 location scouting, Phase 3.6 weather + golden-hour persistence, Phase 3.7 gear checklist, Phase 3.8 vendor CRM, Phase 3.13 editing-workflow tracker, Phase 3.14 capacity heatmap, Phase 4.3 segments + broadcast composer, Phase 2.5 gallery favorites, Phase 13.5 Korrin's-picks overlay, and Phase 13.8 tax-saving calendar are all live. Remaining work tracks the Phase 2.x portal redesign, the tail of Phase 3 (Google Calendar sync, COI, compliance, sales tax), Phase 4.x growth surfaces, Phase 5 AI assists beyond draft reply / thread summary, and the long tail of Phase 6 / Phase 13 "original ideas".
 
 ---
 
 ## Architecture Snapshot
 
-- **Single canonical pipeline.** `clients`, `projects` + `messages` subcollection, `contracts`, `invoices`, `scheduledTasks`, `sequences` + `sequenceEnrollments`, `questionnaires` + `questionnaireTemplates`, `reviewRequests`, `inboxItems`, `emailEvents`, `paymentIntents` (Stripe mirror), `stripeWebhookEvents` (idempotency), `locations`, `vendors`, `segments`, `broadcasts`, `expenses`, `assets`, `analyticsCache`, plus legacy `events`, `eventAccess`, `mail`, `activityFeed`, `users`. The legacy `bookingInquiries` collection still exists in Firestore but is no longer written to.
+- **Single canonical pipeline.** `clients`, `projects` + `messages` + `gearLog` subcollections, `contracts`, `invoices`, `scheduledTasks` (SEND_REFERRAL | AUTO_FOLLOW_UP | SNEAK_PEEK | SHOOT_BRIEF), `sequences` + `sequenceEnrollments`, `questionnaires` + `questionnaireTemplates`, `gearTemplates`, `reviewRequests`, `inboxItems`, `emailEvents`, `paymentIntents` (Stripe mirror), `stripeWebhookEvents` (idempotency), `locations`, `vendors`, `segments`, `broadcasts`, `expenses`, `assets`, `analyticsCache`, plus legacy `events`, `eventAccess`, `mail`, `activityFeed`, `users`. The legacy `bookingInquiries` collection still exists in Firestore but is no longer written to.
 - **No more dual-write.** `app/booking/actions.ts → submitBooking` writes `clients` + `projects` + first inbound `messages` entry + activity log + tracked auto-responder. The legacy `bookingInquiries` insert was removed in the May 2026 retirement commit.
 - **`ProjectStatus` is the master state machine** (`SITE_VISIT → INQUIRY → QUALIFYING → PROPOSAL_SENT → NEGOTIATING → CONTRACT_SENT → DEPOSIT_PENDING → BOOKED → SHOOT_READY → IN_EDITING → GALLERY_DELIVERED → REFERRAL_SENT → COMPLETED` with `LOST` / `ARCHIVED`). Every transition runs through `updateProjectStatus → handleProjectTransition` which: resolves the admin's `automationConfig`, fires per-status hooks (`onProjectBooked` / `onProposalSent` / `onContractSent` / `onDepositPending` / `onGalleryDelivered`), enrolls into every active STATUS_CHANGE sequence, and queues recipe-gated `scheduledTasks` (SEND_REFERRAL, AUTO_FOLLOW_UP, SNEAK_PEEK).
 - **Stripe + Cron + tracked mail.** `/api/webhooks/stripe` handles `checkout.session.completed`, `payment_intent.succeeded`, `charge.refunded`, and `charge.dispute.created|updated|closed` with event-level idempotency via `stripeWebhookEvents/{id}`. `/api/cron/run-tasks` drains `scheduledTasks` (SEND_REFERRAL, AUTO_FOLLOW_UP by recipeKey, SNEAK_PEEK), dispatches due review requests, and runs sequence enrollments. Every outbound mail flows through `lib/email/tracking.ts > enqueueTrackedMail` which mints a `sendId`, rewrites external links to `/t/c/{sendId}`, injects a `/t/o/{sendId}` pixel, and writes `emailEvents` rows.
 - **`__origin` UTM cookie writes first-touch attribution.** `middleware.ts` sets a 30-day JS-readable JSON cookie; `submitBooking` stamps `firstTouch{Source,Medium,Campaign,LandingUrl,At}` on the new `clients` doc and resolves `referralCode` to `referredBy` for the tiered referral engine. See ADR-016.
 - **Production security baseline.** `firestore.rules` is in place (default-deny, admin-claim-gated except for owner-scoped reads on `users`/`eventAccess`/`events`); `firebase.json` references it. Client SDK uses Auth only — Firestore reads all go through the server-side Admin SDK.
 - **PWA + JSON-LD.** `public/manifest.webmanifest` + `public/sw.js` (production-only registration via `ServiceWorkerRegister`); admin mobile install prompt with 7-day dismiss cookie. Public pages ship `Photographer` (root), `Service` (portfolio + each investment package), and `BreadcrumbList` JSON-LD.
-- **`lib/db/*` split complete.** Per-collection helpers in `lib/db/{activity,analytics-cache,assets,broadcasts,clients,contracts,email-events,events,expenses,inbox,invoices,locations,photos,projects,questionnaires,reviews,saved-views,segments,sequences,sequence-enrollments,users,vendors}.ts`. Cross-collection orchestrations in `lib/domain/` (`events.ts`, `referrals.ts`, `reviews.ts`, `ledger.ts`, `welcome-packet.ts`, `analytics.ts`). Broadcast send orchestration in `lib/broadcasts/sender.ts`; segment predicate resolver in `lib/segments/resolver.ts`. `lib/firestore.ts` long gone. See ADR-013.
+- **`lib/db/*` split complete.** Per-collection helpers in `lib/db/{activity,analytics-cache,assets,broadcasts,clients,contracts,email-events,events,expenses,gear-log,gear-templates,inbox,invoices,locations,photos,projects,questionnaires,reviews,saved-views,segments,sequences,sequence-enrollments,users,vendors}.ts`. Cross-collection orchestrations in `lib/domain/` (`events.ts`, `referrals.ts`, `reviews.ts`, `ledger.ts`, `welcome-packet.ts`, `analytics.ts`, `shoot-brief.ts`, `weather-snapshots.ts`, `capacity.ts`). Broadcast send orchestration in `lib/broadcasts/sender.ts`; segment predicate resolver in `lib/segments/resolver.ts`. Isomorphic editing helpers at `lib/editing-sla.ts` + `lib/editing-status.ts`. `lib/firestore.ts` long gone. See ADR-013.
 
 ---
 
@@ -130,6 +130,15 @@ Single unified Client/Project pipeline is the canonical surface; the legacy `boo
 - [x] Korrin's-picks overlay — admin marks photos via `app/admin/events/[id]/gallery/actions.ts`; gallery renders a "Korrin's pick" badge on flagged photos.
 - [x] `/api/download/[eventId]/favorites` streams a zip of only the client's favorites (200-cap, 413 overflow), parallel to the full-gallery zip route.
 
+### Admin — Shoot ops loop (Phase 3.4, 3.6, 3.7)
+- [x] **Shoot brief auto-generator** (Phase 3.4). `lib/domain/shoot-brief.ts > generateShootBriefHtml | generateAndStoreShootBrief | dispatchShootBriefEmail`. Daily cron sweep `scheduleDueShootBriefs` queues a `SHOOT_BRIEF` `scheduledTasks` row for any `BOOKED`/`SHOOT_READY` project whose `shootDate` is ≤ 24h out and `shootBriefGeneratedAt` is unset (idempotent on `(type, projectId)`). Cron handler renders editorial HTML → R2 (`shoot-briefs/{projectId}/{ts}.html`) → tracked email to Korrin with an 8h presigned GET URL. Brief composes client / project / location / weather / golden+blue hour / questionnaire / vendors / gear with graceful "not yet" fallbacks for every section. OverviewTab "Shoot brief" block (View / Regenerate / Generate-now / scheduled-auto states).
+- [x] **Weather + golden-hour persistence** (Phase 3.6). `WeatherSnapshot` widened to carry `feelsLike`, `low`, `high`, `precipChance`, `windMph`, `humidityPct`, `isOutdoorFriendly`, `forecastForHorizonHours` (72|24), and `sunTimes` (9 ISO strings). `lib/domain/weather-snapshots.ts > refreshWeatherSnapshotsDue` runs each cron tick; writes a snapshot when `shootDate - now ∈ (24h, 72h]` (and not already a 72h pass) or `≤ 24h` (and not already a 24h pass). Skips silently on missing lat/lng or missing `TOMORROW_IO_API_KEY`. `weatherSnapshotIndoor: boolean` admin override on `ProjectDoc`; `WeatherCard` in OverviewTab with three states (indoor / pending / snapshot) and an `IndoorToggle` client child.
+- [x] **Gear checklist per shoot type** (Phase 3.7). New `gearTemplates/{id}` collection (`GearTemplateDoc` with `items: GearItem[]`, per-`sessionType` defaults) and `projects/{id}/gearLog` subcollection (`GearLogEntryDoc` with denormalized `name`/`category`/`required` so renames don't break history). `/admin/settings/gear-templates` CRUD with reorderable items, category dropdown, required toggle, set-default. Project workspace `GearTab` (between Files and Notes): empty state → "Initialize from {default kit}" CTA → category-grouped check-off list with progress chip + required-outstanding badge + ad-hoc add. Idempotent `scripts/seed-gear-templates.ts` seeds Wedding / Portrait / Family / Editorial / Engagement kits.
+
+### Admin — Editing tracker + Capacity heatmap (Phase 3.13, 3.14)
+- [x] **Editing-workflow tracker** (Phase 3.13). `EditingSubStage` union (`INGESTION | CULLED | EDITED | EXPORTED | DELIVERED`) + `editingSubStageHistory[]` on `ProjectDoc`. Per-sessionType SLA in `lib/editing-sla.ts` (Wedding 56d, Editorial 28d, Commercial 21d, Engagement 14d, Portrait 10d, Family 10d, default 14d). Pure `computeEditingStatus` in `lib/editing-status.ts` returns `{ daysIn, slaDays, pct, status: ON_TRACK | AT_RISK | OVERDUE, pillLabel }`. Pipeline table renders an "Editing — Day 18 of 28" pill with coloured dot only when `status == IN_EDITING`. 5-step stepper in OverviewTab; flipping to `DELIVERED` delegates to `updateProjectStatus(projectId, "GALLERY_DELIVERED")` so `handleProjectTransition` fires exactly once.
+- [x] **Capacity heatmap** (Phase 3.14). `/admin/calendar` — `lib/domain/capacity.ts > buildCapacityHeatmap` returns 64 sequential Monday-anchored `WeekBucket`s (12 back + 52 forward) joined to project metadata. 13-column grid; per-cell colour scale (empty / <50% / 50-100% / 100-150% / >150% of `WEEKLY_CAP=3`); click-to-open side panel listing the week's projects with travel placeholder.
+
 ### Payments & Webhooks
 - [x] `lib/stripe.ts` — SDK singleton + `createPaymentLinkForInvoice` (falls back to a mock client when `STRIPE_SECRET_KEY` is missing for local dev).
 - [x] `/api/webhooks/stripe` — verifies signature; handles `checkout.session.completed`, `payment_intent.succeeded`, `charge.refunded`, `charge.dispute.created|updated|closed`. Event-level idempotency via `stripeWebhookEvents`; doc-level via `refundCents` / dispute timestamps.
@@ -186,14 +195,9 @@ Single unified Client/Project pipeline is the canonical surface; the legacy `boo
 
 ### Phase 3 — Business Operations
 - [ ] **Phase 3.3 — Google Calendar two-way sync.** (external Google Cloud project required)
-- [ ] **Phase 3.4 — Shoot brief auto-generator** (24h pre-shoot HTML packet emailed to Korrin).
-- [ ] **Phase 3.6 — Weather + golden-hour wiring** — `lib/weather.ts` + `lib/golden-hour.ts` exist; need cron sweep that persists `weatherSnapshot` on each project at T-72h and T-24h.
-- [ ] **Phase 3.7 — Gear checklist per shoot type** (templates + per-project `gearLog` + workspace tab).
 - [ ] **Phase 3.9 — COI request workflow.**
 - [ ] **Phase 3.10 — Compliance dashboard.**
 - [ ] **Phase 3.11 — Sales tax engine.**
-- [ ] **Phase 3.13 — Editing-workflow tracker** (status pills, aging alerts per category SLA).
-- [ ] **Phase 3.14 — Capacity planning `/admin/calendar`** heatmap.
 
 ### Phase 4 — Growth Engine
 - [ ] **Phase 4.1 — Lead magnets.**
@@ -267,7 +271,7 @@ Single unified Client/Project pipeline is the canonical surface; the legacy `boo
 | Firestore Security Rules | **Deployed** | `firestore.rules` + `firebase.json` in repo. Deploy via `firebase deploy --only firestore:rules`. |
 | Cloudflare R2 bucket | Configure | Create bucket; set CORS for `PUT` from the app domain. |
 | Cloudflare Images | Configure | Create variants: `thumbnail` (400px), `gallery` (1200px), `download` (2048px), `public` (800px). |
-| Firestore indexes | As needed | `scheduledTasks(type, projectId, recipeKey, status)` for idempotent AUTO_FOLLOW_UP guard. Follow Firestore error links in logs. |
+| Firestore indexes | As needed | `scheduledTasks(type, projectId, recipeKey, status)` for idempotent AUTO_FOLLOW_UP guard. `scheduledTasks(type, projectId, status)` for SHOOT_BRIEF idempotent enqueue. Follow Firestore error links in logs. |
 | `REVIEW_LINK_GOOGLE` / `KNOT` / `FACEBOOK` | Required for review request | Cron falls back to platform home pages if missing. |
 | `TOMORROW_IO_API_KEY` | Optional (Phase 3.6) | `lib/weather.ts` returns null without it. |
 | Custom domain + HTTPS | Configure | Vercel custom domain, Firebase Auth authorized domains. |
@@ -275,6 +279,18 @@ Single unified Client/Project pipeline is the canonical surface; the legacy `boo
 ---
 
 ## Recently Resolved
+
+### May 2026 — Wave 6 (commit `52cbd35`)
+
+Phase 3 ops loop tightened by four parallel agents.
+
+- **Phase 3.4 shoot brief auto-generator** — editorial HTML packet to R2, tracked email to Korrin, `SHOOT_BRIEF` scheduled-task type, daily T-24h sweep with idempotent `(type, projectId)` insert. OverviewTab block. Composes client / project / location / weather / golden+blue hour / questionnaire / vendors / gear with per-section graceful degradation.
+- **Phase 3.6 weather + golden-hour persistence** — widened `WeatherSnapshot` with full Tomorrow.io payload + 9-field `SunTimesSnapshot`. `refreshWeatherSnapshotsDue` cron sweep writes at T-72h and T-24h horizons (skips silently on missing lat/lng or API key). `weatherSnapshotIndoor` admin override + `WeatherCard` + `IndoorToggle` in OverviewTab.
+- **Phase 3.7 gear checklist** — `gearTemplates` collection + `projects/{id}/gearLog` subcollection. `/admin/settings/gear-templates` CRUD; project workspace GearTab. 5-template seed script (Wedding / Portrait / Family / Editorial / Engagement), idempotent on default-per-sessionType.
+- **Phase 3.13 editing-workflow tracker** — `EditingSubStage` union + per-sessionType SLA + pure `computeEditingStatus` helper. Pipeline table pill, OverviewTab 5-step stepper. Flipping to DELIVERED routes back through `updateProjectStatus("GALLERY_DELIVERED")` so transition hooks fire once.
+- **Phase 3.14 capacity heatmap** — `/admin/calendar` 13-column 64-week grid with per-cell colour scale (against `WEEKLY_CAP = 3`) and click-to-expand side panel.
+
+Cross-agent cleanup: extracted SLA + `EditingSubStage` constants to isomorphic `lib/editing-sla.ts` so client components stay free of `firebase-admin`. Cron route response now reports `weatherSnapshotsRefreshed` and `shootBriefsScheduled` counts. Composite index required: `scheduledTasks(type, projectId, status)`.
 
 ### May 2026 — Wave 5 (commit `3b6010c`)
 
