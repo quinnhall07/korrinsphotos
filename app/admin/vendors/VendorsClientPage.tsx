@@ -44,11 +44,25 @@ export interface SerializedVendor {
   referralsReceived: number;
   lastWorkedWith: string | null;
   lastWorkedWithMs: number | null;
+  lastReciprocatedAt: string | null;
+  lastReciprocatedAtMs: number | null;
   tags: string[];
   createdAtMs: number;
 }
 
-type SortKey = "lastWorked" | "name" | "rating" | "referralsReceived";
+type SortKey =
+  | "lastWorked"
+  | "name"
+  | "rating"
+  | "referralsReceived"
+  | "reciprocityVolume";
+
+// Imbalance threshold — if (sent - received) >= IMBALANCE_GAP, flag the vendor
+// as taking more than they give. Same threshold is used on the detail page.
+export const IMBALANCE_GAP = 5;
+export function isImbalanced(sent: number, received: number): boolean {
+  return sent - received >= IMBALANCE_GAP;
+}
 
 const CATEGORY_LABELS: Record<VendorCategory, string> = {
   VENUE: "Venue",
@@ -93,6 +107,11 @@ export function VendorsClientPage({ vendors }: Props) {
       if (sort === "rating") return (b.rating ?? 0) - (a.rating ?? 0);
       if (sort === "referralsReceived")
         return b.referralsReceived - a.referralsReceived;
+      if (sort === "reciprocityVolume")
+        return (
+          b.referralsSent + b.referralsReceived -
+          (a.referralsSent + a.referralsReceived)
+        );
       // lastWorked desc, falling back to createdAt
       const aMs = a.lastWorkedWithMs ?? a.createdAtMs;
       const bMs = b.lastWorkedWithMs ?? b.createdAtMs;
@@ -189,6 +208,7 @@ export function VendorsClientPage({ vendors }: Props) {
           <option value="name">Sort: Name</option>
           <option value="rating">Sort: Rating</option>
           <option value="referralsReceived">Sort: Referrals received</option>
+          <option value="reciprocityVolume">Sort: Reciprocity volume</option>
         </select>
       </div>
 
@@ -353,30 +373,77 @@ function VendorCard({ vendor }: { vendor: SerializedVendor }) {
           </p>
         )}
 
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            paddingTop: "0.65rem",
-            borderTop: "0.5px solid var(--border)",
-            fontSize: "0.72rem",
-            color: "var(--charcoal-muted)",
-            marginTop: "auto",
-          }}
-        >
-          <span>
-            {vendor.lastWorkedWith
-              ? `Last worked ${vendor.lastWorkedWith}`
-              : "Not yet worked with"}
-          </span>
-          <span style={{ display: "flex", gap: "0.5rem" }}>
-            <span title="Referrals sent">↗ {vendor.referralsSent}</span>
-            <span title="Referrals received">↘ {vendor.referralsReceived}</span>
-          </span>
-        </div>
+        <ReciprocityCell vendor={vendor} />
       </div>
     </Link>
+  );
+}
+
+// ─── Reciprocity cell (also serves as the list "Reciprocity column") ───────────
+
+function ReciprocityCell({ vendor }: { vendor: SerializedVendor }) {
+  const sent = vendor.referralsSent;
+  const received = vendor.referralsReceived;
+  const imbalanced = isImbalanced(sent, received);
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "0.35rem",
+        paddingTop: "0.65rem",
+        borderTop: "0.5px solid var(--border)",
+        fontSize: "0.72rem",
+        color: "var(--charcoal-muted)",
+        marginTop: "auto",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: "0.5rem",
+        }}
+      >
+        <span style={{ color: "var(--charcoal-light)" }}>
+          <strong style={{ color: "var(--charcoal)", fontWeight: 500 }}>
+            {sent}
+          </strong>{" "}
+          sent /{" "}
+          <strong style={{ color: "var(--charcoal)", fontWeight: 500 }}>
+            {received}
+          </strong>{" "}
+          received
+        </span>
+        {imbalanced && <ImbalancePill />}
+      </div>
+      {vendor.lastReciprocatedAt && (
+        <span style={{ fontSize: "0.68rem" }}>
+          Last activity: {vendor.lastReciprocatedAt}
+        </span>
+      )}
+    </div>
+  );
+}
+
+export function ImbalancePill() {
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        padding: "0.2rem 0.5rem",
+        fontSize: "0.65rem",
+        letterSpacing: "0.15em",
+        textTransform: "uppercase",
+        color: "#8B2E2E",
+        background: "#FCEFEF",
+        border: "0.5px solid #8B2E2E",
+        whiteSpace: "nowrap",
+      }}
+    >
+      Imbalanced
+    </span>
   );
 }
 

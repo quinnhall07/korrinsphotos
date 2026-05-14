@@ -94,6 +94,19 @@ export function Navbar() {
             </li>
             <li>
               <Link
+                href="/locations"
+                style={{
+                  ...navLinkStyle,
+                  color: isActive("/locations") ? "var(--charcoal)" : "var(--charcoal-light)",
+                  borderBottom: isActive("/locations") ? "0.5px solid var(--olive)" : "none",
+                  paddingBottom: "2px",
+                }}
+              >
+                Locations
+              </Link>
+            </li>
+            <li>
+              <Link
                 href="/journal"
                 style={{
                   ...navLinkStyle,
@@ -116,6 +129,32 @@ export function Navbar() {
                 }}
               >
                 Investment
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/style"
+                style={{
+                  ...navLinkStyle,
+                  color: isActive("/style") ? "var(--charcoal)" : "var(--charcoal-light)",
+                  borderBottom: isActive("/style") ? "0.5px solid var(--olive)" : "none",
+                  paddingBottom: "2px",
+                }}
+              >
+                Style
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/shop"
+                style={{
+                  ...navLinkStyle,
+                  color: isActive("/shop") ? "var(--charcoal)" : "var(--charcoal-light)",
+                  borderBottom: isActive("/shop") ? "0.5px solid var(--olive)" : "none",
+                  paddingBottom: "2px",
+                }}
+              >
+                Shop
               </Link>
             </li>
             <li>

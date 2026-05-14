@@ -6,11 +6,18 @@
 // Step 2: PUT {presignedUrl} → upload directly to R2 (bypasses Vercel limit)
 // Step 3: POST /api/upload/confirm → register photo in Firestore
 // On success the page reloads to show the new photos.
+//
+// Wave 10: a category dropdown + free-text label override apply to every file
+// in the next batch. Both flow through to the photo doc (single-PUT and
+// multipart pipelines). Category list comes from `app/portfolio/categories.ts`
+// — the same source the public portfolio filter consumes, so admin uploads
+// surface in the public filters without any further mapping.
 
 import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "@/components/ui/Toaster";
 import { uploadMultipartFile } from "@/lib/upload";
+import { PORTFOLIO_CATEGORIES } from "@/app/portfolio/categories";
 
 interface UploadZoneProps {
   eventId: string;
@@ -30,11 +37,13 @@ const MULTIPART_THRESHOLD = 15 * 1024 * 1024; // 15MB
 export function UploadZone({ eventId }: UploadZoneProps) {
   const [files, setFiles] = useState<UploadFile[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [batchCategory, setBatchCategory] = useState<string>(""); // "" = uncategorized
+  const [batchLabel, setBatchLabel] = useState<string>("");
   const inputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
   const uploadFile = useCallback(
-    async (file: File, index: number) => {
+    async (file: File, index: number, category: string, labelOverride: string) => {
       // Step 1 — get pre-signed URL
       setFiles((prev) =>
         prev.map((f, i) =>
@@ -42,23 +51,36 @@ export function UploadZone({ eventId }: UploadZoneProps) {
         )
       );
 
+      // Resolve the per-file label: explicit batch override beats filename.
+      const resolvedLabel =
+        labelOverride.trim().length > 0
+          ? labelOverride.trim()
+          : file.name.replace(/\.[^/.]+$/, "");
+      const resolvedCategory = category.trim().length > 0 ? category.trim() : null;
+
       // Branch based on file size
       if (file.size > MULTIPART_THRESHOLD) {
         try {
-          await uploadMultipartFile(file, eventId, (progress) => {
-            setFiles((prev) =>
-              prev.map((f, i) => (i === index ? { ...f, progress } : f))
-            );
-          });
+          await uploadMultipartFile(
+            file,
+            eventId,
+            (progress) => {
+              setFiles((prev) =>
+                prev.map((f, i) => (i === index ? { ...f, progress } : f))
+              );
+            },
+            { label: resolvedLabel, category: resolvedCategory },
+          );
           setFiles((prev) =>
             prev.map((f, i) =>
               i === index ? { ...f, status: "done", progress: 100 } : f
             )
           );
-        } catch (error: any) {
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Upload failed";
           setFiles((prev) =>
             prev.map((f, i) =>
-              i === index ? { ...f, status: "error", error: error.message } : f
+              i === index ? { ...f, status: "error", error: message } : f
             )
           );
         }
@@ -130,7 +152,8 @@ export function UploadZone({ eventId }: UploadZoneProps) {
           body: JSON.stringify({
             key,
             eventId,
-            label: file.name.replace(/\.[^/.]+$/, ""),
+            label: resolvedLabel,
+            category: resolvedCategory ?? undefined,
           }),
         });
         if (!confirmRes.ok) throw new Error("Confirm failed");
@@ -161,11 +184,16 @@ export function UploadZone({ eventId }: UploadZoneProps) {
         const ext = f.name.toLowerCase().match(/\.[^.]+$/)?.[0];
         return ext && ACCEPTED_EXTS.includes(ext);
       });
-      
+
       if (valid.length === 0) {
         toast("Please select supported images (including RAW formats).");
         return;
       }
+
+      // Snapshot the current batch settings — subsequent state changes during
+      // upload should NOT retroactively rewrite the in-flight files.
+      const categorySnapshot = batchCategory;
+      const labelSnapshot = batchLabel;
 
       const newFiles: UploadFile[] = valid.map((f) => ({
         file: f,
@@ -177,14 +205,16 @@ export function UploadZone({ eventId }: UploadZoneProps) {
       const startIdx = files.length;
 
       await Promise.all(
-        newFiles.map((_, i) => uploadFile(valid[i], startIdx + i))
+        newFiles.map((_, i) =>
+          uploadFile(valid[i], startIdx + i, categorySnapshot, labelSnapshot),
+        )
       );
 
       const doneCount = valid.length;
       toast(`${doneCount} photo${doneCount !== 1 ? "s" : ""} uploaded successfully`);
       router.refresh();
     },
-    [files.length, uploadFile, router]
+    [batchCategory, batchLabel, files.length, uploadFile, router]
   );
 
   const handleDrop = (e: React.DragEvent) => {
@@ -208,6 +238,100 @@ export function UploadZone({ eventId }: UploadZoneProps) {
 
   return (
     <div>
+      {/* Wave 10 — Batch metadata controls (apply to every file in the next selection). */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: "1rem",
+          marginBottom: "1rem",
+        }}
+      >
+        <div>
+          <label
+            htmlFor="batch-category"
+            style={{
+              display: "block",
+              fontSize: "0.62rem",
+              letterSpacing: "0.18em",
+              textTransform: "uppercase",
+              color: "var(--charcoal-muted)",
+              marginBottom: "0.4rem",
+              fontFamily: "'Jost', sans-serif",
+            }}
+          >
+            Portfolio category
+          </label>
+          <select
+            id="batch-category"
+            value={batchCategory}
+            onChange={(e) => setBatchCategory(e.target.value)}
+            style={{
+              width: "100%",
+              padding: "0.55rem 0.7rem",
+              fontSize: "0.85rem",
+              fontFamily: "'Jost', sans-serif",
+              color: "var(--charcoal)",
+              background: "var(--white)",
+              border: "0.5px solid var(--border-strong)",
+              borderRadius: 0,
+              cursor: "pointer",
+            }}
+          >
+            <option value="">Uncategorized</option>
+            {PORTFOLIO_CATEGORIES.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label
+            htmlFor="batch-label"
+            style={{
+              display: "block",
+              fontSize: "0.62rem",
+              letterSpacing: "0.18em",
+              textTransform: "uppercase",
+              color: "var(--charcoal-muted)",
+              marginBottom: "0.4rem",
+              fontFamily: "'Jost', sans-serif",
+            }}
+          >
+            Label override (optional)
+          </label>
+          <input
+            id="batch-label"
+            type="text"
+            value={batchLabel}
+            onChange={(e) => setBatchLabel(e.target.value)}
+            placeholder="Leave blank to use filename"
+            style={{
+              width: "100%",
+              padding: "0.55rem 0.7rem",
+              fontSize: "0.85rem",
+              fontFamily: "'Jost', sans-serif",
+              color: "var(--charcoal)",
+              background: "var(--white)",
+              border: "0.5px solid var(--border-strong)",
+              borderRadius: 0,
+            }}
+          />
+        </div>
+      </div>
+      <p
+        style={{
+          fontSize: "0.7rem",
+          color: "var(--charcoal-muted)",
+          marginBottom: "1rem",
+          lineHeight: 1.4,
+        }}
+      >
+        These settings apply to every file in the next selection. Change them
+        between batches to mix categories or labels in the same event.
+      </p>
+
       {/* Drop zone */}
       <div
         onClick={() => inputRef.current?.click()}

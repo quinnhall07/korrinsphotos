@@ -11,6 +11,8 @@ import {
   createVendor as createVendorDoc,
   deleteVendor as deleteVendorDoc,
   getVendor,
+  logVendorReferralReceived,
+  logVendorReferralSent,
   updateVendor as updateVendorDoc,
   vendorsCol,
   type VendorCategory,
@@ -179,45 +181,51 @@ export async function deleteVendor(
 }
 
 // ─── Reciprocity Counters ──────────────────────────────────────────────────────
+// Manual log entry points. Phase 13.19 introduces logReferralSentAction /
+// logReferralReceivedAction as the canonical names; the older
+// incrementReferralSent / incrementReferralReceived names are kept as aliases
+// so existing call sites in the detail page keep working.
 
-export async function incrementReferralSent(
-  id: string
+export async function logReferralSentAction(
+  vendorId: string
 ): Promise<{ success: boolean; error?: string }> {
   await requireAdmin();
 
   try {
-    await vendorsCol().doc(id).update({
-      referralsSent: FieldValue.increment(1),
-      lastWorkedWith: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-
+    await logVendorReferralSent(vendorId);
     revalidatePath("/admin/vendors");
-    revalidatePath(`/admin/vendors/${id}`);
+    revalidatePath(`/admin/vendors/${vendorId}`);
     return { success: true };
   } catch (err) {
-    console.error("incrementReferralSent error:", err);
+    console.error("logReferralSentAction error:", err);
     return { success: false, error: "Failed to update referral count." };
   }
+}
+
+export async function logReferralReceivedAction(
+  vendorId: string
+): Promise<{ success: boolean; error?: string }> {
+  await requireAdmin();
+
+  try {
+    await logVendorReferralReceived(vendorId);
+    revalidatePath("/admin/vendors");
+    revalidatePath(`/admin/vendors/${vendorId}`);
+    return { success: true };
+  } catch (err) {
+    console.error("logReferralReceivedAction error:", err);
+    return { success: false, error: "Failed to update referral count." };
+  }
+}
+
+export async function incrementReferralSent(
+  id: string
+): Promise<{ success: boolean; error?: string }> {
+  return logReferralSentAction(id);
 }
 
 export async function incrementReferralReceived(
   id: string
 ): Promise<{ success: boolean; error?: string }> {
-  await requireAdmin();
-
-  try {
-    await vendorsCol().doc(id).update({
-      referralsReceived: FieldValue.increment(1),
-      lastWorkedWith: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-
-    revalidatePath("/admin/vendors");
-    revalidatePath(`/admin/vendors/${id}`);
-    return { success: true };
-  } catch (err) {
-    console.error("incrementReferralReceived error:", err);
-    return { success: false, error: "Failed to update referral count." };
-  }
+  return logReferralReceivedAction(id);
 }

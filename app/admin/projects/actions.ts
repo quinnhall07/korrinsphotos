@@ -84,12 +84,37 @@ export async function updateProjectStatus(
 
 export async function updateProjectDetails(
   projectId: string,
-  updates: { notes?: string; estimatedValue?: number; packagePriceUsd?: number }
+  updates: {
+    notes?: string;
+    /**
+     * Phase 13.12 — "Off the record" admin-only notes. NEVER rendered on the
+     * client portal or in any export. Pass `null` to clear; an empty string
+     * is treated identically to `null` (and undefined).
+     */
+    offTheRecordNotes?: string | null;
+    estimatedValue?: number;
+    packagePriceUsd?: number;
+  }
 ) {
   await requireAdmin();
   try {
+    // Explicit allow-list so callers can never sneak un-vetted fields through.
+    const safe: Record<string, unknown> = {};
+    if (typeof updates.notes === "string") safe.notes = updates.notes;
+    if ("offTheRecordNotes" in updates) {
+      const v = updates.offTheRecordNotes;
+      safe.offTheRecordNotes =
+        typeof v === "string" && v.length > 0 ? v : "";
+    }
+    if (typeof updates.estimatedValue === "number") {
+      safe.estimatedValue = updates.estimatedValue;
+    }
+    if (typeof updates.packagePriceUsd === "number") {
+      safe.packagePriceUsd = updates.packagePriceUsd;
+    }
+
     await adminDb.collection("projects").doc(projectId).update({
-      ...updates,
+      ...safe,
       updatedAt: FieldValue.serverTimestamp()
     });
     revalidatePath(`/admin/projects/${projectId}`);

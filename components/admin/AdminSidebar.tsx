@@ -43,6 +43,16 @@ const NAV = [
         ),
       },
       {
+        label: "Clients",
+        href: "/admin/clients",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <circle cx="8" cy="5" r="2.6" />
+            <path d="M2.5 14c0-3 2.5-5.2 5.5-5.2s5.5 2.2 5.5 5.2" />
+          </svg>
+        ),
+      },
+      {
         label: "Capacity",
         href: "/admin/calendar",
         icon: (
@@ -97,6 +107,16 @@ const NAV = [
             <path d="M3 2h7l3 3v9H3z" />
             <path d="M10 2v3h3" />
             <path d="M6 9l2 2 2-2M8 7v4" />
+          </svg>
+        ),
+      },
+      {
+        label: "Shop",
+        href: "/admin/shop",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <path d="M2 5h12l-1 9H3z" />
+            <path d="M5 5V3a3 3 0 016 0v2" />
           </svg>
         ),
       },
@@ -250,6 +270,49 @@ const NAV = [
           </svg>
         ),
       },
+      {
+        label: "First 100",
+        href: "/admin/reports/first-100",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <circle cx="8" cy="8" r="6.5" />
+            <path d="M6 5h1v6M9.5 5L11 5.5 9.5 11" />
+          </svg>
+        ),
+      },
+      {
+        label: "Quiet Season",
+        href: "/admin/reports/quiet-season",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <path d="M2 13h12" />
+            <rect x="3" y="9" width="2" height="4" />
+            <rect x="6.5" y="6" width="2" height="7" />
+            <rect x="10" y="10" width="2" height="3" />
+            <path d="M3 4l2 2 3-3 4 2" />
+          </svg>
+        ),
+      },
+      {
+        label: "Health",
+        href: "/admin/health",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <path d="M1 8h3l2-5 4 10 2-5h3" />
+          </svg>
+        ),
+      },
+      {
+        label: "Exports",
+        href: "/admin/exports",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <path d="M3 2h7l3 3v9H3z" />
+            <path d="M10 2v3h3" />
+            <path d="M8 8v4M6 10l2 2 2-2" />
+          </svg>
+        ),
+      },
     ],
   },
   {
@@ -293,6 +356,26 @@ const NAV = [
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <path d="M8 1l6 3v4c0 4-3 6.5-6 7-3-0.5-6-3-6-7V4l6-3z" />
             <path d="M5.5 8l1.7 1.7L11 6" />
+          </svg>
+        ),
+      },
+      {
+        label: "Brand voice",
+        href: "/admin/settings/brand-voice",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <path d="M3 3h4v4H5l-2 3V3z" />
+            <path d="M9 3h4v4h-2l-2 3V3z" />
+          </svg>
+        ),
+      },
+      {
+        label: "Tax",
+        href: "/admin/settings/tax",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <path d="M3 2h10v12H3z" />
+            <path d="M5 5h6M5 8h6M5 11h4" />
           </svg>
         ),
       },

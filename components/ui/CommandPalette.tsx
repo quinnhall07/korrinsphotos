@@ -9,7 +9,14 @@ import { useRouter } from "next/navigation";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type ItemKind = "client" | "project" | "event" | "command" | "nav";
+export type ItemKind =
+  | "client"
+  | "project"
+  | "event"
+  | "vendor"
+  | "journal"
+  | "command"
+  | "nav";
 
 export interface PaletteItem {
   id: string;          // stable id for keying + recents dedupe
@@ -19,10 +26,19 @@ export interface PaletteItem {
   href: string;
 }
 
+interface SearchHitJSON {
+  id: string;
+  label: string;
+  sublabel: string;
+  href: string;
+}
+
 interface SearchResponse {
-  clients: { id: string; label: string; sublabel: string; href: string }[];
-  projects: { id: string; label: string; sublabel: string; href: string }[];
-  events: { id: string; label: string; sublabel: string; href: string }[];
+  clients: SearchHitJSON[];
+  projects: SearchHitJSON[];
+  events: SearchHitJSON[];
+  vendors: SearchHitJSON[];
+  journal: SearchHitJSON[];
 }
 
 // ── Static lists ──────────────────────────────────────────────────────────────
@@ -85,7 +101,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
   const [results, setResults] = useState<SearchResponse>({
-    clients: [], projects: [], events: [],
+    clients: [], projects: [], events: [], vendors: [], journal: [],
   });
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [recents, setRecents] = useState<PaletteItem[]>([]);
@@ -109,11 +125,11 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   // Fetch matching records when the debounced query updates.
   useEffect(() => {
     if (debounced.length < 2) {
-      setResults({ clients: [], projects: [], events: [] });
+      setResults({ clients: [], projects: [], events: [], vendors: [], journal: [] });
       return;
     }
     const ac = new AbortController();
-    fetch(`/api/search?q=${encodeURIComponent(debounced)}`, { signal: ac.signal })
+    fetch(`/api/admin/search?q=${encodeURIComponent(debounced)}`, { signal: ac.signal })
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then((data: SearchResponse) => setResults(data))
       .catch(() => { /* aborted or auth failure — ignore silently */ });
@@ -131,6 +147,8 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       ...results.clients.map((c) => ({ ...c, kind: "client" as const })),
       ...results.projects.map((p) => ({ ...p, kind: "project" as const })),
       ...results.events.map((e) => ({ ...e, kind: "event" as const })),
+      ...results.vendors.map((v) => ({ ...v, kind: "vendor" as const })),
+      ...results.journal.map((j) => ({ ...j, kind: "journal" as const })),
     ];
     if (recordItems.length > 0) g.push({ label: "Records", items: recordItems });
 
@@ -238,7 +256,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search clients, projects, events, commands..."
+            placeholder="Search clients, projects, events, vendors, journal..."
             spellCheck={false}
             autoComplete="off"
             style={{

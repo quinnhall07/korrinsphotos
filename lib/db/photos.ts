@@ -1,4 +1,5 @@
-import type { Timestamp } from "firebase-admin/firestore";
+import { adminDb } from "@/lib/firebase-admin";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 
 /**
  * Photo document shape — written to both the top-level `photos` collection
@@ -48,5 +49,92 @@ export interface PhotoDoc {
   favoritedBy?: string[];
   /** Phase 2.5 / 2.10 / 13.5 — reserved tags: `korrinsPick`, `sneakPeek`, `download`, `featured`. */
   tags?: string[];
+  /**
+   * Phase 13.10 — Per-photo client-gallery analytics. All three counters are
+   * incremented via `FieldValue.increment(1)` from public tracking endpoints
+   * (`/api/track/photo-view`, `/api/track/photo-download`). Re-mounts and
+   * scroll-back can over-count `viewCount` slightly — that's acceptable; we
+   * use it as a popularity proxy, not an exact metric.
+   */
+  viewCount?: number;
+  downloadCount?: number;
+  lastViewedAt?: Timestamp;
   uploadedAt: Timestamp;
+}
+
+/**
+ * Phase 13.10 — Increment a photo's `viewCount` and stamp `lastViewedAt`.
+ *
+ * Bot guard / rate-limiting is performed by the caller (the public tracking
+ * endpoint). This helper is a thin Firestore atom — it assumes the caller
+ * has already accepted the request. Best-effort: a missing photo doc just
+ * fails the increment silently (we never throw to the public client).
+ */
+export async function incrementPhotoView(
+  eventId: string,
+  photoId: string,
+): Promise<void> {
+  const ref = adminDb
+    .collection("events")
+    .doc(eventId)
+    .collection("photos")
+    .doc(photoId);
+  await ref.update({
+    viewCount: FieldValue.increment(1),
+    lastViewedAt: Timestamp.now(),
+  });
+}
+
+/**
+ * Phase 13.10 — Increment a photo's `downloadCount`.
+ *
+ * Same caller-trust contract as `incrementPhotoView`.
+ */
+export async function incrementPhotoDownload(
+  eventId: string,
+  photoId: string,
+): Promise<void> {
+  const ref = adminDb
+    .collection("events")
+    .doc(eventId)
+    .collection("photos")
+    .doc(photoId);
+  await ref.update({
+    downloadCount: FieldValue.increment(1),
+  });
+}
+
+/**
+ * Wave 10 — Generic in-place metadata update for a single photo.
+ *
+ * Used by the admin event detail UI to edit `label` / `category` /
+ * `galleryReady` / `tags` after upload without touching CDN-derived fields
+ * (`cloudflareUrl`, `cloudflareImageId`, `r2Key`, `storageKey`, view counters,
+ * etc). Uses `update()` (not `set()`) so all other fields are preserved.
+ *
+ * Pass `null` to clear an optional field (`label: null`, `category: null`).
+ */
+type UpdatablePhotoFields = Pick<PhotoDoc, "label" | "category" | "galleryReady" | "tags">;
+type PhotoUpdatePartial = {
+  [K in keyof UpdatablePhotoFields]?: UpdatablePhotoFields[K] | null;
+};
+
+export async function updatePhoto(
+  eventId: string,
+  photoId: string,
+  partial: PhotoUpdatePartial,
+): Promise<void> {
+  const ref = adminDb
+    .collection("events")
+    .doc(eventId)
+    .collection("photos")
+    .doc(photoId);
+
+  const payload: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(partial)) {
+    payload[key] = value === null ? FieldValue.delete() : value;
+  }
+  if (Object.keys(payload).length === 0) return;
+
+  await ref.update(payload);
 }

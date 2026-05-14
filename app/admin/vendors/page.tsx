@@ -29,6 +29,8 @@ async function getVendors(): Promise<SerializedVendor[]> {
     referralsReceived: v.referralsReceived ?? 0,
     lastWorkedWith: formatDisplayDate(v.lastWorkedWith),
     lastWorkedWithMs: v.lastWorkedWith?.toMillis?.() ?? null,
+    lastReciprocatedAt: formatDisplayDate(v.lastReciprocatedAt),
+    lastReciprocatedAtMs: v.lastReciprocatedAt?.toMillis?.() ?? null,
     tags: Array.isArray(v.tags) ? v.tags : [],
     createdAtMs: v.createdAt?.toMillis?.() ?? 0,
   }));

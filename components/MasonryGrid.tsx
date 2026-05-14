@@ -33,6 +33,11 @@ interface MasonryGridProps<T extends MasonryPhoto = MasonryPhoto> {
    * variants. When omitted the menu is hidden.
    */
   buildDownloadUrl?: (photo: T, tier: ResolutionTier) => string | null;
+  /**
+   * Phase 13.10 — fire-and-forget callback invoked after the viewer commits
+   * to a per-photo download from the lightbox. Forwarded to the Lightbox.
+   */
+  onDownload?: (photo: T, tier: ResolutionTier) => void;
 }
 
 const HEIGHTS = [280, 340, 260, 420, 300, 380, 250, 350, 290, 410, 270, 360];
@@ -43,6 +48,7 @@ export function MasonryGrid<T extends MasonryPhoto = MasonryPhoto>({
   eventName,
   renderOverlay,
   buildDownloadUrl,
+  onDownload,
 }: MasonryGridProps<T>) {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
@@ -61,6 +67,7 @@ export function MasonryGrid<T extends MasonryPhoto = MasonryPhoto>({
             <div
               key={photo.id}
               className="masonry-item"
+              data-photo-id={photo.id}
               onClick={() => setLightboxIndex(i)}
               style={{ breakInside: "avoid", marginBottom: "1rem", position: "relative" }}
             >
@@ -99,6 +106,11 @@ export function MasonryGrid<T extends MasonryPhoto = MasonryPhoto>({
           buildDownloadUrl={
             buildDownloadUrl
               ? (p, tier) => buildDownloadUrl(p as T, tier)
+              : undefined
+          }
+          onDownload={
+            onDownload
+              ? (p, tier) => onDownload(p as T, tier)
               : undefined
           }
         />

@@ -1,17 +1,20 @@
 "use client";
 
 // app/booking/BookingFormSteps.tsx
-// Multi-step booking inquiry form.
+// Multi-step booking inquiry wizard (4 steps).
 //
 // Flow:
-//   Step 1 — Session type (tile picker) + tentative month picker.
-//   Step 2 — Location bucket + mood quiz + optional message.
-//   Step 3 — Contact details + referral source + soft commitment checkbox.
+//   Step 1 — Session type (tile picker) + tentative month + soft commitment.
+//   Step 2 — Location bucket + city/venue + mood quiz.
+//   Step 3 — Optional message + contact details + referral source.
+//   Step 4 — Review every answer (with inline "Edit" jumps) + submit.
 //
 // On submit, all fields are forwarded to the existing `submitBooking`
-// Server Action via FormData. Persistence (clients + projects + first
-// inbound message + inbox item + auto-responder) is handled server-side —
-// this component does not touch the DB directly.
+// Server Action via FormData. The FormData shape is identical to the
+// previous 3-step form — the only thing that changed here is the client UX.
+// Persistence (clients + projects + first inbound message + inbox item +
+// auto-responder) is handled server-side; this component does not touch
+// the DB directly.
 //
 // Persistence: progress is mirrored to localStorage under
 // `korrin-booking-draft` on every change. Cleared on successful submit.
@@ -52,9 +55,12 @@ type ReferralSource =
   | "Referral"
   | "Other";
 
+type StepNum = 1 | 2 | 3 | 4;
+
 interface Draft {
   sessionType: SessionType | "";
   preferredMonth: string;          // "" | "not-sure" | "YYYY-MM"
+  readyToCommit: boolean;          // soft commitment checkbox (Step 1)
   locationLabel: LocationLabel | "";
   locationDetail: string;
   moodTag: MoodTag | "";
@@ -72,6 +78,7 @@ const DRAFT_KEY = "korrin-booking-draft";
 const EMPTY_DRAFT: Draft = {
   sessionType: "",
   preferredMonth: "not-sure",
+  readyToCommit: false,
   locationLabel: "",
   locationDetail: "",
   moodTag: "",
@@ -82,6 +89,13 @@ const EMPTY_DRAFT: Draft = {
   phone: "",
   referralSource: "Website",
   readProcessPage: false,
+};
+
+const STEP_TITLES: Record<StepNum, string> = {
+  1: "What kind of session?",
+  2: "Where and what vibe?",
+  3: "Your details",
+  4: "Review and send",
 };
 
 // ─── Static data ───────────────────────────────────────────────────────────
@@ -199,6 +213,15 @@ const stepHeadingStyle: React.CSSProperties = {
   marginBottom: "1.75rem",
 };
 
+const validationHintStyle: React.CSSProperties = {
+  fontSize: "0.75rem",
+  letterSpacing: "0.04em",
+  color: "var(--charcoal-muted)",
+  marginTop: "1.25rem",
+  fontStyle: "italic",
+  fontFamily: "'Cormorant Garamond', serif",
+};
+
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 function loadDraft(): Draft {
@@ -230,6 +253,11 @@ function buildMonthOptions(): { value: string; label: string }[] {
   return out;
 }
 
+function moodLabel(value: MoodTag | ""): string {
+  if (!value) return "";
+  return MOOD_TILES.find((m) => m.value === value)?.title ?? value;
+}
+
 // ─── Component ─────────────────────────────────────────────────────────────
 
 export function BookingFormSteps({
@@ -243,7 +271,7 @@ export function BookingFormSteps({
    */
   initialSessionType?: SessionType | null;
 } = {}) {
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<StepNum>(1);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [hydrated, setHydrated] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -288,18 +316,40 @@ export function BookingFormSteps({
 
   // ─── Per-step validation ─────────────────────────────────────────────────
   const step1Valid = draft.sessionType !== "";
+  const step2Valid = draft.locationLabel !== "" && draft.moodTag !== "";
   const step3Valid =
     draft.firstName.trim().length > 0 &&
     draft.lastName.trim().length > 0 &&
     isValidEmail(draft.email);
+  const step4Valid = step1Valid && step2Valid && step3Valid;
+
+  function step1Hint(): string | null {
+    if (step1Valid) return null;
+    return "Pick a session type to continue.";
+  }
+  function step2Hint(): string | null {
+    if (step2Valid) return null;
+    if (!draft.locationLabel && !draft.moodTag) {
+      return "Choose a location and the mood you're drawn to.";
+    }
+    if (!draft.locationLabel) return "Choose where the session will happen.";
+    return "Pick the mood you're drawn to.";
+  }
+  function step3Hint(): string | null {
+    if (step3Valid) return null;
+    if (!draft.firstName.trim() || !draft.lastName.trim()) {
+      return "Add your name so Korrin knows who to reply to.";
+    }
+    return "Add a valid email address so we can follow up.";
+  }
 
   // ─── Submit ──────────────────────────────────────────────────────────────
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
 
-    if (!step3Valid) {
-      setError("Please fill in your name and a valid email address.");
+    if (!step4Valid) {
+      setError("Please complete every step before sending.");
       return;
     }
 
@@ -318,13 +368,15 @@ export function BookingFormSteps({
     } else {
       summaryLines.push("Tentative month: Not sure yet");
     }
+    if (draft.readyToCommit) {
+      summaryLines.push("Soft commitment: ready to book the right fit");
+    }
     if (draft.locationLabel) summaryLines.push(`Location: ${draft.locationLabel}`);
     if (draft.locationDetail.trim()) {
       summaryLines.push(`City / venue: ${draft.locationDetail.trim()}`);
     }
     if (draft.moodTag) {
-      const mood = MOOD_TILES.find((m) => m.value === draft.moodTag);
-      summaryLines.push(`Mood: ${mood?.title ?? draft.moodTag}`);
+      summaryLines.push(`Mood: ${moodLabel(draft.moodTag)}`);
     }
     const userMessage = draft.message.trim();
     const messageBody =
@@ -465,7 +517,32 @@ export function BookingFormSteps({
     );
   }
 
-  // ─── Step renderers ──────────────────────────────────────────────────────
+  // Helper used by the review step's inline edit buttons.
+  const goToStep = (target: StepNum) => {
+    setError(null);
+    setStep(target);
+  };
+
+  // Compute Next-button enablement for the *current* step.
+  const canAdvance =
+    step === 1
+      ? step1Valid
+      : step === 2
+        ? step2Valid
+        : step === 3
+          ? step3Valid
+          : step4Valid;
+
+  const currentHint =
+    step === 1
+      ? step1Hint()
+      : step === 2
+        ? step2Hint()
+        : step === 3
+          ? step3Hint()
+          : null;
+
+  // ─── Render ──────────────────────────────────────────────────────────────
   return (
     <div ref={topRef}>
       <ProgressBar step={step} />
@@ -480,6 +557,19 @@ export function BookingFormSteps({
         )}
         {step === 2 && <Step2 draft={draft} update={update} />}
         {step === 3 && <Step3 draft={draft} update={update} />}
+        {step === 4 && (
+          <Step4
+            draft={draft}
+            monthOptions={monthOptions}
+            goToStep={goToStep}
+          />
+        )}
+
+        {currentHint && !error && (
+          <p style={validationHintStyle} role="status" aria-live="polite">
+            {currentHint}
+          </p>
+        )}
 
         {error && (
           <p
@@ -497,9 +587,13 @@ export function BookingFormSteps({
         <StepNav
           step={step}
           isPending={isPending}
-          canAdvance={step === 1 ? step1Valid : step === 3 ? step3Valid : true}
-          onBack={() => setStep((s) => (s > 1 ? ((s - 1) as 1 | 2 | 3) : s))}
-          onNext={() => setStep((s) => (s < 3 ? ((s + 1) as 1 | 2 | 3) : s))}
+          canAdvance={canAdvance}
+          onBack={() =>
+            setStep((s) => (s > 1 ? ((s - 1) as StepNum) : s))
+          }
+          onNext={() =>
+            setStep((s) => (s < 4 ? ((s + 1) as StepNum) : s))
+          }
         />
       </form>
     </div>
@@ -508,8 +602,7 @@ export function BookingFormSteps({
 
 // ─── Progress Bar ──────────────────────────────────────────────────────────
 
-function ProgressBar({ step }: { step: 1 | 2 | 3 }) {
-  const headings = ["What kind of session?", "Where and what vibe?", "Your details"];
+function ProgressBar({ step }: { step: StepNum }) {
   return (
     <div style={{ marginBottom: "2.25rem" }}>
       <div
@@ -518,6 +611,7 @@ function ProgressBar({ step }: { step: 1 | 2 | 3 }) {
           justifyContent: "space-between",
           alignItems: "baseline",
           marginBottom: "0.65rem",
+          gap: "1rem",
         }}
       >
         <p
@@ -525,10 +619,10 @@ function ProgressBar({ step }: { step: 1 | 2 | 3 }) {
             fontSize: "0.65rem",
             letterSpacing: "0.2em",
             textTransform: "uppercase",
-            color: "var(--charcoal-muted)",
+            color: "var(--olive)",
           }}
         >
-          Step {step} of 3
+          Step {step} of 4 — {STEP_TITLES[step]}
         </p>
         <p
           style={{
@@ -539,27 +633,45 @@ function ProgressBar({ step }: { step: 1 | 2 | 3 }) {
             fontFamily: "'Cormorant Garamond', serif",
           }}
         >
-          {headings[step - 1]}
+          {Math.round(((step - 1) / 3) * 100)}%
         </p>
       </div>
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "1fr 1fr 1fr",
+          gridTemplateColumns: "1fr 1fr 1fr 1fr",
           gap: "0.5rem",
         }}
       >
-        {[1, 2, 3].map((n) => (
-          <div
-            key={n}
-            style={{
-              height: "2px",
-              background:
-                n <= step ? "var(--olive)" : "rgba(42,42,40,0.18)",
-              transition: "background var(--transition)",
-            }}
-          />
-        ))}
+        {([1, 2, 3, 4] as StepNum[]).map((n) => {
+          const completed = n < step;
+          const active = n === step;
+          let background: string;
+          let border: string;
+          if (completed) {
+            background = "var(--olive)";
+            border = "0.5px solid var(--olive)";
+          } else if (active) {
+            background = "var(--olive)";
+            border = "0.5px solid var(--olive)";
+          } else {
+            background = "transparent";
+            border = "0.5px solid var(--border-strong)";
+          }
+          return (
+            <div
+              key={n}
+              aria-hidden="true"
+              style={{
+                height: active ? "3px" : "2px",
+                background,
+                border,
+                transition:
+                  "background var(--transition), border-color var(--transition), height var(--transition)",
+              }}
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -634,7 +746,7 @@ function Step1({
         })}
       </div>
 
-      <div>
+      <div style={{ marginBottom: "1.75rem" }}>
         <label style={labelStyle} htmlFor="preferredMonth">
           When are you thinking?
         </label>
@@ -664,6 +776,48 @@ function Step1({
           through your vision.
         </p>
       </div>
+
+      <label
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: "0.75rem",
+          fontSize: "0.85rem",
+          color: "var(--charcoal-light)",
+          lineHeight: 1.6,
+          cursor: "pointer",
+          padding: "0.85rem 0",
+          borderTop: "0.5px solid var(--border)",
+          borderBottom: "0.5px solid var(--border)",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={draft.readyToCommit}
+          onChange={(e) => update("readyToCommit", e.target.checked)}
+          style={{
+            marginTop: "0.2rem",
+            accentColor: "var(--olive)",
+            width: "14px",
+            height: "14px",
+            flexShrink: 0,
+          }}
+        />
+        <span>
+          I&apos;m ready to book if it&apos;s the right fit.
+          <span
+            style={{
+              display: "block",
+              fontSize: "0.78rem",
+              color: "var(--charcoal-muted)",
+              marginTop: "0.2rem",
+              fontStyle: "italic",
+            }}
+          >
+            Optional — just helps Korrin prioritize her reply queue.
+          </span>
+        </span>
+      </label>
     </div>
   );
 }
@@ -677,7 +831,6 @@ function Step2({
   draft: Draft;
   update: <K extends keyof Draft>(k: K, v: Draft[K]) => void;
 }) {
-  const charsLeft = 1000 - draft.message.length;
   return (
     <div>
       <p style={stepEyebrowStyle}>Step Two</p>
@@ -726,7 +879,7 @@ function Step2({
       <p style={{ ...labelStyle, marginBottom: "0.75rem" }}>
         What mood are you drawn to?
       </p>
-      <div className="booking-tile-grid-mood" style={{ marginBottom: "2rem" }}>
+      <div className="booking-tile-grid-mood">
         {MOOD_TILES.map((mood) => {
           const selected = draft.moodTag === mood.value;
           return (
@@ -764,8 +917,28 @@ function Step2({
           );
         })}
       </div>
+    </div>
+  );
+}
 
-      <div>
+// ─── Step 3 ────────────────────────────────────────────────────────────────
+
+function Step3({
+  draft,
+  update,
+}: {
+  draft: Draft;
+  update: <K extends keyof Draft>(k: K, v: Draft[K]) => void;
+}) {
+  const charsLeft = 1000 - draft.message.length;
+  return (
+    <div>
+      <p style={stepEyebrowStyle}>Step Three</p>
+      <h2 style={stepHeadingStyle}>
+        Your <em style={{ fontStyle: "italic" }}>details</em>
+      </h2>
+
+      <div style={{ marginBottom: "2rem" }}>
         <label style={labelStyle} htmlFor="message">
           Anything specific I should know? (optional)
         </label>
@@ -795,25 +968,6 @@ function Step2({
           {charsLeft} characters left
         </p>
       </div>
-    </div>
-  );
-}
-
-// ─── Step 3 ────────────────────────────────────────────────────────────────
-
-function Step3({
-  draft,
-  update,
-}: {
-  draft: Draft;
-  update: <K extends keyof Draft>(k: K, v: Draft[K]) => void;
-}) {
-  return (
-    <div>
-      <p style={stepEyebrowStyle}>Step Three</p>
-      <h2 style={stepHeadingStyle}>
-        Your <em style={{ fontStyle: "italic" }}>details</em>
-      </h2>
 
       <div
         style={{
@@ -941,6 +1095,212 @@ function Step3({
   );
 }
 
+// ─── Step 4 — Review ───────────────────────────────────────────────────────
+
+function Step4({
+  draft,
+  monthOptions,
+  goToStep,
+}: {
+  draft: Draft;
+  monthOptions: { value: string; label: string }[];
+  goToStep: (s: StepNum) => void;
+}) {
+  const monthValue =
+    draft.preferredMonth && draft.preferredMonth !== "not-sure"
+      ? monthOptions.find((m) => m.value === draft.preferredMonth)?.label ??
+        draft.preferredMonth
+      : "Not sure yet";
+
+  const sessionTitle =
+    SESSION_TILES.find((s) => s.value === draft.sessionType)?.title ||
+    draft.sessionType ||
+    "—";
+
+  const fullName = `${draft.firstName.trim()} ${draft.lastName.trim()}`.trim();
+
+  return (
+    <div>
+      <p style={stepEyebrowStyle}>Step Four</p>
+      <h2 style={stepHeadingStyle}>
+        Look this <em style={{ fontStyle: "italic" }}>over</em>
+      </h2>
+
+      <p
+        style={{
+          fontSize: "0.88rem",
+          color: "var(--charcoal-muted)",
+          lineHeight: 1.7,
+          marginTop: "-1rem",
+          marginBottom: "1.75rem",
+          fontStyle: "italic",
+          fontFamily: "'Cormorant Garamond', serif",
+        }}
+      >
+        Quick scan before it lands in Korrin&apos;s inbox. Tap any line to
+        edit.
+      </p>
+
+      <ReviewSection
+        title="Session"
+        onEdit={() => goToStep(1)}
+        rows={[
+          { label: "Type", value: sessionTitle || "—" },
+          { label: "Tentative month", value: monthValue },
+          {
+            label: "Soft commitment",
+            value: draft.readyToCommit
+              ? "Ready to book the right fit"
+              : "Just exploring",
+          },
+        ]}
+      />
+
+      <ReviewSection
+        title="Location & mood"
+        onEdit={() => goToStep(2)}
+        rows={[
+          { label: "Location", value: draft.locationLabel || "—" },
+          {
+            label: "City or venue",
+            value: draft.locationDetail.trim() || "—",
+          },
+          { label: "Mood", value: moodLabel(draft.moodTag) || "—" },
+        ]}
+      />
+
+      <ReviewSection
+        title="Your details"
+        onEdit={() => goToStep(3)}
+        rows={[
+          { label: "Name", value: fullName || "—" },
+          { label: "Email", value: draft.email.trim() || "—" },
+          { label: "Phone", value: draft.phone.trim() || "—" },
+          { label: "Heard about me via", value: draft.referralSource },
+          {
+            label: "Note to Korrin",
+            value: draft.message.trim() || "(no additional notes)",
+            multiline: true,
+          },
+        ]}
+      />
+
+      <p
+        style={{
+          fontSize: "0.78rem",
+          color: "var(--charcoal-muted)",
+          lineHeight: 1.7,
+          marginTop: "1.5rem",
+          fontStyle: "italic",
+        }}
+      >
+        After you send, you&apos;ll get an instant confirmation email and
+        Korrin will reply personally within 48 hours.
+      </p>
+    </div>
+  );
+}
+
+function ReviewSection({
+  title,
+  onEdit,
+  rows,
+}: {
+  title: string;
+  onEdit: () => void;
+  rows: { label: string; value: string; multiline?: boolean }[];
+}) {
+  return (
+    <section
+      style={{
+        border: "0.5px solid var(--border-strong)",
+        borderLeft: "2px solid var(--olive)",
+        background: "transparent",
+        padding: "1.25rem 1.4rem",
+        marginBottom: "1.25rem",
+      }}
+    >
+      <header
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "baseline",
+          marginBottom: "1rem",
+          gap: "1rem",
+        }}
+      >
+        <p
+          style={{
+            fontSize: "0.62rem",
+            letterSpacing: "0.2em",
+            textTransform: "uppercase",
+            color: "var(--olive)",
+          }}
+        >
+          {title}
+        </p>
+        <button
+          type="button"
+          onClick={onEdit}
+          style={{
+            background: "transparent",
+            border: "none",
+            color: "var(--charcoal-light)",
+            fontFamily: "'Jost', sans-serif",
+            fontSize: "0.7rem",
+            letterSpacing: "0.18em",
+            textTransform: "uppercase",
+            cursor: "pointer",
+            padding: 0,
+            textDecoration: "underline",
+            textUnderlineOffset: "4px",
+          }}
+        >
+          Edit
+        </button>
+      </header>
+      <dl style={{ margin: 0 }}>
+        {rows.map((row, i) => (
+          <div
+            key={row.label}
+            style={{
+              display: "grid",
+              gridTemplateColumns: row.multiline ? "1fr" : "140px 1fr",
+              gap: row.multiline ? "0.4rem" : "1rem",
+              alignItems: "baseline",
+              padding: "0.7rem 0",
+              borderTop: i === 0 ? "none" : "0.5px solid var(--border)",
+            }}
+          >
+            <dt
+              style={{
+                fontSize: "0.7rem",
+                letterSpacing: "0.12em",
+                textTransform: "uppercase",
+                color: "var(--charcoal-muted)",
+              }}
+            >
+              {row.label}
+            </dt>
+            <dd
+              style={{
+                margin: 0,
+                fontSize: "0.92rem",
+                color: "var(--charcoal)",
+                lineHeight: 1.65,
+                whiteSpace: row.multiline ? "pre-wrap" : "normal",
+                fontFamily: "'Jost', sans-serif",
+              }}
+            >
+              {row.value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
+
 // ─── Step Navigation ───────────────────────────────────────────────────────
 
 function StepNav({
@@ -950,14 +1310,14 @@ function StepNav({
   onBack,
   onNext,
 }: {
-  step: 1 | 2 | 3;
+  step: StepNum;
   isPending: boolean;
   canAdvance: boolean;
   onBack: () => void;
   onNext: () => void;
 }) {
   const showBack = step > 1;
-  const isFinal = step === 3;
+  const isFinal = step === 4;
 
   return (
     <div
@@ -983,6 +1343,7 @@ function StepNav({
             border: "0.5px solid var(--border-strong)",
             cursor: isPending ? "not-allowed" : "pointer",
             fontFamily: "'Jost', sans-serif",
+            borderRadius: 0,
             transition: "border-color 0.2s, color 0.2s",
           }}
         >
@@ -1007,6 +1368,7 @@ function StepNav({
             cursor:
               isPending || !canAdvance ? "not-allowed" : "pointer",
             fontFamily: "'Jost', sans-serif",
+            borderRadius: 0,
             transition: "background 0.25s",
           }}
         >
@@ -1027,6 +1389,7 @@ function StepNav({
             border: "none",
             cursor: canAdvance ? "pointer" : "not-allowed",
             fontFamily: "'Jost', sans-serif",
+            borderRadius: 0,
             transition: "background 0.25s",
           }}
         >

@@ -37,6 +37,13 @@ interface LightboxProps {
     photo: MasonryPhoto,
     tier: ResolutionTier,
   ) => string | null;
+  /**
+   * Phase 13.10 — Optional fire-and-forget callback invoked once when the
+   * viewer commits to a per-photo download (after the URL is opened). Used
+   * by `GalleryViewer` to POST `/api/track/photo-download`. Side-effect
+   * only; the return value is ignored.
+   */
+  onDownload?: (photo: MasonryPhoto, tier: ResolutionTier) => void;
 }
 
 export type ResolutionTier = "web" | "print" | "original";
@@ -57,6 +64,7 @@ export function Lightbox({
   eventName,
   onClose,
   buildDownloadUrl,
+  onDownload,
 }: LightboxProps) {
   const [index, setIndex] = useState(initialIndex);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -129,6 +137,8 @@ export function Lightbox({
     setMenuOpen(false);
     // Open in a new tab — the response headers determine save vs view.
     window.open(url, "_blank", "noopener,noreferrer");
+    // Phase 13.10 — fire analytics tracking. Best-effort; never throws.
+    onDownload?.(current, tier);
   }
 
   return (

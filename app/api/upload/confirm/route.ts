@@ -4,7 +4,8 @@
 
 import { NextRequest, NextResponse }          from "next/server";
 import { getSessionUser }                         from "@/lib/session";
-import { uploadToCloudflareImages }           from "@/lib/cloudflare";
+import { uploadToCloudflareImages }           from "@/lib/storage/images";
+import { generatePresignedGetUrl }            from "@/lib/storage/r2";
 import { adminDb }                            from "@/lib/firebase-admin";
 import { FieldValue }                         from "firebase-admin/firestore";
 import { z }                                  from "zod";
@@ -30,7 +31,10 @@ export async function POST(req: NextRequest) {
 
   const { key, eventId, label, category } = parsed.data;
 
-  const r2ObjectUrl = `https://${process.env.CLOUDFLARE_R2_BUCKET_NAME}.${process.env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com/${key}`;
+  // Presigned GET URL works on both public and private R2 buckets and avoids env coupling
+  // to the bucket's public-access configuration. 60s TTL is plenty for Cloudflare Images
+  // to fetch the object server-side via upload-from-URL.
+  const r2ObjectUrl = await generatePresignedGetUrl(key, 60);
 
   const { imageId, deliveryUrl } = await uploadToCloudflareImages(r2ObjectUrl, { eventId, label: label ?? "" });
 

@@ -14,6 +14,10 @@ const CompleteMultipartSchema = z.object({
       ETag: z.string().min(1),
     })
   ).min(1),
+  // Wave 10 — optional metadata mirrored from the single-PUT pipeline so the
+  // resulting photo doc has a label / portfolio category from the start.
+  label: z.string().nullable().optional(),
+  category: z.string().nullable().optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -28,7 +32,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.errors[0]?.message }, { status: 400 });
   }
 
-  const { eventId, key, uploadId, parts } = parsed.data;
+  const { eventId, key, uploadId, parts, label, category } = parsed.data;
 
   try {
     // 1. Complete the multipart upload
@@ -37,18 +41,22 @@ export async function POST(req: NextRequest) {
     // Note: If you want to ingest this into Cloudflare Images right away, you would do it here:
     // const presignedGetUrl = await generatePresignedGetUrl(key);
     // const { imageId, deliveryUrl } = await uploadToCloudflareImages(presignedGetUrl, { eventId });
-    // And then save to Firestore. 
+    // And then save to Firestore.
     // For RAW files, Cloudflare Images might not support ingestion directly depending on the format.
     // If they are strictly RAW (.cr2, .nef), they stay in R2.
     // We will just store the R2 reference in Firestore.
-    
+
     // 2. Register the file in Firestore
     const photoRef = adminDb.collection("events").doc(eventId).collection("photos").doc();
+    const cleanedLabel = label?.trim() ? label.trim() : null;
+    const cleanedCategory = category?.trim() ? category.trim() : null;
     await photoRef.set({
       id: photoRef.id,
       storageKey: key, // Using storageKey since it's in R2
       status: "uploaded",
       isRaw: true,
+      label: cleanedLabel,
+      category: cleanedCategory,
       uploadedAt: new Date().toISOString(),
     });
 

@@ -1,5 +1,5 @@
 import { adminDb } from "@/lib/firebase-admin";
-import { FieldValue, type Timestamp } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 
 export type Role = "ADMIN" | "CLIENT";
 
@@ -149,4 +149,93 @@ export async function getFirstAdminUser(): Promise<UserDoc | null> {
   if (snap.empty) return null;
   const doc = snap.docs[0];
   return { uid: doc.id, ...(doc.data() as Omit<UserDoc, "uid">) };
+}
+
+// ---------------------------------------------------------------------------
+// Paginated listing
+// ---------------------------------------------------------------------------
+
+export interface ListUsersPage {
+  users: UserDoc[];
+  nextCursor: string | null;
+}
+
+interface CursorPayload {
+  lastUid: string;
+  lastCreatedAtMs: number;
+}
+
+function encodeCursor(payload: CursorPayload): string {
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+function decodeCursor(cursor: string): CursorPayload | null {
+  try {
+    const json = Buffer.from(cursor, "base64url").toString("utf8");
+    const parsed = JSON.parse(json) as Partial<CursorPayload>;
+    if (typeof parsed.lastUid !== "string" || typeof parsed.lastCreatedAtMs !== "number") {
+      return null;
+    }
+    return { lastUid: parsed.lastUid, lastCreatedAtMs: parsed.lastCreatedAtMs };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Cursor-based paginated user list, ordered by `createdAt desc` then `uid` for
+ * a stable tiebreaker. Substring search is applied in-memory after fetching
+ * `pageSize × 3` rows because Firestore does not index substrings; pure prefix
+ * matching would miss "smith" when the email is "j.smith@…". The over-fetch
+ * factor keeps the post-filter page reasonably full without paying for a full
+ * collection scan on every keystroke.
+ */
+export async function listUsersPaginated(opts: {
+  pageSize?: number;
+  cursor?: string | null;
+  search?: string;
+}): Promise<ListUsersPage> {
+  const pageSize = opts.pageSize ?? 50;
+  const search = opts.search?.trim().toLowerCase() ?? "";
+  const overFetch = search ? pageSize * 3 : pageSize;
+  // Fetch one extra to detect whether a next page exists.
+  const fetchLimit = overFetch + 1;
+
+  let query = usersCol()
+    .orderBy("createdAt", "desc")
+    .orderBy("__name__", "desc")
+    .limit(fetchLimit);
+
+  if (opts.cursor) {
+    const decoded = decodeCursor(opts.cursor);
+    if (decoded) {
+      query = query.startAfter(Timestamp.fromMillis(decoded.lastCreatedAtMs), decoded.lastUid);
+    }
+  }
+
+  const snap = await query.get();
+  const docs = snap.docs.map((doc) => ({
+    uid: doc.id,
+    ...(doc.data() as Omit<UserDoc, "uid">),
+  }));
+
+  const filtered = search
+    ? docs.filter((u) => {
+      const email = (u.email ?? "").toLowerCase();
+      const name = (u.displayName ?? "").toLowerCase();
+      return email.includes(search) || name.includes(search);
+    })
+    : docs;
+
+  const trimmed = filtered.slice(0, pageSize);
+  const hasMore = search ? filtered.length > pageSize : docs.length > pageSize;
+
+  let nextCursor: string | null = null;
+  if (hasMore && trimmed.length > 0) {
+    const last = trimmed[trimmed.length - 1];
+    const lastCreatedAtMs = last.createdAt?.toMillis?.() ?? 0;
+    nextCursor = encodeCursor({ lastUid: last.uid, lastCreatedAtMs });
+  }
+
+  return { users: trimmed, nextCursor };
 }

@@ -368,7 +368,138 @@ const ENGAGEMENT: Seed = {
   ],
 };
 
-const SEEDS: Seed[] = [WEDDING, PORTRAIT, FAMILY, EDITORIAL, ENGAGEMENT];
+// ─── Commercial Brand Brief (15 questions) ───────────────────────────────────
+
+const COMMERCIAL: Seed = {
+  name: "Commercial Brand Brief",
+  sessionType: "Commercial",
+  questions: [
+    q("brand_name", "text", "Brand name", { required: true }),
+    q(
+      "brand_website",
+      "text",
+      "Brand website + social handles",
+      { helpText: "URL and @handles for the platforms you actively post on." }
+    ),
+    q(
+      "brand_positioning",
+      "longtext",
+      "One-line brand positioning / what you sell",
+      { required: true }
+    ),
+    q(
+      "target_audience",
+      "longtext",
+      "Target audience — demographic + psychographic",
+      {
+        required: true,
+        helpText: "Who are we talking to? Age, income, lifestyle, the spaces they hang out in.",
+      }
+    ),
+    q(
+      "deliverables_wanted",
+      "multiselect",
+      "Deliverables wanted",
+      {
+        required: true,
+        options: [
+          "Hero brand stills",
+          "Lifestyle product shots",
+          "Founder portrait",
+          "Behind-the-scenes",
+          "Cut-down social videos",
+          "Look book",
+          "Web header sets",
+        ],
+      }
+    ),
+    q(
+      "looks_count",
+      "number",
+      "Number of looks / outfits / setups"
+    ),
+    q(
+      "mood_board_url",
+      "text",
+      "Mood board reference URL — Pinterest / Are.na / Drive",
+      { helpText: "Paste a link or describe the vibe" }
+    ),
+    q(
+      "brand_palette",
+      "text",
+      "Brand color palette",
+      { helpText: "Hex codes or rough description" }
+    ),
+    q(
+      "existing_assets",
+      "longtext",
+      "Existing brand assets we should match",
+      { helpText: "Past campaign imagery, logo treatments, type system — drop links or describe." }
+    ),
+    q(
+      "usage_window",
+      "single",
+      "Usage rights window",
+      {
+        required: true,
+        options: ["3 months", "6 months", "1 year", "2 years", "Perpetual"],
+      }
+    ),
+    q(
+      "exclusivity",
+      "single",
+      "Exclusivity",
+      {
+        required: true,
+        options: ["Non-exclusive", "Industry exclusive", "Full exclusivity"],
+      }
+    ),
+    q(
+      "talent",
+      "single",
+      "Talent",
+      {
+        options: [
+          "Provided by us",
+          "Need photographer to source",
+          "Founder appearing",
+        ],
+      }
+    ),
+    q(
+      "final_delivery_date",
+      "date",
+      "Required final delivery date",
+      { required: true }
+    ),
+    q(
+      "deliverable_formats",
+      "multiselect",
+      "Final deliverable formats",
+      {
+        options: [
+          "JPG hi-res",
+          "JPG web-optimized",
+          "PNG with transparent bg",
+          "Square crops for IG",
+          "Vertical crops for IG/TikTok",
+          "Raw files (extra license)",
+        ],
+      }
+    ),
+    q(
+      "budget_range",
+      "single",
+      "Budget range",
+      {
+        required: true,
+        options: ["Under $2k", "$2k–$5k", "$5k–$10k", "$10k–$25k", "$25k+"],
+      }
+    ),
+  ],
+};
+
+const SEEDS: Seed[] = [WEDDING, PORTRAIT, FAMILY, EDITORIAL, ENGAGEMENT, COMMERCIAL];
 
 async function run() {
   console.log(

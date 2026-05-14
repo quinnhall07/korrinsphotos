@@ -5,7 +5,12 @@
 
 import { requireAdmin } from "@/lib/session";
 import { listInboxItems, type InboxItemDoc } from "@/lib/db/inbox";
-import { InboxClientPage, type InboxItemView } from "./InboxClientPage";
+import { getBrandVoiceSamples, type BrandVoiceSample } from "@/lib/db/admin-settings";
+import {
+  InboxClientPage,
+  type InboxItemView,
+  type BrandVoiceAnchor,
+} from "./InboxClientPage";
 
 export const dynamic = "force-dynamic";
 
@@ -24,12 +29,22 @@ function toView(item: InboxItemDoc): InboxItemView {
   };
 }
 
-export default async function AdminInboxPage() {
-  await requireAdmin();
+function toAnchor(s: BrandVoiceSample): BrandVoiceAnchor {
+  return {
+    id: s.id,
+    label: s.label,
+    body: s.body,
+    context: s.context ?? null,
+  };
+}
 
-  const [openItems, allItems] = await Promise.all([
+export default async function AdminInboxPage() {
+  const session = await requireAdmin();
+
+  const [openItems, allItems, voiceSamples] = await Promise.all([
     listInboxItems({ includeRead: false, includeSnoozed: false }),
     listInboxItems({ includeRead: false, includeSnoozed: true }),
+    getBrandVoiceSamples(session.uid),
   ]);
 
   const openIds = new Set(openItems.map((i) => i.id));
@@ -39,6 +54,7 @@ export default async function AdminInboxPage() {
     <InboxClientPage
       openItems={openItems.map(toView)}
       snoozedItems={snoozedItems.map(toView)}
+      voiceAnchors={voiceSamples.map(toAnchor)}
     />
   );
 }

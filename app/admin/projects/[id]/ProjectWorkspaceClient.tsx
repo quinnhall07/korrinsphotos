@@ -477,7 +477,13 @@ export function ProjectWorkspaceClient({
           {tab === "press" && (
             <PressTab projectId={project.id} submissions={pressSubmissions} />
           )}
-          {tab === "notes" && <NotesTab projectId={project.id} initialNotes={project.notes} />}
+          {tab === "notes" && (
+            <NotesTab
+              projectId={project.id}
+              initialNotes={project.notes}
+              initialOffTheRecordNotes={project.offTheRecordNotes}
+            />
+          )}
         </main>
       </div>
 
@@ -4542,62 +4548,236 @@ function PressModal({
 
 // ─── Notes tab ────────────────────────────────────────────────────────────────
 
-function NotesTab({ projectId, initialNotes }: { projectId: string; initialNotes: string }) {
-  const [notes, setNotes] = useState(initialNotes ?? "");
-  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastSavedRef = useRef<string>(initialNotes ?? "");
+type NotesMode = "visible" | "off";
 
+function NotesTab({
+  projectId,
+  initialNotes,
+  initialOffTheRecordNotes,
+}: {
+  projectId: string;
+  initialNotes: string;
+  initialOffTheRecordNotes: string;
+}) {
+  const [mode, setMode] = useState<NotesMode>("visible");
+
+  const [notes, setNotes] = useState(initialNotes ?? "");
+  const [offNotes, setOffNotes] = useState(initialOffTheRecordNotes ?? "");
+
+  // Per-mode save status so flipping the toggle while one is saving doesn't
+  // smear the indicator across both panes.
+  const [visibleStatus, setVisibleStatus] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+  const [offStatus, setOffStatus] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+
+  const visibleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const offTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSavedVisibleRef = useRef<string>(initialNotes ?? "");
+  const lastSavedOffRef = useRef<string>(initialOffTheRecordNotes ?? "");
+
+  // Autosave for the public "Visible" notes (writes `notes`).
   useEffect(() => {
-    if (notes === lastSavedRef.current) return;
-    if (timerRef.current) clearTimeout(timerRef.current);
-    setStatus("saving");
-    timerRef.current = setTimeout(async () => {
+    if (notes === lastSavedVisibleRef.current) return;
+    if (visibleTimerRef.current) clearTimeout(visibleTimerRef.current);
+    setVisibleStatus("saving");
+    visibleTimerRef.current = setTimeout(async () => {
       try {
         const res = await updateProjectDetails(projectId, { notes });
         if (res.success) {
-          lastSavedRef.current = notes;
-          setStatus("saved");
+          lastSavedVisibleRef.current = notes;
+          setVisibleStatus("saved");
         } else {
-          setStatus("error");
+          setVisibleStatus("error");
         }
       } catch {
-        setStatus("error");
+        setVisibleStatus("error");
       }
     }, 800);
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
+      if (visibleTimerRef.current) clearTimeout(visibleTimerRef.current);
     };
   }, [notes, projectId]);
 
+  // Autosave for the admin-only "Off the record" notes
+  // (writes `offTheRecordNotes`). Empty string clears the field.
+  useEffect(() => {
+    if (offNotes === lastSavedOffRef.current) return;
+    if (offTimerRef.current) clearTimeout(offTimerRef.current);
+    setOffStatus("saving");
+    offTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await updateProjectDetails(projectId, {
+          offTheRecordNotes: offNotes,
+        });
+        if (res.success) {
+          lastSavedOffRef.current = offNotes;
+          setOffStatus("saved");
+        } else {
+          setOffStatus("error");
+        }
+      } catch {
+        setOffStatus("error");
+      }
+    }, 800);
+    return () => {
+      if (offTimerRef.current) clearTimeout(offTimerRef.current);
+    };
+  }, [offNotes, projectId]);
+
+  const currentStatus = mode === "visible" ? visibleStatus : offStatus;
+
+  const segBase: React.CSSProperties = {
+    padding: "0.35rem 0.85rem",
+    fontSize: "0.7rem",
+    letterSpacing: "0.18em",
+    textTransform: "uppercase",
+    fontFamily: "'Jost', sans-serif",
+    cursor: "pointer",
+    border: "none",
+    background: "transparent",
+    color: "var(--charcoal-muted)",
+    transition: "var(--transition)",
+  };
+  const segActive: React.CSSProperties = {
+    ...segBase,
+    background: "var(--olive)",
+    color: "var(--white)",
+  };
+
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: "1.25rem" }}>
-        <h2 style={{ ...SECTION_HEAD, margin: 0 }}>Notes</h2>
-        <span style={{ fontSize: "0.7rem", color: "var(--charcoal-muted)", letterSpacing: "0.1em", textTransform: "uppercase" }}>
-          {status === "saving" && "Saving…"}
-          {status === "saved" && "Saved"}
-          {status === "error" && "Save failed"}
-        </span>
-      </div>
-      <textarea
-        value={notes}
-        onChange={(e) => setNotes(e.target.value)}
-        placeholder="Internal notes (markdown supported). Autosaves after 800ms of inactivity."
-        rows={18}
+      <div
         style={{
-          width: "100%",
-          padding: "1rem",
-          border: "0.5px solid var(--border-strong)",
-          fontFamily: "'Jost', sans-serif",
-          fontSize: "0.9rem",
-          lineHeight: 1.6,
-          resize: "vertical",
-          borderRadius: 0,
-          background: "var(--white)",
-          color: "var(--charcoal)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: "1.25rem",
+          gap: "1rem",
+          flexWrap: "wrap",
         }}
-      />
+      >
+        <h2 style={{ ...SECTION_HEAD, margin: 0 }}>Notes</h2>
+
+        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+          <span
+            style={{
+              fontSize: "0.7rem",
+              color: "var(--charcoal-muted)",
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+            }}
+          >
+            {currentStatus === "saving" && "Saving…"}
+            {currentStatus === "saved" && "Saved"}
+            {currentStatus === "error" && "Save failed"}
+          </span>
+
+          {/* 2-segment pill toggle */}
+          <div
+            role="tablist"
+            aria-label="Notes visibility mode"
+            style={{
+              display: "inline-flex",
+              border: "0.5px solid var(--border-strong)",
+              borderRadius: 999,
+              overflow: "hidden",
+            }}
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "visible"}
+              onClick={() => setMode("visible")}
+              style={mode === "visible" ? segActive : segBase}
+            >
+              Visible
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "off"}
+              onClick={() => setMode("off")}
+              style={mode === "off" ? segActive : segBase}
+            >
+              Off the record
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {mode === "visible" ? (
+        <>
+          <p
+            style={{
+              ...EYEBROW,
+              margin: "0 0 0.65rem 0",
+              color: "var(--charcoal-muted)",
+            }}
+          >
+            Visible · Used in exports & AI context
+          </p>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Internal notes (markdown supported). Autosaves after 800ms of inactivity."
+            rows={18}
+            style={{
+              width: "100%",
+              padding: "1rem",
+              border: "0.5px solid var(--border-strong)",
+              fontFamily: "'Jost', sans-serif",
+              fontSize: "0.9rem",
+              lineHeight: 1.6,
+              resize: "vertical",
+              borderRadius: 0,
+              background: "var(--white)",
+              color: "var(--charcoal)",
+            }}
+          />
+        </>
+      ) : (
+        <>
+          <p
+            style={{
+              ...EYEBROW,
+              margin: "0 0 0.65rem 0",
+              color: "#8B2E2E",
+              display: "flex",
+              alignItems: "center",
+              gap: "0.4rem",
+            }}
+          >
+            {/* Lock-icon glyph */}
+            <span aria-hidden style={{ fontSize: "0.85rem", lineHeight: 1 }}>
+              {"\u{1F512}"}
+            </span>
+            <span>Off the record · Never shared · Never exported</span>
+          </p>
+          <textarea
+            value={offNotes}
+            onChange={(e) => setOffNotes(e.target.value)}
+            placeholder="Private notes only you can see. Not sent to the client, the portal, the welcome packet, the shoot brief, the journal, or any AI prompt."
+            rows={18}
+            aria-label="Off the record notes"
+            style={{
+              width: "100%",
+              padding: "1rem",
+              border: "0.5px solid var(--border-strong)",
+              borderLeft: "4px solid #8B2E2E",
+              fontFamily: "'Jost', sans-serif",
+              fontSize: "0.9rem",
+              lineHeight: 1.6,
+              resize: "vertical",
+              borderRadius: 0,
+              background: "#FAF6F3",
+              color: "var(--charcoal)",
+            }}
+          />
+        </>
+      )}
     </div>
   );
 }

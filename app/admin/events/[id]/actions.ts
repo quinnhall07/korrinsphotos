@@ -13,6 +13,7 @@ import {
 } from "@/lib/cloudflare";
 import type { EventStatus } from "@/lib/db/events";
 import { setDownloadPin } from "@/lib/db/events";
+import { updatePhoto } from "@/lib/db/photos";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 
 // ─── Delete Photo ─────────────────────────────────────────────────────────────
@@ -200,6 +201,43 @@ export async function setEventDownloadPin(
   } catch (err) {
     console.error("[setEventDownloadPin] failed", { eventId, err });
     return { success: false, error: "Failed to save PIN." };
+  }
+
+  revalidatePath(`/admin/events/${eventId}`);
+  return { success: true };
+}
+
+// ─── Wave 10 — Update Photo Metadata (label / category) ───────────────────────
+//
+// Drives the inline pencil-edit popover in `PhotoGrid.tsx`. Only writes the
+// fields explicitly present in `partial`. Pass `null` for `label` / `category`
+// to clear the field (FieldValue.delete()).
+//
+// Other photo fields (cloudflareImageId, r2Key, favoritedBy, viewCount, etc.)
+// are preserved by `updatePhoto()` (Firestore `update()`, not `set()`).
+
+export async function updatePhotoMetadata(
+  eventId: string,
+  photoId: string,
+  partial: { label?: string | null; category?: string | null },
+): Promise<{ success: boolean; error?: string }> {
+  await requireAdmin();
+
+  try {
+    const cleaned: { label?: string | null; category?: string | null } = {};
+    if (partial.label !== undefined) {
+      const trimmed = partial.label?.trim();
+      cleaned.label = trimmed && trimmed.length > 0 ? trimmed : null;
+    }
+    if (partial.category !== undefined) {
+      const trimmed = partial.category?.trim();
+      cleaned.category = trimmed && trimmed.length > 0 ? trimmed : null;
+    }
+
+    await updatePhoto(eventId, photoId, cleaned);
+  } catch (err) {
+    console.error("[updatePhotoMetadata] failed", { eventId, photoId, err });
+    return { success: false, error: "Failed to update photo." };
   }
 
   revalidatePath(`/admin/events/${eventId}`);

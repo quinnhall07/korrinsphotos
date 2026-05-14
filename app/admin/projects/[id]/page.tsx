@@ -20,6 +20,9 @@ import {
   listDayOfTimeline,
   type TimelineBlockType,
 } from "@/lib/db/day-of-timeline";
+import { getStyleProfile } from "@/lib/db/style-profiles";
+import { STYLE_QUESTIONS } from "@/app/style/questions";
+import { formatDisplayDate } from "@/lib/date";
 import { ProjectWorkspaceClient } from "./ProjectWorkspaceClient";
 
 export const metadata: Metadata = { title: "Project Detail | Admin" };
@@ -88,6 +91,12 @@ export type SerialProject = {
   leadSource: string;
   tags: string[];
   notes: string;
+  /**
+   * Phase 13.12 — admin-only "off the record" notes. NEVER rendered on
+   * the client portal or in any export. Safe to ship to the admin
+   * workspace because `/admin/**` is server-guarded by `requireAdmin()`.
+   */
+  offTheRecordNotes: string;
   followUpDate: string | null;
   lastContactedAt: string | null;
   lastRespondedAt: string | null;
@@ -410,6 +419,10 @@ export default async function ProjectDetailPage({ params }: Props) {
     leadSource: projectData.leadSource ?? "DIRECT",
     tags: Array.isArray(projectData.tags) ? projectData.tags : [],
     notes: typeof projectData.notes === "string" ? projectData.notes : "",
+    offTheRecordNotes:
+      typeof projectData.offTheRecordNotes === "string"
+        ? projectData.offTheRecordNotes
+        : "",
     followUpDate: ts(projectData.followUpDate),
     lastContactedAt: ts(projectData.lastContactedAt),
     lastRespondedAt: ts(projectData.lastRespondedAt),
@@ -746,25 +759,206 @@ export default async function ProjectDetailPage({ params }: Props) {
     console.error("[ProjectDetailPage] Failed to load admin insurer contact", err);
   }
 
+  // Phase 2.2 — pull the style-quiz profile for this client's email (if any).
+  // Surfaces above the workspace so Korrin sees the chosen aesthetic
+  // alongside the questionnaire. Defensive: any failure (missing email,
+  // permissions, etc.) renders nothing.
+  let styleProfile: Awaited<ReturnType<typeof getStyleProfile>> = null;
+  if (client.email) {
+    try {
+      styleProfile = await getStyleProfile(client.email);
+    } catch (err) {
+      console.error("[ProjectDetailPage] Failed to load style profile", err);
+    }
+  }
+
   return (
-    <ProjectWorkspaceClient
-      project={project}
-      client={client}
-      messages={messages}
-      invoices={invoices}
-      contract={contract}
-      eventId={eventId}
-      questionnaires={questionnaires}
-      reviewRequests={reviewRequests}
-      nextBestAction={getNextBestAction(project.status)}
-      gearLog={gearLog}
-      gearTemplateOptions={gearTemplateOptions}
-      defaultGearTemplateId={defaultGearTemplateId}
-      defaultGearTemplateName={defaultGearTemplateName}
-      pressSubmissions={pressSubmissions}
-      dayOfTimeline={dayOfTimeline}
-      insurerDefaultAdditionalInsuredText={insurerDefaultAdditionalInsuredText}
-      insurerEmailConfigured={insurerEmailConfigured}
-    />
+    <>
+      {styleProfile && (
+        <StyleProfileCard
+          firstName={styleProfile.firstName}
+          submittedAt={styleProfile.submittedAt}
+          tagSummary={styleProfile.tagSummary}
+          answers={styleProfile.answers}
+        />
+      )}
+      <ProjectWorkspaceClient
+        project={project}
+        client={client}
+        messages={messages}
+        invoices={invoices}
+        contract={contract}
+        eventId={eventId}
+        questionnaires={questionnaires}
+        reviewRequests={reviewRequests}
+        nextBestAction={getNextBestAction(project.status)}
+        gearLog={gearLog}
+        gearTemplateOptions={gearTemplateOptions}
+        defaultGearTemplateId={defaultGearTemplateId}
+        defaultGearTemplateName={defaultGearTemplateName}
+        pressSubmissions={pressSubmissions}
+        dayOfTimeline={dayOfTimeline}
+        insurerDefaultAdditionalInsuredText={insurerDefaultAdditionalInsuredText}
+        insurerEmailConfigured={insurerEmailConfigured}
+      />
+    </>
+  );
+}
+
+// ─── Style profile card (server-rendered) ─────────────────────────────────────
+//
+// Renders above the project workspace when the client has completed the
+// /style quiz. Uses a `<details>` element for the per-question disclosure
+// so it works without JS — pure server-rendered fragment.
+
+function StyleProfileCard({
+  firstName,
+  submittedAt,
+  tagSummary,
+  answers,
+}: {
+  firstName?: string;
+  submittedAt: unknown;
+  tagSummary: string[];
+  answers: Record<string, string>;
+}) {
+  const submittedLabel = formatDisplayDate(submittedAt) ?? "—";
+  // Build a Q+A list against the catalog so labels are readable.
+  const qa = STYLE_QUESTIONS.flatMap((q) => {
+    const chosenId = answers[q.id];
+    if (!chosenId) return [];
+    const option = q.options.find((o) => o.id === chosenId);
+    if (!option) return [];
+    return [{ prompt: q.prompt, optionLabel: option.label }];
+  });
+
+  return (
+    <section
+      style={{
+        background: "var(--white)",
+        border: "0.5px solid var(--border-strong)",
+        padding: "1.5rem 1.75rem",
+        marginBottom: "1.5rem",
+        fontFamily: "'Jost', sans-serif",
+      }}
+    >
+      <p
+        style={{
+          fontSize: "0.65rem",
+          letterSpacing: "0.2em",
+          textTransform: "uppercase",
+          color: "var(--olive)",
+          marginBottom: "0.5rem",
+        }}
+      >
+        Style profile{firstName ? ` · ${firstName}` : ""} · submitted{" "}
+        {submittedLabel}
+      </p>
+      <h2
+        style={{
+          fontFamily: "'Cormorant Garamond', serif",
+          fontSize: "1.5rem",
+          fontWeight: 300,
+          color: "var(--charcoal)",
+          marginBottom: "1rem",
+        }}
+      >
+        Their <em>aesthetic</em>
+      </h2>
+
+      {tagSummary.length > 0 ? (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "0.5rem",
+            marginBottom: "1rem",
+          }}
+        >
+          {tagSummary.map((tag) => (
+            <span
+              key={tag}
+              style={{
+                fontSize: "0.65rem",
+                letterSpacing: "0.16em",
+                textTransform: "uppercase",
+                color: "var(--olive)",
+                border: "0.5px solid var(--olive)",
+                padding: "0.3rem 0.7rem",
+                background: "var(--olive-dim)",
+              }}
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p
+          style={{
+            fontSize: "0.85rem",
+            color: "var(--charcoal-muted)",
+            marginBottom: "1rem",
+          }}
+        >
+          No tags derived yet.
+        </p>
+      )}
+
+      {qa.length > 0 && (
+        <details>
+          <summary
+            style={{
+              fontSize: "0.72rem",
+              letterSpacing: "0.16em",
+              textTransform: "uppercase",
+              color: "var(--charcoal-light)",
+              cursor: "pointer",
+              padding: "0.4rem 0",
+            }}
+          >
+            View answers ({qa.length})
+          </summary>
+          <ul
+            style={{
+              listStyle: "none",
+              padding: 0,
+              margin: "0.75rem 0 0",
+              display: "grid",
+              gap: "0.6rem",
+            }}
+          >
+            {qa.map((row, i) => (
+              <li
+                key={i}
+                style={{
+                  paddingBottom: "0.6rem",
+                  borderBottom: "0.5px solid var(--border)",
+                }}
+              >
+                <p
+                  style={{
+                    fontSize: "0.78rem",
+                    color: "var(--charcoal-muted)",
+                    marginBottom: "0.2rem",
+                  }}
+                >
+                  {row.prompt}
+                </p>
+                <p
+                  style={{
+                    fontFamily: "'Cormorant Garamond', serif",
+                    fontSize: "1.1rem",
+                    fontWeight: 300,
+                    color: "var(--charcoal)",
+                  }}
+                >
+                  {row.optionLabel}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </section>
   );
 }

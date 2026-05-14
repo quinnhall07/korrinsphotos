@@ -48,6 +48,7 @@ export interface VendorDoc {
   isPreferred?: boolean;
   referralsSent?: number;
   referralsReceived?: number;
+  lastReciprocatedAt?: Timestamp;
   lastWorkedWith?: Timestamp;
   tags?: string[];
   createdAt: Timestamp;
@@ -103,4 +104,28 @@ export async function updateVendor(
 
 export async function deleteVendor(id: string): Promise<void> {
   await vendorsCol().doc(id).delete();
+}
+
+// ─── Reciprocity helpers ───────────────────────────────────────────────────────
+// Atomic increments on the reciprocity counters. Both helpers also bump
+// lastReciprocatedAt (recency signal for the imbalance flag) and updatedAt.
+// The legacy lastWorkedWith stamp is also bumped so the existing "Last worked"
+// sort on the list page stays meaningful until that field is fully retired.
+
+export async function logVendorReferralSent(vendorId: string): Promise<void> {
+  await vendorsCol().doc(vendorId).update({
+    referralsSent: FieldValue.increment(1),
+    lastReciprocatedAt: FieldValue.serverTimestamp(),
+    lastWorkedWith: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+}
+
+export async function logVendorReferralReceived(vendorId: string): Promise<void> {
+  await vendorsCol().doc(vendorId).update({
+    referralsReceived: FieldValue.increment(1),
+    lastReciprocatedAt: FieldValue.serverTimestamp(),
+    lastWorkedWith: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
 }

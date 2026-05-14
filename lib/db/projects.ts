@@ -137,6 +137,15 @@ export interface ProjectDoc {
   lastContactedAt?: Timestamp | null;
   lastRespondedAt?: Timestamp | null;
   notes: string;
+  /**
+   * Phase 13.12 — "Off the record" notes. ADMIN-ONLY.
+   *
+   * ⚠️ NEVER send this field to the client, the portal, or any export
+   * (welcome packet, shoot brief, journal post, contract, AI prompts, etc.).
+   * Treat undefined and empty string identically. Only the admin
+   * `/admin/projects/[id]` Notes tab is allowed to read this field.
+   */
+  offTheRecordNotes?: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
   statusHistory?: StatusHistoryEntry[];

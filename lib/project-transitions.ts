@@ -16,6 +16,14 @@ import {
 import { enqueueTrackedMail } from "./email/tracking";
 import { computeSalesTaxCents, STATE_TAX_RULES, applyRuleOverride } from "./sales-tax-rules";
 import { getStudioTaxConfig } from "./db/admin-settings";
+import {
+  createQuestionnaire,
+  findTemplateByName,
+  listQuestionnairesForProject,
+  markQuestionnaireSent,
+} from "./db/questionnaires";
+import { getProject } from "./db/projects";
+import { getClient } from "./db/clients";
 
 // Called when project status changes
 export async function handleProjectTransition(projectId: string, fromStatus: ProjectStatus, toStatus: ProjectStatus) {
@@ -369,6 +377,86 @@ async function onProposalSent(
     project.clientId,
     automationConfig,
     "auto_follow_up_proposal"
+  );
+
+  // Phase 13.17 — Commercial Brand Brief auto-attach.
+  // Commercial inquiries need extra structured fields beyond the standard
+  // questionnaire. When a Commercial project moves into PROPOSAL_SENT we
+  // attach (and email) the "Commercial Brand Brief" template so the brand
+  // returns the deeper info (deliverables, usage rights, exclusivity, etc.)
+  // before contracting. No-op for any other sessionType. Best-effort: a
+  // failure here must never block the rest of onProposalSent.
+  try {
+    await maybeAttachCommercialBrief(projectId);
+  } catch (err) {
+    console.error("[onProposalSent] Commercial Brand Brief attach failed", {
+      projectId,
+      err,
+    });
+  }
+}
+
+/**
+ * Phase 13.17 — auto-attach the "Commercial Brand Brief" questionnaire to a
+ * Commercial project on PROPOSAL_SENT. Idempotent: skips if any
+ * questionnaire already exists for the project pointing at this template.
+ *
+ * Mirrors the manual flow used by `sendQuestionnaireForProjectAction`:
+ * create the per-project questionnaire instance, stamp `sentAt`, then send
+ * the email through `enqueueTrackedMail`.
+ */
+async function maybeAttachCommercialBrief(projectId: string): Promise<void> {
+  const project = await getProject(projectId);
+  if (!project) return;
+  if (project.sessionType !== "Commercial") return;
+
+  const template = await findTemplateByName("Commercial Brand Brief");
+  if (!template) {
+    console.warn(
+      "[onProposalSent] Commercial Brand Brief template missing — run `npx tsx scripts/seed-questionnaires.ts`."
+    );
+    return;
+  }
+
+  // Idempotency — bail if any instance for this template + project pair
+  // already exists. Mirrors the existence check used by
+  // sendQuestionnaireForProjectAction.
+  const existing = await listQuestionnairesForProject(projectId);
+  if (existing.some((q) => q.templateId === template.id)) return;
+
+  const client = await getClient(project.clientId);
+  if (!client) return;
+
+  const questionnaire = await createQuestionnaire({
+    projectId,
+    clientId: project.clientId,
+    templateId: template.id,
+  });
+  await markQuestionnaireSent(questionnaire.id);
+
+  const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "");
+  const link = `${appUrl}/questionnaire/${questionnaire.id}`;
+  const firstName = (client.firstName ?? "").trim() || "there";
+
+  await enqueueTrackedMail({
+    to: client.email,
+    subject: "Brand brief for your commercial project",
+    text: `Hi ${firstName}, please complete the Commercial Brand Brief: ${link}`,
+    html:
+      `<p>Hi ${firstName},</p>` +
+      `<p>To finalize your proposal, please take a few minutes to complete our ` +
+      `Commercial Brand Brief — it covers deliverables, usage rights, exclusivity, ` +
+      `and final-format details so we can lock the scope.</p>` +
+      `<p><a href="${link}">${link}</a></p>` +
+      `<p style="color:#8A8A85;font-size:0.85rem;margin-top:2rem;">— Korrin's Photography</p>`,
+    recipientClientId: client.id,
+    projectId,
+    sendKind: "questionnaire-auto",
+  });
+
+  console.log(
+    "[onProposalSent] auto-attached Commercial Brand Brief for project",
+    projectId
   );
 }
 

@@ -89,6 +89,11 @@ export interface ClientDoc {
    * shoot location state, then the admin's `taxConfig.defaultBusinessStateCode`.
    */
   billingStateCode?: string;
+  /**
+   * Wave 11 — admin-only "internal notes" written from the client detail page.
+   * Distinct from any per-project `notes` on `projects/{projectId}`. Free text.
+   */
+  notes?: string;
 }
 
 /**
@@ -175,4 +180,151 @@ export async function bumpRecurringNextPromptAt(
     recurringNextPromptAt: value,
     updatedAt: FieldValue.serverTimestamp(),
   });
+}
+
+/* ─── Wave 11 — admin client directory ───────────────────────────────────── */
+
+export type ClientSort = "recent" | "ltv" | "sessions";
+
+export interface ListClientsPage {
+  clients: ClientDoc[];
+  nextCursor: string | null;
+}
+
+interface ClientCursorPayload {
+  lastId: string;
+  lastSortKey: number;
+  sort: ClientSort;
+}
+
+function encodeClientCursor(payload: ClientCursorPayload): string {
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+function decodeClientCursor(cursor: string): ClientCursorPayload | null {
+  try {
+    const json = Buffer.from(cursor, "base64url").toString("utf8");
+    const parsed = JSON.parse(json) as Partial<ClientCursorPayload>;
+    if (
+      typeof parsed.lastId !== "string" ||
+      typeof parsed.lastSortKey !== "number" ||
+      (parsed.sort !== "recent" && parsed.sort !== "ltv" && parsed.sort !== "sessions")
+    ) {
+      return null;
+    }
+    return { lastId: parsed.lastId, lastSortKey: parsed.lastSortKey, sort: parsed.sort };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Paginated client list ordered by createdAt desc. Cursor encodes
+ * `{ lastId, lastSortKey: createdAtMs, sort }` for forward navigation.
+ *
+ * Sort modes: `"recent"` (default) uses Firestore `orderBy("createdAt", "desc")`.
+ * `"ltv"` and `"sessions"` are sorted in memory by the caller because lifetime
+ * value is derived from invoices and `totalSessionsBooked` is updated lazily —
+ * for those modes we currently fetch a wider slice and let the page sort it.
+ */
+export async function listClientsPaginated(opts?: {
+  pageSize?: number;
+  cursor?: string | null;
+  sort?: ClientSort;
+}): Promise<ListClientsPage> {
+  const pageSize = opts?.pageSize ?? 100;
+  const sort: ClientSort = opts?.sort ?? "recent";
+
+  // Only `recent` is paginated server-side. `ltv` / `sessions` need cross-collection
+  // aggregation (invoices) so the page handler reads more rows and sorts in memory.
+  if (sort !== "recent") {
+    const snap = await clientsCol().orderBy("createdAt", "desc").limit(pageSize * 3).get();
+    const clients = snap.docs.map((d) => ({ id: d.id, ...d.data() } as ClientDoc));
+    return { clients, nextCursor: null };
+  }
+
+  const fetchLimit = pageSize + 1;
+  let query = clientsCol()
+    .orderBy("createdAt", "desc")
+    .orderBy("__name__", "desc")
+    .limit(fetchLimit);
+
+  if (opts?.cursor) {
+    const decoded = decodeClientCursor(opts.cursor);
+    if (decoded && decoded.sort === "recent") {
+      query = query.startAfter(Timestamp.fromMillis(decoded.lastSortKey), decoded.lastId);
+    }
+  }
+
+  const snap = await query.get();
+  const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() } as ClientDoc));
+  const hasMore = docs.length > pageSize;
+  const trimmed = docs.slice(0, pageSize);
+
+  let nextCursor: string | null = null;
+  if (hasMore && trimmed.length > 0) {
+    const last = trimmed[trimmed.length - 1];
+    const lastSortKey = last.createdAt?.toMillis?.() ?? 0;
+    nextCursor = encodeClientCursor({ lastId: last.id, lastSortKey, sort });
+  }
+
+  return { clients: trimmed, nextCursor };
+}
+
+/**
+ * Substring search across email + first/last name. Firestore can't do
+ * substring matches, so we fetch the most recent 500 clients and filter
+ * in memory. Caps results at 50.
+ */
+export async function searchClients(query: string): Promise<ClientDoc[]> {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [];
+  const snap = await clientsCol().orderBy("createdAt", "desc").limit(500).get();
+  const all = snap.docs.map((d) => ({ id: d.id, ...d.data() } as ClientDoc));
+  const matches = all.filter((c) => {
+    const email = (c.email ?? "").toLowerCase();
+    const first = (c.firstName ?? "").toLowerCase();
+    const last = (c.lastName ?? "").toLowerCase();
+    return email.includes(needle) || first.includes(needle) || last.includes(needle);
+  });
+  return matches.slice(0, 50);
+}
+
+/**
+ * Wave 11 — Admin-only edit affordance for the client detail page.
+ *
+ * Allow-list of editable fields. Notes is a free-text "internal notes"
+ * field that the admin uses on the client detail page — distinct from any
+ * per-project `notes` on `projects/{projectId}`.
+ */
+export interface UpdateClientDetailsInput {
+  firstName?: string;
+  lastName?: string;
+  phone?: string | null;
+  notes?: string;
+  recurringCadence?: RecurringCadence;
+}
+
+export async function updateClientDetails(
+  clientId: string,
+  updates: UpdateClientDetailsInput
+): Promise<void> {
+  const safe: Record<string, unknown> = {};
+  if (typeof updates.firstName === "string") safe.firstName = updates.firstName.trim();
+  if (typeof updates.lastName === "string") safe.lastName = updates.lastName.trim();
+  if ("phone" in updates) {
+    const v = updates.phone;
+    safe.phone = typeof v === "string" && v.trim().length > 0 ? v.trim() : null;
+  }
+  if (typeof updates.notes === "string") safe.notes = updates.notes;
+  if (
+    updates.recurringCadence === "ANNUAL" ||
+    updates.recurringCadence === "SEMI_ANNUAL" ||
+    updates.recurringCadence === "NONE"
+  ) {
+    safe.recurringCadence = updates.recurringCadence;
+  }
+  if (Object.keys(safe).length === 0) return;
+  safe.updatedAt = FieldValue.serverTimestamp();
+  await clientsCol().doc(clientId).update(safe);
 }

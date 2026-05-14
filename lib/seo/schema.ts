@@ -62,6 +62,71 @@ export function buildPhotographerSchema(): PhotographerSchema {
 }
 
 // ---------------------------------------------------------------------------
+// LocalBusiness — /locations/[citySlug] (city-scoped)
+// ---------------------------------------------------------------------------
+
+export interface LocalBusinessAddress {
+  /** City the page is targeting, e.g. "Cary". Used for `addressLocality`. */
+  city:    string;
+  /** USPS state abbreviation, e.g. "NC". */
+  state:   string;
+  /** Country, defaults to "US" if omitted. */
+  country?: string;
+}
+
+export interface LocalBusinessSchema {
+  "@context":   "https://schema.org";
+  "@type":      "LocalBusiness";
+  "@id":        string;
+  name:         string;
+  url:          string;
+  description:  string;
+  image:        string;
+  priceRange:   string;
+  areaServed:   string[];
+  address: {
+    "@type":          "PostalAddress";
+    addressLocality:  string;
+    addressRegion:    string;
+    addressCountry:   string;
+  };
+}
+
+/**
+ * Builds a city-scoped LocalBusiness JSON-LD payload for the
+ * `/locations/[citySlug]` pages. The `@id` anchors per-city so multiple city
+ * pages don't collapse into a single entity in Google's eyes.
+ *
+ * `areaServed` is an array — pass any nearby towns / regions the page also
+ * implicitly serves so Google understands the geographic radius.
+ */
+export function buildLocalBusinessSchema(
+  citySlug:   string,
+  address:    LocalBusinessAddress,
+  areaServed: string[],
+  description?: string,
+): LocalBusinessSchema {
+  const pageUrl = absoluteUrl(`/locations/${citySlug}`);
+  return {
+    "@context":  "https://schema.org",
+    "@type":     "LocalBusiness",
+    "@id":       `${pageUrl}#localbusiness`,
+    name:        `${BRAND_NAME} — ${address.city}, ${address.state}`,
+    url:         pageUrl,
+    description: description ?? BRAND_TAGLINE,
+    image:       absoluteUrl("/favicon.ico"),
+    priceRange:  "$$",
+    areaServed:  areaServed.length > 0 ? areaServed : [`${address.city}, ${address.state}`],
+    address: {
+      "@type":          "PostalAddress",
+      addressLocality:  address.city,
+      addressRegion:    address.state,
+      addressCountry:   address.country ?? "US",
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Service — /portfolio (optionally per category)
 // ---------------------------------------------------------------------------
 
@@ -206,6 +271,69 @@ export function buildBlogPostingSchema(
     },
     image: normaliseImages(input.image),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Product — /shop/[slug] (digital products store)
+// ---------------------------------------------------------------------------
+
+export interface ProductSchemaInput {
+  name:        string;
+  slug:        string;
+  description: string;
+  priceCents:  number;
+  image?:      string | null;
+  inStock?:    boolean;
+}
+
+export interface ProductSchema {
+  "@context":   "https://schema.org";
+  "@type":      "Product";
+  name:         string;
+  url:          string;
+  description:  string;
+  image?:       string;
+  brand: {
+    "@type": "Brand";
+    name:    string;
+  };
+  offers: {
+    "@type":         "Offer";
+    url:             string;
+    priceCurrency:   "USD";
+    price:           string;
+    availability:    string;
+  };
+}
+
+export function buildProductSchema(input: ProductSchemaInput): ProductSchema {
+  const url = absoluteUrl(`/shop/${input.slug}`);
+  const priceDollars = (input.priceCents / 100).toFixed(2);
+  const availability =
+    input.inStock === false
+      ? "https://schema.org/OutOfStock"
+      : "https://schema.org/InStock";
+
+  const schema: ProductSchema = {
+    "@context":  "https://schema.org",
+    "@type":     "Product",
+    name:        input.name,
+    url,
+    description: input.description,
+    brand: {
+      "@type": "Brand",
+      name:    BRAND_NAME,
+    },
+    offers: {
+      "@type":       "Offer",
+      url,
+      priceCurrency: "USD",
+      price:         priceDollars,
+      availability,
+    },
+  };
+  if (input.image) schema.image = absoluteUrl(input.image);
+  return schema;
 }
 
 // ---------------------------------------------------------------------------

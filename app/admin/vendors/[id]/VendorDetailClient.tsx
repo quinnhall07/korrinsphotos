@@ -9,11 +9,15 @@ import { useRouter } from "next/navigation";
 import { toast } from "@/components/ui/Toaster";
 import {
   deleteVendor,
-  incrementReferralReceived,
-  incrementReferralSent,
+  logReferralReceivedAction,
+  logReferralSentAction,
   updateVendor,
 } from "../actions";
 import type { VendorCategory } from "@/lib/db/vendors";
+
+// Imbalance threshold — kept in sync with VendorsClientPage.IMBALANCE_GAP.
+// Re-declared locally so this component does not import from the list page.
+const IMBALANCE_GAP = 5;
 
 // Re-declared locally so this client component doesn't pull lib/db/vendors
 // (server-only — imports adminDb) into the browser bundle.
@@ -51,6 +55,7 @@ export interface SerializedVendorDetail {
   referralsSent: number;
   referralsReceived: number;
   lastWorkedWith: string | null;
+  lastReciprocatedAt: string | null;
   tags: string[];
   createdAt: string;
   updatedAt: string;
@@ -92,7 +97,7 @@ export function VendorDetailClient({ vendor }: { vendor: SerializedVendorDetail 
 
   function handleSent() {
     startTransition(async () => {
-      const result = await incrementReferralSent(vendor.id);
+      const result = await logReferralSentAction(vendor.id);
       if (result.success) {
         toast("Referral sent recorded");
         router.refresh();
@@ -104,7 +109,7 @@ export function VendorDetailClient({ vendor }: { vendor: SerializedVendorDetail 
 
   function handleReceived() {
     startTransition(async () => {
-      const result = await incrementReferralReceived(vendor.id);
+      const result = await logReferralReceivedAction(vendor.id);
       if (result.success) {
         toast("Referral received recorded");
         router.refresh();
@@ -190,69 +195,22 @@ export function VendorDetailClient({ vendor }: { vendor: SerializedVendorDetail 
         </div>
       </div>
 
+      {/* Prominent reciprocity card — sits between the header and the
+          contact / notes panels so the imbalance signal stays in view. */}
+      <ReciprocityCard
+        sent={vendor.referralsSent}
+        received={vendor.referralsReceived}
+        lastReciprocatedAt={vendor.lastReciprocatedAt}
+        isPending={isPending}
+        onSent={handleSent}
+        onReceived={handleReceived}
+      />
+
       {editing ? (
         <EditForm vendor={vendor} onDone={() => setEditing(false)} />
       ) : (
         <ReadOnlyView vendor={vendor} />
       )}
-
-      {/* Reciprocity actions */}
-      <div
-        style={{
-          border: "0.5px solid var(--border)",
-          background: "var(--white)",
-          padding: "1.4rem 1.5rem",
-          marginTop: "1.5rem",
-          display: "flex",
-          gap: "1rem",
-          flexWrap: "wrap",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
-        <div>
-          <p
-            style={{
-              fontSize: "0.62rem",
-              letterSpacing: "0.2em",
-              textTransform: "uppercase",
-              color: "var(--charcoal-muted)",
-              margin: 0,
-            }}
-          >
-            Reciprocity
-          </p>
-          <p
-            style={{
-              fontSize: "0.85rem",
-              color: "var(--charcoal-light)",
-              margin: "0.3rem 0 0",
-            }}
-          >
-            Sent: <strong>{vendor.referralsSent}</strong> · Received:{" "}
-            <strong>{vendor.referralsReceived}</strong>
-            {vendor.lastWorkedWith && ` · Last worked ${vendor.lastWorkedWith}`}
-          </p>
-        </div>
-        <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
-          <button
-            type="button"
-            onClick={handleSent}
-            disabled={isPending}
-            style={btnOutline}
-          >
-            + Sent referral
-          </button>
-          <button
-            type="button"
-            onClick={handleReceived}
-            disabled={isPending}
-            style={btnOutline}
-          >
-            + Received referral
-          </button>
-        </div>
-      </div>
 
       {/* Danger zone */}
       <div
@@ -300,6 +258,151 @@ export function VendorDetailClient({ vendor }: { vendor: SerializedVendorDetail 
         </button>
       </div>
     </>
+  );
+}
+
+// ─── Reciprocity card ──────────────────────────────────────────────────────────
+// Big counters + last-activity + manual log buttons. Imbalance chip surfaces
+// when (sent - received) >= IMBALANCE_GAP, matching the list page styling.
+
+function ReciprocityCard({
+  sent,
+  received,
+  lastReciprocatedAt,
+  isPending,
+  onSent,
+  onReceived,
+}: {
+  sent: number;
+  received: number;
+  lastReciprocatedAt: string | null;
+  isPending: boolean;
+  onSent: () => void;
+  onReceived: () => void;
+}) {
+  const imbalanced = sent - received >= IMBALANCE_GAP;
+  return (
+    <section style={{ ...panelStyle, marginBottom: "1.5rem" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: "1rem",
+          flexWrap: "wrap",
+          marginBottom: "1.1rem",
+        }}
+      >
+        <PanelHeader>Reciprocity</PanelHeader>
+        {imbalanced && <ImbalancePill />}
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: "1rem",
+          marginBottom: lastReciprocatedAt ? "0.85rem" : "1.25rem",
+        }}
+      >
+        <Counter label="Sent" value={sent} />
+        <Counter label="Received" value={received} />
+      </div>
+
+      {lastReciprocatedAt && (
+        <p
+          style={{
+            fontSize: "0.72rem",
+            color: "var(--charcoal-muted)",
+            margin: "0 0 1.25rem",
+          }}
+        >
+          Last activity: {lastReciprocatedAt}
+        </p>
+      )}
+
+      <div
+        style={{
+          display: "flex",
+          gap: "0.6rem",
+          flexWrap: "wrap",
+          justifyContent: "space-between",
+        }}
+      >
+        <button
+          type="button"
+          onClick={onSent}
+          disabled={isPending}
+          style={btnOutline}
+        >
+          Log referral sent →
+        </button>
+        <button
+          type="button"
+          onClick={onReceived}
+          disabled={isPending}
+          style={btnOutline}
+        >
+          ← Log referral received
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function Counter({ label, value }: { label: string; value: number }) {
+  return (
+    <div
+      style={{
+        border: "0.5px solid var(--border)",
+        padding: "0.95rem 1.1rem",
+        background: "rgba(107,120,69,0.04)",
+      }}
+    >
+      <p
+        style={{
+          fontSize: "0.6rem",
+          letterSpacing: "0.2em",
+          textTransform: "uppercase",
+          color: "var(--charcoal-muted)",
+          margin: 0,
+        }}
+      >
+        {label}
+      </p>
+      <p
+        style={{
+          fontFamily: "'Cormorant Garamond', serif",
+          fontSize: "2rem",
+          fontWeight: 300,
+          color: "var(--charcoal)",
+          margin: "0.25rem 0 0",
+          lineHeight: 1,
+        }}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function ImbalancePill() {
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        padding: "0.25rem 0.55rem",
+        fontSize: "0.65rem",
+        letterSpacing: "0.15em",
+        textTransform: "uppercase",
+        color: "#8B2E2E",
+        background: "#FCEFEF",
+        border: "0.5px solid #8B2E2E",
+        whiteSpace: "nowrap",
+      }}
+    >
+      Imbalanced
+    </span>
   );
 }
 

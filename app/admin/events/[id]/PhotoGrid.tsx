@@ -17,7 +17,8 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "@/components/ui/Toaster";
-import { deletePhoto } from "./actions";
+import { deletePhoto, updatePhotoMetadata } from "./actions";
+import { PORTFOLIO_CATEGORIES } from "@/app/portfolio/categories";
 
 interface Photo {
   id: string;
@@ -27,6 +28,8 @@ interface Photo {
   r2Key: string | null;
   favoritedBy: string[];
   tags: string[];
+  /** Wave 10 — optional. May be undefined if the parent didn't load it. */
+  category?: string | null;
 }
 
 interface PhotoGridProps {
@@ -42,6 +45,8 @@ export function PhotoGrid({ eventId, photos, clientLabels }: PhotoGridProps) {
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [modalPhoto, setModalPhoto] = useState<Photo | null>(null);
   const [exporting, setExporting] = useState(false);
+  // Wave 10 — id of the photo whose metadata-edit popover is currently open.
+  const [editingPhotoId, setEditingPhotoId] = useState<string | null>(null);
 
   const totalFavorited = useMemo(
     () => photos.reduce((n, p) => (p.favoritedBy.length > 0 ? n + 1 : n), 0),
@@ -215,7 +220,7 @@ export function PhotoGrid({ eventId, photos, clientLabels }: PhotoGridProps) {
                 draggable={false}
               />
 
-              {/* Hover overlay with delete */}
+              {/* Hover overlay with edit + delete */}
               <div
                 style={{
                   position: "absolute",
@@ -224,13 +229,53 @@ export function PhotoGrid({ eventId, photos, clientLabels }: PhotoGridProps) {
                   display: "flex",
                   alignItems: "flex-start",
                   justifyContent: "flex-end",
+                  gap: "0.3rem",
                   padding: "0.4rem",
                   transition: "background 0.2s",
                 }}
                 className="photo-thumb-overlay"
               >
                 <button
-                  onClick={() => handleDelete(photo)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditingPhotoId((prev) => (prev === photo.id ? null : photo.id));
+                  }}
+                  disabled={isPending}
+                  title="Edit label and category"
+                  style={{
+                    width: "26px",
+                    height: "26px",
+                    background: "rgba(20,20,18,0.75)",
+                    color: "#FAF9F6",
+                    border: "none",
+                    fontSize: "0.75rem",
+                    cursor: isPending ? "not-allowed" : "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    opacity: 0,
+                    transition: "opacity 0.2s",
+                    fontFamily: "'Jost', sans-serif",
+                  }}
+                  className="photo-edit-btn"
+                  aria-label="Edit photo metadata"
+                >
+                  {/* Pencil glyph */}
+                  <svg
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.4"
+                    style={{ width: "13px", height: "13px" }}
+                  >
+                    <path d="M11.5 2.5l2 2L5 13H3v-2l8.5-8.5z" />
+                  </svg>
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDelete(photo);
+                  }}
                   disabled={isPending}
                   title="Delete photo"
                   style={{
@@ -253,6 +298,19 @@ export function PhotoGrid({ eventId, photos, clientLabels }: PhotoGridProps) {
                   ✕
                 </button>
               </div>
+
+              {/* Wave 10 — inline metadata editor (popover anchored to the tile). */}
+              {editingPhotoId === photo.id && (
+                <PhotoMetadataEditor
+                  photo={photo}
+                  eventId={eventId}
+                  onClose={() => setEditingPhotoId(null)}
+                  onSaved={() => {
+                    setEditingPhotoId(null);
+                    router.refresh();
+                  }}
+                />
+              )}
 
               {/* Phase 2.5 — favorites badge (always visible if count > 0). */}
               {favCount > 0 && (
@@ -349,6 +407,7 @@ export function PhotoGrid({ eventId, photos, clientLabels }: PhotoGridProps) {
         {/* Hover styles via a style tag to keep the component clean */}
         <style>{`
           .photo-thumb-wrap:hover .photo-delete-btn { opacity: 1; }
+          .photo-thumb-wrap:hover .photo-edit-btn { opacity: 1; }
           .photo-thumb-wrap:hover .photo-label-overlay { opacity: 1; }
           .photo-thumb-wrap:hover .photo-thumb-overlay { background: rgba(20,20,18,0.15); }
           .photo-thumb-wrap:hover img { transform: scale(1.04); }
@@ -363,6 +422,189 @@ export function PhotoGrid({ eventId, photos, clientLabels }: PhotoGridProps) {
           onClose={() => setModalPhoto(null)}
         />
       )}
+    </div>
+  );
+}
+
+// Wave 10 — Inline metadata editor popover.
+// Opens beneath the photo tile. Saves through `updatePhotoMetadata` and
+// reuses the shared `PORTFOLIO_CATEGORIES` list so the dropdown stays in
+// sync with the public portfolio's filter bar.
+function PhotoMetadataEditor({
+  photo,
+  eventId,
+  onClose,
+  onSaved,
+}: {
+  photo: Photo;
+  eventId: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [label, setLabel] = useState<string>(photo.label ?? "");
+  const [category, setCategory] = useState<string>(photo.category ?? "");
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    if (saving) return;
+    setSaving(true);
+    const res = await updatePhotoMetadata(eventId, photo.id, {
+      label,
+      category,
+    });
+    setSaving(false);
+    if (res.success) {
+      toast("Photo updated");
+      onSaved();
+    } else {
+      toast(res.error ?? "Failed to update photo");
+    }
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 1000,
+        background: "rgba(20,20,18,0.55)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "2rem",
+      }}
+    >
+    <div
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        background: "var(--white)",
+        border: "0.5px solid var(--border-strong)",
+        padding: "1.5rem",
+        width: "100%",
+        maxWidth: "360px",
+        display: "flex",
+        flexDirection: "column",
+        gap: "0.75rem",
+      }}
+    >
+      <h3
+        style={{
+          fontFamily: "'Cormorant Garamond', serif",
+          fontSize: "1.4rem",
+          fontWeight: 300,
+          margin: 0,
+        }}
+      >
+        Edit photo
+      </h3>
+      <div>
+        <label
+          style={{
+            display: "block",
+            fontSize: "0.58rem",
+            letterSpacing: "0.18em",
+            textTransform: "uppercase",
+            color: "var(--charcoal-muted)",
+            marginBottom: "0.25rem",
+            fontFamily: "'Jost', sans-serif",
+          }}
+        >
+          Label
+        </label>
+        <input
+          type="text"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder="Photo label"
+          style={{
+            width: "100%",
+            padding: "0.4rem 0.5rem",
+            fontSize: "0.78rem",
+            fontFamily: "'Jost', sans-serif",
+            border: "0.5px solid var(--border-strong)",
+            background: "var(--white)",
+            color: "var(--charcoal)",
+            borderRadius: 0,
+          }}
+        />
+      </div>
+      <div>
+        <label
+          style={{
+            display: "block",
+            fontSize: "0.58rem",
+            letterSpacing: "0.18em",
+            textTransform: "uppercase",
+            color: "var(--charcoal-muted)",
+            marginBottom: "0.25rem",
+            fontFamily: "'Jost', sans-serif",
+          }}
+        >
+          Category
+        </label>
+        <select
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          style={{
+            width: "100%",
+            padding: "0.4rem 0.5rem",
+            fontSize: "0.78rem",
+            fontFamily: "'Jost', sans-serif",
+            border: "0.5px solid var(--border-strong)",
+            background: "var(--white)",
+            color: "var(--charcoal)",
+            borderRadius: 0,
+            cursor: "pointer",
+          }}
+        >
+          <option value="">Uncategorized</option>
+          {PORTFOLIO_CATEGORIES.map((c) => (
+            <option key={c.value} value={c.value}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div style={{ display: "flex", gap: "0.4rem", justifyContent: "flex-end" }}>
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={saving}
+          style={{
+            padding: "0.35rem 0.75rem",
+            fontSize: "0.6rem",
+            letterSpacing: "0.14em",
+            textTransform: "uppercase",
+            background: "transparent",
+            color: "var(--charcoal)",
+            border: "0.5px solid var(--border-strong)",
+            cursor: saving ? "not-allowed" : "pointer",
+            fontFamily: "'Jost', sans-serif",
+          }}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          style={{
+            padding: "0.35rem 0.75rem",
+            fontSize: "0.6rem",
+            letterSpacing: "0.14em",
+            textTransform: "uppercase",
+            background: saving ? "var(--charcoal-muted)" : "var(--olive)",
+            color: "var(--white)",
+            border: "none",
+            cursor: saving ? "not-allowed" : "pointer",
+            fontFamily: "'Jost', sans-serif",
+          }}
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
     </div>
   );
 }

@@ -56,3 +56,59 @@ export async function createPaymentLinkForInvoice(
     throw new Error("Failed to create Stripe payment link");
   }
 }
+
+/**
+ * Phase 4.13 — Digital products store.
+ * Creates a one-off Stripe Price + Payment Link for a digital product.
+ * The webhook routes by `metadata.productId` to deliver the file.
+ */
+export async function createProductPaymentLink(opts: {
+  productId: string;
+  productTitle: string;
+  amountCents: number;
+}): Promise<{
+  paymentLinkUrl: string;
+  paymentLinkId: string;
+  priceId: string;
+}> {
+  if (!process.env.STRIPE_SECRET_KEY) {
+    return {
+      paymentLinkUrl: `https://example.com/mock-product-link/${opts.productId}`,
+      paymentLinkId: `plink_mock_${opts.productId}`,
+      priceId: `price_mock_${opts.productId}`,
+    };
+  }
+
+  try {
+    const price = await stripe.prices.create({
+      currency: "usd",
+      unit_amount: opts.amountCents,
+      product_data: {
+        name: opts.productTitle,
+        metadata: { productId: opts.productId },
+      },
+    });
+
+    const paymentLink = await stripe.paymentLinks.create({
+      line_items: [{ price: price.id, quantity: 1 }],
+      // We need the customer's email to deliver the file by email.
+      customer_creation: "always",
+      metadata: { productId: opts.productId },
+      after_completion: {
+        type: "redirect",
+        redirect: {
+          url: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/shop/thank-you?product_id=${opts.productId}`,
+        },
+      },
+    });
+
+    return {
+      paymentLinkUrl: paymentLink.url,
+      paymentLinkId: paymentLink.id,
+      priceId: price.id,
+    };
+  } catch (error) {
+    console.error("Stripe createProductPaymentLink error:", error);
+    throw new Error("Failed to create Stripe product payment link");
+  }
+}

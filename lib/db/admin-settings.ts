@@ -9,7 +9,8 @@
 //
 // Server-only.
 
-import { FieldValue } from "firebase-admin/firestore";
+import { randomUUID } from "node:crypto";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { usersCol, type UserDoc } from "@/lib/db/users";
 import type { StateTaxRule } from "@/lib/sales-tax-rules";
 
@@ -227,6 +228,142 @@ export async function updateTaxConfig(
 
   await ref.set(
     { taxConfig: next, updatedAt: FieldValue.serverTimestamp() },
+    { merge: true }
+  );
+}
+
+// ─── Phase 13.13 — Brand voice calibration ────────────────────────────────────
+
+/**
+ * A single sample of Korrin's writing used as a voice anchor by the Phase 5
+ * AI assists. Persisted as an entry in the `brandVoiceSamples` array on the
+ * admin's `users/{uid}` doc — no separate collection, since the admin is the
+ * user. The array is capped at 10 entries to keep prompts tight.
+ */
+export interface BrandVoiceSample {
+  /** Short opaque id minted server-side. */
+  id: string;
+  /** Short title, e.g. "Reply to a venue inquiry". */
+  label: string;
+  /** 50–1000 chars of Korrin's actual writing. */
+  body: string;
+  /** Optional one-line context, e.g. "Used for cold leads from Instagram". */
+  context?: string;
+  createdAt: Timestamp;
+}
+
+/** Maximum number of voice samples per admin. */
+export const BRAND_VOICE_MAX_SAMPLES = 10;
+/** Minimum body length (inclusive). */
+export const BRAND_VOICE_MIN_BODY = 50;
+/** Maximum body length (inclusive). */
+export const BRAND_VOICE_MAX_BODY = 1000;
+
+/** Type stored on the user doc — same as `BrandVoiceSample`. */
+type StoredSample = BrandVoiceSample;
+
+/**
+ * Read the admin's voice samples. Returns `[]` when the user doc doesn't
+ * exist or the field has never been set.
+ */
+export async function getBrandVoiceSamples(uid: string): Promise<BrandVoiceSample[]> {
+  const snap = await usersCol().doc(uid).get();
+  if (!snap.exists) return [];
+  const data = snap.data() as Partial<UserDoc> & { brandVoiceSamples?: StoredSample[] };
+  return Array.isArray(data.brandVoiceSamples) ? data.brandVoiceSamples : [];
+}
+
+/**
+ * Append a voice sample. Throws when the array is already at the cap so the
+ * caller can surface a user-visible error. Trims label/context; preserves
+ * body whitespace (it's a writing sample).
+ */
+export async function addBrandVoiceSample(
+  uid: string,
+  input: { label: string; body: string; context?: string }
+): Promise<BrandVoiceSample> {
+  const ref = usersCol().doc(uid);
+  const snap = await ref.get();
+  const existing =
+    (snap.exists ? (snap.data() as Partial<UserDoc> & { brandVoiceSamples?: StoredSample[] }).brandVoiceSamples : undefined) ??
+    [];
+
+  if (existing.length >= BRAND_VOICE_MAX_SAMPLES) {
+    throw new Error(`Voice samples are capped at ${BRAND_VOICE_MAX_SAMPLES}. Remove one before adding another.`);
+  }
+
+  const sample: BrandVoiceSample = {
+    id: randomUUID().replace(/-/g, "").slice(0, 12),
+    label: input.label.trim(),
+    body: input.body,
+    ...(input.context && input.context.trim() ? { context: input.context.trim() } : {}),
+    createdAt: Timestamp.now(),
+  };
+
+  const next: StoredSample[] = [...existing, sample];
+  await ref.set(
+    { brandVoiceSamples: next, updatedAt: FieldValue.serverTimestamp() },
+    { merge: true }
+  );
+
+  return sample;
+}
+
+/**
+ * Remove a single voice sample by id. No-op when the id isn't present.
+ */
+export async function removeBrandVoiceSample(uid: string, id: string): Promise<void> {
+  const ref = usersCol().doc(uid);
+  const snap = await ref.get();
+  if (!snap.exists) return;
+  const existing =
+    (snap.data() as Partial<UserDoc> & { brandVoiceSamples?: StoredSample[] }).brandVoiceSamples ?? [];
+  const next = existing.filter((s) => s.id !== id);
+  if (next.length === existing.length) return;
+  await ref.set(
+    { brandVoiceSamples: next, updatedAt: FieldValue.serverTimestamp() },
+    { merge: true }
+  );
+}
+
+/**
+ * Patch an existing voice sample. Only `label`, `body`, and `context` are
+ * editable — `id` and `createdAt` are immutable. No-op when the id is unknown.
+ */
+export async function updateBrandVoiceSample(
+  uid: string,
+  id: string,
+  partial: { label?: string; body?: string; context?: string | null }
+): Promise<void> {
+  const ref = usersCol().doc(uid);
+  const snap = await ref.get();
+  if (!snap.exists) return;
+  const existing =
+    (snap.data() as Partial<UserDoc> & { brandVoiceSamples?: StoredSample[] }).brandVoiceSamples ?? [];
+
+  let touched = false;
+  const next: StoredSample[] = existing.map((s) => {
+    if (s.id !== id) return s;
+    touched = true;
+    const merged: StoredSample = {
+      id: s.id,
+      label: partial.label !== undefined ? partial.label.trim() : s.label,
+      body: partial.body !== undefined ? partial.body : s.body,
+      createdAt: s.createdAt,
+    };
+    if (partial.context === null || (partial.context !== undefined && !partial.context.trim())) {
+      // Explicit clear — drop the field.
+    } else if (partial.context !== undefined) {
+      merged.context = partial.context.trim();
+    } else if (s.context) {
+      merged.context = s.context;
+    }
+    return merged;
+  });
+
+  if (!touched) return;
+  await ref.set(
+    { brandVoiceSamples: next, updatedAt: FieldValue.serverTimestamp() },
     { merge: true }
   );
 }

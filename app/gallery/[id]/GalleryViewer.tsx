@@ -36,8 +36,21 @@
 // Phase 2.5 plans for multiple named lists ("Mom's picks", "for the album",
 // etc). When that lands, replace `favoritedBy: string[]` with a per-list
 // shape and add list-management UI here.
+//
+// Phase 13.10 — Per-photo analytics:
+//   - View tracking: every `.masonry-item[data-photo-id]` is observed via a
+//     single `IntersectionObserver` (threshold 0.5). On first qualifying
+//     intersection per id we batch the id into a debounced queue (flush every
+//     2s OR when 10 ids accumulate, whichever first) and POST the batch to
+//     `/api/track/photo-view`. A `useRef<Set<string>>` guards against
+//     re-fires from scroll-back / re-mounts within the same session.
+//   - Download tracking: per-photo downloads from the lightbox menu and the
+//     "Download all (.zip)" bar both POST `/api/track/photo-download` (for
+//     the zip we fan out one POST per included photoId). Every fetch uses
+//     `keepalive: true` (so it survives navigation) and `.catch(() => {})`
+//     (so analytics CAN NEVER break the gallery experience).
 
-import { useEffect, useState, useMemo, useRef, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { MasonryGrid, type MasonryPhoto } from "@/components/MasonryGrid";
@@ -129,6 +142,67 @@ export function GalleryViewer({
     }
   }, [pinTick, pinLockedUntil]);
 
+  // Phase 13.10 — view-tracking machinery. Refs hold the per-session "have we
+  // already counted this photo?" set, the queue of pending ids, and the
+  // debounce timer. All side effects are fire-and-forget — never await.
+  const trackedIdsRef = useRef<Set<string>>(new Set());
+  const queuedIdsRef = useRef<Set<string>>(new Set());
+  const flushTimerRef = useRef<number | null>(null);
+
+  const flushViewQueue = useCallback(() => {
+    if (flushTimerRef.current !== null) {
+      window.clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    const ids = Array.from(queuedIdsRef.current);
+    queuedIdsRef.current.clear();
+    if (ids.length === 0) return;
+    // Server caps each request at 50 ids — chunk to match.
+    for (let i = 0; i < ids.length; i += 50) {
+      const chunk = ids.slice(i, i + 50);
+      fetch("/api/track/photo-view", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ eventId, photoIds: chunk }),
+        keepalive: true,
+      }).catch(() => {
+        /* analytics is best-effort */
+      });
+    }
+  }, [eventId]);
+
+  const enqueueViewedId = useCallback(
+    (photoId: string) => {
+      if (trackedIdsRef.current.has(photoId)) return;
+      trackedIdsRef.current.add(photoId);
+      queuedIdsRef.current.add(photoId);
+      if (queuedIdsRef.current.size >= 10) {
+        flushViewQueue();
+        return;
+      }
+      if (flushTimerRef.current === null) {
+        flushTimerRef.current = window.setTimeout(() => {
+          flushViewQueue();
+        }, 2000);
+      }
+    },
+    [flushViewQueue],
+  );
+
+  const trackDownload = useCallback(
+    (photoId: string) => {
+      fetch("/api/track/photo-download", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ eventId, photoId }),
+        keepalive: true,
+      }).catch(() => {
+        /* analytics is best-effort */
+      });
+    },
+    [eventId],
+  );
+
   const showNpsWidget = eventStatus === "DELIVERED" && canSubmitNps;
 
   const myPicksCount = useMemo(() => {
@@ -153,6 +227,40 @@ export function GalleryViewer({
     }
     return photos;
   }, [photos, filter, viewerClientId]);
+
+  // Phase 13.10 — Bind an IntersectionObserver to every `.masonry-item`
+  // currently in the DOM. Re-binds when the filtered list changes (filter
+  // pills + favorite toggles can swap nodes). Threshold 0.5 = at least half
+  // the tile must be visible before we record a view.
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const id = (entry.target as HTMLElement).dataset.photoId;
+          if (!id) continue;
+          enqueueViewedId(id);
+          observer.unobserve(entry.target);
+        }
+      },
+      { threshold: 0.5 },
+    );
+    const nodes = document.querySelectorAll<HTMLElement>(
+      ".masonry-item[data-photo-id]",
+    );
+    nodes.forEach((node) => observer.observe(node));
+    return () => observer.disconnect();
+  }, [enqueueViewedId, filteredPhotos]);
+
+  // Flush any queued ids on unmount so a quick navigation away still records
+  // the user's last few impressions. `keepalive: true` on the underlying
+  // fetch keeps the request alive past the page transition.
+  useEffect(() => {
+    return () => {
+      flushViewQueue();
+    };
+  }, [flushViewQueue]);
 
   // Phase 2.6 — Build the per-photo download URL forwarded to the Lightbox
   // overflow menu. We use the proxy route at /api/download/[eventId]/photo
@@ -273,6 +381,14 @@ export function GalleryViewer({
       a.click();
       a.remove();
       URL.revokeObjectURL(downloadUrl);
+
+      // Phase 13.10 — Fan out one analytics ping per photo included in the
+      // zip. Fire-and-forget; never blocks the UX. We use `photos` (not the
+      // current filter) because the zip endpoint always bundles every
+      // gallery-ready photo for the event.
+      for (const p of photos) {
+        trackDownload(p.id);
+      }
 
       toast("Download started");
       // Cache the valid PIN for the rest of the session so single-photo
@@ -631,6 +747,7 @@ export function GalleryViewer({
             columns={4}
             eventName={eventTitle}
             buildDownloadUrl={buildDownloadUrl}
+            onDownload={(photo) => trackDownload(photo.id)}
             renderOverlay={(photo) => (
               <HeartButton
                 active={

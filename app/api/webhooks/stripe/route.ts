@@ -9,6 +9,14 @@ import { createInboxItem } from "@/lib/db/inbox";
 import type { InvoiceDoc } from "@/lib/db/invoices";
 import type { ProjectDoc } from "@/lib/db/projects";
 import {
+  getProduct,
+  incrementPurchaseCount,
+  markPurchaseDelivered,
+  recordProductPurchase,
+} from "@/lib/db/products";
+import { generatePresignedGetUrl } from "@/lib/storage/r2";
+import { enqueueTrackedMail } from "@/lib/email/tracking";
+import {
   normalizeStripeDisputeStatus,
   recordDisputeClosed,
   recordDisputeCreated,
@@ -49,9 +57,20 @@ export async function POST(req: Request) {
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as any;
       const invoiceId = session.metadata?.invoiceId || session.client_reference_id;
+      const productId: string | undefined = session.metadata?.productId;
 
       if (invoiceId) {
         await processInvoicePayment(invoiceId, session.payment_intent);
+      } else if (productId) {
+        // Phase 4.13 — Digital products store. Wrapped so a delivery failure
+        // can't crash the webhook (Stripe retries flood the inbox otherwise).
+        await processProductPurchase(productId, session).catch((err) => {
+          console.error("[stripe] product purchase delivery failed", {
+            productId,
+            sessionId: session?.id,
+            err,
+          });
+        });
       }
     } else if (event.type === "payment_intent.succeeded") {
       const paymentIntent = event.data.object as any;
@@ -269,6 +288,123 @@ async function processDisputeUpdated(dispute: any): Promise<void> {
   if (!resolved) return;
 
   await recordDisputeUpdated(resolved.id, normalizeStripeDisputeStatus(dispute?.status));
+}
+
+// ─── Digital products store (Phase 4.13) ─────────────────────────────────────
+
+const PRODUCT_DOWNLOAD_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
+
+async function processProductPurchase(
+  productId: string,
+  session: any
+): Promise<void> {
+  const product = await getProduct(productId);
+  if (!product) {
+    console.warn("[stripe] product purchase: product not found", {
+      productId,
+      sessionId: session?.id,
+    });
+    return;
+  }
+
+  const sessionId: string = typeof session?.id === "string" ? session.id : "";
+  if (!sessionId) {
+    console.warn("[stripe] product purchase: missing session id", { productId });
+    return;
+  }
+
+  const buyerEmail: string =
+    session?.customer_details?.email ||
+    session?.customer_email ||
+    "";
+  if (!buyerEmail) {
+    console.warn("[stripe] product purchase: no buyer email on session", {
+      sessionId,
+      productId,
+    });
+    return;
+  }
+
+  const buyerName: string | undefined =
+    typeof session?.customer_details?.name === "string"
+      ? session.customer_details.name
+      : undefined;
+
+  const amountCents: number =
+    typeof session?.amount_total === "number"
+      ? session.amount_total
+      : product.priceCents;
+
+  // 1. Idempotently record the purchase. `recordProductPurchase` short-circuits
+  //    if a row already exists for this session id.
+  const purchase = await recordProductPurchase({
+    productId: product.id,
+    productSlug: product.slug,
+    buyerEmail,
+    buyerName,
+    amountCents,
+    stripeCheckoutSessionId: sessionId,
+    deliveryR2Key: product.fileR2Key,
+  });
+
+  // If we've already delivered this purchase, stop here.
+  if (purchase.deliveredAt) return;
+
+  // 2. Mint a 7-day presigned GET URL for the deliverable.
+  const downloadUrl = await generatePresignedGetUrl(
+    product.fileR2Key,
+    PRODUCT_DOWNLOAD_TTL_SECONDS
+  );
+
+  // 3. Email the buyer through the tracked-mail wrapper.
+  const greeting = buyerName ? `Hi ${buyerName.split(" ")[0]},` : "Hi there,";
+  const html = `
+    <div style="font-family: 'Helvetica Neue', Arial, sans-serif; color: #2A2A28; max-width: 560px; margin: 0 auto; padding: 24px;">
+      <p style="font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: #6B7845; margin: 0 0 16px;">Korrin's Photography</p>
+      <h1 style="font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 300; font-size: 28px; line-height: 1.2; margin: 0 0 16px; color: #2A2A28;">${greeting}</h1>
+      <p style="font-size: 15px; line-height: 1.7; color: #4A4A47; margin: 0 0 16px;">Thank you for your purchase of <strong>${product.title}</strong>.</p>
+      <p style="font-size: 15px; line-height: 1.7; color: #4A4A47; margin: 0 0 24px;">Your private download link is below. It will work for the next 7 days — please save the file somewhere safe.</p>
+      <p style="margin: 0 0 32px;">
+        <a href="${downloadUrl}" style="display: inline-block; padding: 14px 28px; background: #2A2A28; color: #FAF9F6; text-decoration: none; font-size: 12px; letter-spacing: 0.2em; text-transform: uppercase;">Download your file</a>
+      </p>
+      <p style="font-size: 13px; line-height: 1.6; color: #8A8A85; margin: 0 0 8px;">If the button doesn't work, copy this URL into your browser:</p>
+      <p style="font-size: 12px; word-break: break-all; color: #6B7845; margin: 0 0 24px;">${downloadUrl}</p>
+      <p style="font-size: 13px; line-height: 1.6; color: #8A8A85; margin: 0;">If you have any trouble, just reply to this email and I'll sort it out.</p>
+    </div>
+  `;
+
+  await enqueueTrackedMail({
+    to: buyerEmail,
+    subject: `Your download — ${product.title}`,
+    html,
+    sendKind: "product-delivery",
+  }).catch((err) => {
+    console.error("[stripe] product delivery email enqueue failed", {
+      productId,
+      sessionId,
+      err,
+    });
+  });
+
+  // 4. Mark the purchase delivered + bump the catalog counter.
+  await markPurchaseDelivered(purchase.id).catch((err) => {
+    console.error("[stripe] markPurchaseDelivered failed", {
+      purchaseId: purchase.id,
+      err,
+    });
+  });
+  await incrementPurchaseCount(product.id).catch((err) => {
+    console.error("[stripe] incrementPurchaseCount failed", {
+      productId: product.id,
+      err,
+    });
+  });
+
+  await logActivity(
+    "EMAIL_SENT",
+    `Digital product delivered: ${product.title}`,
+    { productId: product.id, sessionId, buyerEmail }
+  ).catch(() => {});
 }
 
 async function processDisputeClosed(dispute: any): Promise<void> {

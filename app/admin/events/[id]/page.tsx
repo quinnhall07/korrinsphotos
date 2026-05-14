@@ -196,6 +196,22 @@ export default async function EventDetailPage({ params }: Props) {
           <AddToCalendarButton eventTitle={event.title} eventDate={event.calendarDate} />
 
           <Link
+            href={`/admin/events/${event.id}/analytics`}
+            style={{
+              display: "inline-block",
+              padding: "0.6rem 1.4rem",
+              fontSize: "0.68rem",
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+              color: "var(--charcoal)",
+              border: "0.5px solid var(--border-strong)",
+              textDecoration: "none",
+            }}
+          >
+            View analytics
+          </Link>
+
+          <Link
             href={`/admin/events/${event.id}/gallery`}
             style={{
               display: "inline-block",

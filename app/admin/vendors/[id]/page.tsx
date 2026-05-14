@@ -46,6 +46,7 @@ export default async function VendorDetailPage({ params }: Props) {
     referralsSent: vendor.referralsSent ?? 0,
     referralsReceived: vendor.referralsReceived ?? 0,
     lastWorkedWith: formatDisplayDate(vendor.lastWorkedWith),
+    lastReciprocatedAt: formatDisplayDate(vendor.lastReciprocatedAt),
     tags: Array.isArray(vendor.tags) ? vendor.tags : [],
     createdAt: formatDateTime(vendor.createdAt) ?? "—",
     updatedAt: formatDateTime(vendor.updatedAt) ?? "—",

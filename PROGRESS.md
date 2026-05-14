@@ -259,11 +259,9 @@ Single unified Client/Project pipeline is the canonical surface; the legacy `boo
 
 ## Bugs
 
-| # | Location | Description | Severity |
-|---|---|---|---|
-| 1 | `app/api/upload/confirm/route.ts` | R2 public URL is built as `https://${BUCKET}.${ACCOUNT_ID}.r2.cloudflarestorage.com/${key}` — verify against actual bucket public-access configuration. | Low |
+_None open._
 
-(Bugs 1-6 from the previous cycle were resolved in the Wave 1–3 commits: GalleryViewer double-columns, `r2Key` persistence, `galleryReady` filter, activity feed timestamp fallback, lead-scoring typing.)
+(Bugs 1-6 from the previous cycle were resolved in the Wave 1–3 commits: GalleryViewer double-columns, `r2Key` persistence, `galleryReady` filter, activity feed timestamp fallback, lead-scoring typing. Wave 10 resolved the upload-confirm public-URL bug by switching `app/api/upload/confirm/route.ts` to a 60s presigned GET URL.)
 
 ---
 

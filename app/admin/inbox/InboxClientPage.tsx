@@ -20,6 +20,13 @@ import {
   getDefaultReengagementBody,
 } from "./actions";
 
+export type BrandVoiceAnchor = {
+  id: string;
+  label: string;
+  body: string;
+  context: string | null;
+};
+
 export type InboxItemView = {
   id: string;
   type:
@@ -89,9 +96,11 @@ function relativeTime(iso: string): string {
 export function InboxClientPage({
   openItems,
   snoozedItems,
+  voiceAnchors,
 }: {
   openItems: InboxItemView[];
   snoozedItems: InboxItemView[];
+  voiceAnchors: BrandVoiceAnchor[];
 }) {
   const router = useRouter();
   const [typeFilter, setTypeFilter] = useState<InboxItemView["type"] | null>(null);
@@ -404,6 +413,7 @@ export function InboxClientPage({
           {selected ? (
             <DetailPane
               item={selected}
+              voiceAnchors={voiceAnchors}
               onArchive={() => doArchive(selected.id)}
               onSnooze={() => doSnooze(selected.id)}
               onToggleRead={() => doToggleRead(selected)}
@@ -510,11 +520,13 @@ function Row({
 
 function DetailPane({
   item,
+  voiceAnchors,
   onArchive,
   onSnooze,
   onToggleRead,
 }: {
   item: InboxItemView;
+  voiceAnchors: BrandVoiceAnchor[];
   onArchive: () => void;
   onSnooze: () => void;
   onToggleRead: () => void;
@@ -567,6 +579,8 @@ function DetailPane({
           {item.body}
         </div>
       )}
+
+      <VoiceAnchorsCard anchors={voiceAnchors} />
 
       {item.type === "RE_ENGAGEMENT_DUE" && item.clientId && (
         <ReengagementBlock
@@ -798,6 +812,183 @@ function ReengagementBlock({
           {snoozing ? "Snoozing…" : "Snooze 30 days"}
         </button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Phase 13.13 — Voice anchors reference card. Lives directly above the
+ * reply textarea in the inbox detail panel. Reference only — Korrin reads
+ * her own writing samples while drafting; the AI hookup ships in Phase 5.
+ */
+function VoiceAnchorsCard({ anchors }: { anchors: BrandVoiceAnchor[] }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  if (anchors.length === 0) {
+    return (
+      <div
+        style={{
+          marginTop: "1.5rem",
+          padding: "0.75rem 1rem",
+          border: "0.5px solid var(--border)",
+          background: "rgba(42,42,40,0.02)",
+          fontSize: "0.78rem",
+          color: "var(--charcoal-muted)",
+          fontFamily: "'Jost', sans-serif",
+        }}
+      >
+        No voice anchors yet.{" "}
+        <Link
+          href="/admin/settings/brand-voice"
+          style={{ color: "var(--olive)", textDecoration: "underline" }}
+        >
+          Add some in Settings → Brand voice.
+        </Link>
+      </div>
+    );
+  }
+
+  const handleCopy = async (anchor: BrandVoiceAnchor) => {
+    try {
+      await navigator.clipboard.writeText(anchor.body);
+      setCopiedId(anchor.id);
+      window.setTimeout(() => {
+        setCopiedId((c) => (c === anchor.id ? null : c));
+      }, 1500);
+    } catch {
+      toast("Could not copy to clipboard");
+    }
+  };
+
+  const expanded = anchors.find((a) => a.id === expandedId) ?? null;
+
+  return (
+    <div
+      style={{
+        marginTop: "1.5rem",
+        padding: "0.85rem 1rem",
+        border: "0.5px solid var(--border)",
+        background: "var(--olive-dim)",
+        fontFamily: "'Jost', sans-serif",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "baseline",
+          marginBottom: "0.55rem",
+        }}
+      >
+        <p
+          style={{
+            fontSize: "0.6rem",
+            letterSpacing: "0.18em",
+            textTransform: "uppercase",
+            color: "var(--olive)",
+            margin: 0,
+          }}
+        >
+          Voice anchors ({anchors.length})
+        </p>
+        <Link
+          href="/admin/settings/brand-voice"
+          style={{
+            fontSize: "0.7rem",
+            color: "var(--charcoal-muted)",
+            textDecoration: "underline",
+          }}
+        >
+          Manage
+        </Link>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+        {anchors.map((a) => {
+          const isOpen = expandedId === a.id;
+          return (
+            <button
+              key={a.id}
+              onClick={() => setExpandedId(isOpen ? null : a.id)}
+              style={{
+                fontSize: "0.7rem",
+                letterSpacing: "0.06em",
+                padding: "0.3rem 0.6rem",
+                background: isOpen ? "var(--olive)" : "var(--white)",
+                color: isOpen ? "var(--white)" : "var(--charcoal-light)",
+                border: "0.5px solid var(--border-strong)",
+                cursor: "pointer",
+                fontFamily: "'Jost', sans-serif",
+              }}
+              title={a.context ?? undefined}
+            >
+              {a.label}
+            </button>
+          );
+        })}
+      </div>
+      {expanded && (
+        <div
+          style={{
+            marginTop: "0.75rem",
+            padding: "0.85rem",
+            background: "var(--white)",
+            border: "0.5px solid var(--border-strong)",
+            fontSize: "0.85rem",
+            color: "var(--charcoal-light)",
+            lineHeight: 1.6,
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          {expanded.context && (
+            <p
+              style={{
+                margin: "0 0 0.5rem",
+                fontSize: "0.7rem",
+                color: "var(--charcoal-muted)",
+                fontStyle: "italic",
+              }}
+            >
+              {expanded.context}
+            </p>
+          )}
+          <div>{expanded.body}</div>
+          <div style={{ marginTop: "0.6rem", display: "flex", gap: "0.5rem" }}>
+            <button
+              onClick={() => handleCopy(expanded)}
+              style={{
+                fontSize: "0.7rem",
+                letterSpacing: "0.12em",
+                textTransform: "uppercase",
+                padding: "0.35rem 0.75rem",
+                background: "transparent",
+                color: "var(--charcoal)",
+                border: "0.5px solid var(--border-strong)",
+                cursor: "pointer",
+                fontFamily: "'Jost', sans-serif",
+              }}
+            >
+              {copiedId === expanded.id ? "Copied" : "Copy"}
+            </button>
+            <button
+              onClick={() => setExpandedId(null)}
+              style={{
+                fontSize: "0.7rem",
+                letterSpacing: "0.12em",
+                textTransform: "uppercase",
+                padding: "0.35rem 0.75rem",
+                background: "transparent",
+                color: "var(--charcoal-muted)",
+                border: "0.5px solid var(--border-strong)",
+                cursor: "pointer",
+                fontFamily: "'Jost', sans-serif",
+              }}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
