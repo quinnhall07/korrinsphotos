@@ -1,26 +1,26 @@
 # PROGRESS.md — Korrin's Photos
 
-> Last updated: 2026-05-14
+> Last updated: 2026-05-14 (post-Wave-5)
 > Source of truth for "what state is the codebase actually in." Update on feature completion, bug discovery/fix, or task abandonment.
 
 ---
 
 ## Overall Status
 
-Single unified Client/Project pipeline is the canonical surface; the legacy `bookingInquiries` Kanban + `/admin/bookings` directory have been fully retired (May 2026). Phase 0 cleanup, Phase 1 CRM, the questionnaire/welcome-packet/NPS/review-request loop (Phase 2 partials), the sequence engine (Phase 4.2), the tiered referral engine (Phase 4.4), the email open/click tracking layer (Phase 1.6), JSON-LD schema markup (Phase 4.12), Stripe refund + dispute ledger (Phase 3.12), PWA install (Phase 1.10), Firestore Security Rules + firebase.json, and the public `/investment` page (Phase 2.3) are all live. Remaining work tracks the Phase 2.x portal redesign, Phase 3 financial/ops stack, Phase 4.x growth surfaces, Phase 5 AI assists beyond draft reply / thread summary, and the long tail of Phase 6 / Phase 13 "original ideas".
+Single unified Client/Project pipeline is the canonical surface; the legacy `bookingInquiries` Kanban + `/admin/bookings` directory have been fully retired (May 2026). Phase 0 cleanup, Phase 1 CRM, the questionnaire/welcome-packet/NPS/review-request loop (Phase 2 partials), the sequence engine (Phase 4.2), the tiered referral engine (Phase 4.4), the email open/click tracking layer (Phase 1.6), JSON-LD schema markup (Phase 4.12), Stripe refund + dispute ledger (Phase 3.12), PWA install (Phase 1.10), Firestore Security Rules + firebase.json, the public `/investment` page (Phase 2.3), the Phase 3.1 finance dashboard, Phase 3.2 tax/expenses dashboard, Phase 3.5 location scouting, Phase 3.8 vendor CRM, Phase 4.3 segments + broadcast composer, Phase 2.5 gallery favorites, Phase 13.5 Korrin's-picks overlay, and Phase 13.8 tax-saving calendar are all live. Remaining work tracks the Phase 2.x portal redesign, the rest of Phase 3 ops stack (shoot brief, weather wiring, gear checklist, editing tracker, capacity heatmap), Phase 4.x growth surfaces, Phase 5 AI assists beyond draft reply / thread summary, and the long tail of Phase 6 / Phase 13 "original ideas".
 
 ---
 
 ## Architecture Snapshot
 
-- **Single canonical pipeline.** `clients`, `projects` + `messages` subcollection, `contracts`, `invoices`, `scheduledTasks`, `sequences` + `sequenceEnrollments`, `questionnaires` + `questionnaireTemplates`, `reviewRequests`, `inboxItems`, `emailEvents`, `paymentIntents` (Stripe mirror), `stripeWebhookEvents` (idempotency), plus legacy `events`, `eventAccess`, `mail`, `activityFeed`, `users`. The legacy `bookingInquiries` collection still exists in Firestore but is no longer written to.
+- **Single canonical pipeline.** `clients`, `projects` + `messages` subcollection, `contracts`, `invoices`, `scheduledTasks`, `sequences` + `sequenceEnrollments`, `questionnaires` + `questionnaireTemplates`, `reviewRequests`, `inboxItems`, `emailEvents`, `paymentIntents` (Stripe mirror), `stripeWebhookEvents` (idempotency), `locations`, `vendors`, `segments`, `broadcasts`, `expenses`, `assets`, `analyticsCache`, plus legacy `events`, `eventAccess`, `mail`, `activityFeed`, `users`. The legacy `bookingInquiries` collection still exists in Firestore but is no longer written to.
 - **No more dual-write.** `app/booking/actions.ts → submitBooking` writes `clients` + `projects` + first inbound `messages` entry + activity log + tracked auto-responder. The legacy `bookingInquiries` insert was removed in the May 2026 retirement commit.
 - **`ProjectStatus` is the master state machine** (`SITE_VISIT → INQUIRY → QUALIFYING → PROPOSAL_SENT → NEGOTIATING → CONTRACT_SENT → DEPOSIT_PENDING → BOOKED → SHOOT_READY → IN_EDITING → GALLERY_DELIVERED → REFERRAL_SENT → COMPLETED` with `LOST` / `ARCHIVED`). Every transition runs through `updateProjectStatus → handleProjectTransition` which: resolves the admin's `automationConfig`, fires per-status hooks (`onProjectBooked` / `onProposalSent` / `onContractSent` / `onDepositPending` / `onGalleryDelivered`), enrolls into every active STATUS_CHANGE sequence, and queues recipe-gated `scheduledTasks` (SEND_REFERRAL, AUTO_FOLLOW_UP, SNEAK_PEEK).
 - **Stripe + Cron + tracked mail.** `/api/webhooks/stripe` handles `checkout.session.completed`, `payment_intent.succeeded`, `charge.refunded`, and `charge.dispute.created|updated|closed` with event-level idempotency via `stripeWebhookEvents/{id}`. `/api/cron/run-tasks` drains `scheduledTasks` (SEND_REFERRAL, AUTO_FOLLOW_UP by recipeKey, SNEAK_PEEK), dispatches due review requests, and runs sequence enrollments. Every outbound mail flows through `lib/email/tracking.ts > enqueueTrackedMail` which mints a `sendId`, rewrites external links to `/t/c/{sendId}`, injects a `/t/o/{sendId}` pixel, and writes `emailEvents` rows.
 - **`__origin` UTM cookie writes first-touch attribution.** `middleware.ts` sets a 30-day JS-readable JSON cookie; `submitBooking` stamps `firstTouch{Source,Medium,Campaign,LandingUrl,At}` on the new `clients` doc and resolves `referralCode` to `referredBy` for the tiered referral engine. See ADR-016.
 - **Production security baseline.** `firestore.rules` is in place (default-deny, admin-claim-gated except for owner-scoped reads on `users`/`eventAccess`/`events`); `firebase.json` references it. Client SDK uses Auth only — Firestore reads all go through the server-side Admin SDK.
 - **PWA + JSON-LD.** `public/manifest.webmanifest` + `public/sw.js` (production-only registration via `ServiceWorkerRegister`); admin mobile install prompt with 7-day dismiss cookie. Public pages ship `Photographer` (root), `Service` (portfolio + each investment package), and `BreadcrumbList` JSON-LD.
-- **`lib/db/*` split complete.** Per-collection helpers in `lib/db/{activity,clients,contracts,email-events,events,inbox,invoices,locations,photos,projects,questionnaires,reviews,saved-views,segments,sequences,sequence-enrollments,users,vendors}.ts`. Cross-collection orchestrations in `lib/domain/` (`events.ts`, `referrals.ts`, `reviews.ts`, `ledger.ts`, `welcome-packet.ts`). `lib/firestore.ts` long gone. See ADR-013.
+- **`lib/db/*` split complete.** Per-collection helpers in `lib/db/{activity,analytics-cache,assets,broadcasts,clients,contracts,email-events,events,expenses,inbox,invoices,locations,photos,projects,questionnaires,reviews,saved-views,segments,sequences,sequence-enrollments,users,vendors}.ts`. Cross-collection orchestrations in `lib/domain/` (`events.ts`, `referrals.ts`, `reviews.ts`, `ledger.ts`, `welcome-packet.ts`, `analytics.ts`). Broadcast send orchestration in `lib/broadcasts/sender.ts`; segment predicate resolver in `lib/segments/resolver.ts`. `lib/firestore.ts` long gone. See ADR-013.
 
 ---
 
@@ -111,6 +111,25 @@ Single unified Client/Project pipeline is the canonical surface; the legacy `boo
 - [x] Users page (`/admin/users`) with role badges + event access counts.
 - [x] `removeUser` cascades through `eventAccess` and disables the Firebase Auth account.
 
+### Admin — Locations + Vendors (Phase 3.5 / Phase 3.8)
+- [x] `/admin/locations` list + detail (`LocationsClientPage` + `[id]/LocationDetailClient`) — search/sort/filter, modal create, inline edit, delete-confirm. Schema in `lib/db/locations.ts`; types include `LocationType` (8-value union), `bestLightWindow`, permit fields, accessibility, capacity, `sampleEventIds[]`, `recordVisit` idempotent helper.
+- [x] `/admin/vendors` list + detail (`VendorsClientPage` + `[id]/VendorDetailClient`) — categories (Venue/Planner/Florist/HMUA/Videographer/DJ/Officiant/Rentals), rating, cross-referral counter, notes. Schema in `lib/db/vendors.ts`.
+- [x] AdminSidebar wires both under the **Content** group.
+
+### Admin — Finance + Tax (Phase 3.1, 3.2, 13.8)
+- [x] `/admin/reports/finance` — 6 KPI tiles (YTD revenue, deposit liability, AR aging, net margin, avg project value, conversion rate) + 4 Recharts (revenue trend, revenue-by-type donut, revenue-by-source bar, Stripe payout schedule). Daily cron snapshot via `lib/domain/analytics.ts > recomputeFinanceCache` → `analyticsCache/finance:YYYY-MM-DD`. Page reads the cache row for <300ms loads.
+- [x] `/admin/reports/tax` — quarterly estimated payment + reserve, Schedule C category donut, mileage log @ `$0.70/mi`, equipment depreciation schedule (`lib/db/assets.ts` — MACRS_5 / MACRS_7 / SECTION_179 / BONUS / NONE with half-year-convention tables), YTD P&L, **tax-saving calendar** (Phase 13.8) flagging quarterly due dates + Section 179 election windows. Expense entry modal with Schedule C lines 8–27 + OTHER.
+- [x] `/api/expenses/export?year=YYYY` — QBSE-compatible CSV export.
+
+### Admin — Segments + Broadcasts (Phase 4.3)
+- [x] `/admin/segments` — predicate builder (`SegmentsClientPage` + `[id]/SegmentBuilderClientPage`). `lib/segments/resolver.ts` resolves a SegmentDoc into a `clients[]` set. 5 starter segments seeded via `scripts/seed-segments.ts`: All Clients / Booked Last 90d / Past Clients 12mo+ / Ghosted Leads / Engaged.
+- [x] `/admin/broadcasts` — block-based composer (`BroadcastsListClientPage` + `[id]/BroadcastComposerClientPage`); blocks = Hero, ImageGrid, Text, CTA, Footer. `BroadcastDoc.status: DRAFT|SCHEDULED|SENDING|SENT`. Send orchestration in `lib/broadcasts/sender.ts` writes per-recipient `sendIdsByRecipient` and fans out through `enqueueTrackedMail`. Cron drain for `SCHEDULED` broadcasts in `/api/cron/run-tasks`.
+
+### Gallery favorites + Korrin's picks (Phase 2.5 / Phase 13.5)
+- [x] Client-side favorites toggle on `/gallery/[id]` (`GalleryViewer`); persists to `events/{id}/photos/{photoId}.favoritedByClient`.
+- [x] Korrin's-picks overlay — admin marks photos via `app/admin/events/[id]/gallery/actions.ts`; gallery renders a "Korrin's pick" badge on flagged photos.
+- [x] `/api/download/[eventId]/favorites` streams a zip of only the client's favorites (200-cap, 413 overflow), parallel to the full-gallery zip route.
+
 ### Payments & Webhooks
 - [x] `lib/stripe.ts` — SDK singleton + `createPaymentLinkForInvoice` (falls back to a mock client when `STRIPE_SECRET_KEY` is missing for local dev).
 - [x] `/api/webhooks/stripe` — verifies signature; handles `checkout.session.completed`, `payment_intent.succeeded`, `charge.refunded`, `charge.dispute.created|updated|closed`. Event-level idempotency via `stripeWebhookEvents`; doc-level via `refundCents` / dispute timestamps.
@@ -162,28 +181,22 @@ Single unified Client/Project pipeline is the canonical surface; the legacy `boo
 - [ ] **Phase 2.1 — Multi-step booking inquiry** beyond the current draft persistence.
 - [ ] **Phase 2.2 — Style quiz + mood board** (`/style`).
 - [ ] **Phase 2.4 — Portal redesign `/portal/[projectId]`** with tabs mirroring admin workspace.
-- [ ] **Phase 2.5 — Gallery favorites + proofing.**
 - [ ] **Phase 2.6 — Gallery polish:** slideshow with music, mobile gestures, download PIN, resolution tiers picker.
 - [ ] **Phase 2.8 — Day-of-shoot timeline builder.**
 
 ### Phase 3 — Business Operations
-- [ ] **Phase 3.1 — Financial dashboard `/admin/reports/finance`.**
-- [ ] **Phase 3.2 — Expense tracking + tax dashboard `/admin/reports/tax`.**
-- [ ] **Phase 3.3 — Google Calendar two-way sync.**
-- [ ] **Phase 3.4 — Shoot brief auto-generator (24h pre-shoot PDF).**
-- [ ] **Phase 3.5 — Location scouting `/admin/locations`** (schema reserved; UI not built).
-- [ ] **Phase 3.6 — Weather + golden-hour intelligence** (`lib/weather.ts` and `lib/golden-hour.ts` adapters exist; not wired into shoot brief).
-- [ ] **Phase 3.7 — Gear checklist per shoot type.**
-- [ ] **Phase 3.8 — Vendor / collaborator CRM `/admin/vendors`** (schema reserved; UI not built).
+- [ ] **Phase 3.3 — Google Calendar two-way sync.** (external Google Cloud project required)
+- [ ] **Phase 3.4 — Shoot brief auto-generator** (24h pre-shoot HTML packet emailed to Korrin).
+- [ ] **Phase 3.6 — Weather + golden-hour wiring** — `lib/weather.ts` + `lib/golden-hour.ts` exist; need cron sweep that persists `weatherSnapshot` on each project at T-72h and T-24h.
+- [ ] **Phase 3.7 — Gear checklist per shoot type** (templates + per-project `gearLog` + workspace tab).
 - [ ] **Phase 3.9 — COI request workflow.**
 - [ ] **Phase 3.10 — Compliance dashboard.**
 - [ ] **Phase 3.11 — Sales tax engine.**
-- [ ] **Phase 3.13 — Editing-workflow tracker** (status pills, aging alerts).
+- [ ] **Phase 3.13 — Editing-workflow tracker** (status pills, aging alerts per category SLA).
 - [ ] **Phase 3.14 — Capacity planning `/admin/calendar`** heatmap.
 
 ### Phase 4 — Growth Engine
 - [ ] **Phase 4.1 — Lead magnets.**
-- [ ] **Phase 4.3 — Segments + broadcast composer** (`lib/db/segments.ts` schema reserved).
 - [ ] **Phase 4.5 — Referral chain visualization `/admin/reports/referrals`** (Sankey or force-directed).
 - [ ] **Phase 4.7 — Press submission tracker.**
 - [ ] **Phase 4.8 — Journal post auto-drafter** (`/journal/[slug]`).
@@ -206,10 +219,8 @@ Single unified Client/Project pipeline is the canonical surface; the legacy `boo
 ### Original ideas (Phase 13)
 - [ ] **13.2 — Studio Hours** (auto-responder during off-hours).
 - [ ] **13.4 — Booking-form post-submit calendar embed.**
-- [ ] **13.5 — "Korrin's picks" overlay** in gallery.
 - [ ] **13.6 — Recurring revenue layer** (annual family update sessions).
 - [ ] **13.7 — Local SEO autopilot.**
-- [ ] **13.8 — Tax-saving calendar.**
 - [ ] **13.9 — Quiet Season planner.**
 - [ ] **13.10 — Gallery analytics for the client.**
 - [ ] **13.11 — Cross-vendor wedding-day room.**
@@ -227,7 +238,6 @@ Single unified Client/Project pipeline is the canonical surface; the legacy `boo
 - [ ] **Image category assignment on upload.** Portfolio filters by `category`; the upload zone never sets one.
 - [ ] **Photo label editing post-upload.** Labels seeded from filename; cannot be edited.
 - [ ] **Real PNG icons** for PWA manifest (currently favicon placeholder for 192 + 512).
-- [ ] **Drop the unused legacy exports from `lib/booking-kanban.ts`** (`LeadStatus`, `LeadSource`, `KANBAN_STATUSES`, `PRESET_TAGS`, `ALL_STATUSES`). Only `CommunicationChannel` is still consumed by `MessageDoc` — move it to `lib/db/projects.ts` and delete the file.
 - [ ] **Follow-up date editor UI** on the project workspace (field exists on `ProjectDoc`, no editor).
 - [ ] **Manual multi-channel comms entry** on the project workspace (channel selection for PHONE / IN_PERSON / SMS — currently can be captured in NotesTab).
 
@@ -265,6 +275,12 @@ Single unified Client/Project pipeline is the canonical surface; the legacy `boo
 ---
 
 ## Recently Resolved
+
+### May 2026 — Wave 5 (commit `3b6010c`)
+
+Financial dashboard (`/admin/reports/finance`) — 6 KPIs + 4 Recharts + Stripe payout schedule + daily `analyticsCache` snapshot via cron. Tax / expenses dashboard (`/admin/reports/tax`) — MACRS depreciation, $0.70/mi mileage, Schedule C donut, **tax-saving calendar** (Phase 13.8), QBSE CSV export. Gallery favorites + **Korrin's-picks** overlay (Phase 2.5 + 13.5) — `FavoritesModal` on `/gallery/[id]` + `/api/download/[eventId]/favorites` zip. `/admin/broadcasts` block-based composer (Phase 4.3) — segment-targeted, scheduled-send drain via cron. New collections: `expenses`, `assets`, `broadcasts`, `analyticsCache`. New libs: `lib/db/{expenses,assets,broadcasts,analytics-cache}.ts`, `lib/domain/analytics.ts`, `lib/segments/resolver.ts`, `lib/broadcasts/sender.ts`.
+
+Follow-up commit `da936c6`: deleted `lib/booking-kanban.ts` entirely (`CommunicationChannel` moved to `lib/db/projects.ts`).
 
 ### May 2026 — Waves 1-4 (single session, all parallel)
 
