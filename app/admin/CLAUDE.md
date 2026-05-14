@@ -15,7 +15,7 @@ app/admin/layout.tsx → requireAdmin() → <AdminSidebar /> + <children />
 
 The sidebar component is at `components/admin/AdminSidebar.tsx` (NOT inside `app/admin/`). Import it as `@/components/admin/AdminSidebar`. It is a `"use client"` component because it uses `usePathname()` for active-link highlighting.
 
-`AdminSidebar` is organised into four groups: **Overview** (Dashboard, Inbox, Pipeline), **Content** (Events, Locations, Vendors), **Clients** (Segments, Sequences, Questionnaires, Users), **Settings** (Automations). The `isActive` check uses `pathname.startsWith(href)` for non-root entries, so the Pipeline entry highlights for `/admin/projects` and `/admin/projects/[id]` alike.
+`AdminSidebar` is organised into five groups: **Overview** (Dashboard, Inbox, Pipeline, Clients, Capacity), **Content** (Events, Locations, Vendors, Lead Magnets, Shop, Journal, Campaigns), **Clients** (Questionnaires, Users), **Marketing** (Segments, Broadcasts, Sequences), **Reports** (Finance, Tax & Expenses, Sales Tax, Referrals, Compliance, Ad Spend, First 100, Quiet Season, Health, Exports), **Settings** (Automations, Gear Templates, Studio Hours, Insurer, Brand voice, Tax, Reply templates). The `isActive` check uses `pathname.startsWith(href)` for non-root entries, so the Pipeline entry highlights for `/admin/projects` and `/admin/projects/[id]` alike.
 
 ## Dashboard (`page.tsx`)
 

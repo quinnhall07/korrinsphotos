@@ -248,6 +248,58 @@
 
 ---
 
+## ADR-017: Token-Gated Public Routes (URL-as-Credential)
+
+**Decision:** Public artifacts that need to be shared with non-authenticated third parties (sign-contract, questionnaire, welcome packet, day-of-room) are exposed via routes that accept a 32-character hex token in `?t=<token>` and do `crypto.timingSafeEqual` against the stored token. No login required; the URL itself is the credential.
+
+**Routes using this pattern:**
+- `/sign-contract/[id]?t=<token>` — `contracts/{id}.signingToken` (Wave 1).
+- `/questionnaire/[id]` — id-as-credential (no `?t=`); the questionnaire id is the secret.
+- `/welcome-packet/[projectId]?t=<token>` — `projects/{id}.welcomePacketToken` (Wave 4).
+- `/day-of-room/[projectId]?t=<token>` — `projects/{id}.dayOfRoomToken` (Wave 12).
+
+**Rationale:**
+- Vendors / clients / venue staff opening these links are non-technical; magic-link auth would add friction with no security gain (the link itself already grants access).
+- `crypto.timingSafeEqual` on equal-length buffers prevents timing-side-channel exfiltration of the token.
+- A separate `*Enabled` flag per surface lets the admin pause access without revoking the token (handy when a vendor temporarily shouldn't see updates).
+- Token rotation (`mintNewDayOfRoomToken`, contract `signingToken` re-mint, welcome-packet token re-mint) invalidates the prior URL — admin can revoke a leaked link without affecting future shares.
+
+**Constraints every token-gated route MUST follow:**
+1. `dynamic = "force-dynamic"` — never cache the rendered HTML.
+2. Constant-time token compare via `crypto.timingSafeEqual` (NOT `===` against the hex string — Node string compare is short-circuit).
+3. Whitelist serializer — explicitly select only the fields the third party needs. Never spread the full doc into the response. The `/day-of-room` route is the canonical example: it builds a `RoomData` object with project title, client first names + phone + email, visible-to-client timeline blocks, and minimal vendor fields — no `notes`, no `offTheRecordNotes`, no `leadScore`, no financials, no contracts, no invoices, no messages.
+4. `notFound()` (not 500, not data leak) on any check failure: missing token, missing doc, disabled flag, token mismatch, expired token.
+5. `robots: noindex` in metadata — these URLs must not enter search indexes.
+
+**Trade-offs:**
+- A leaked URL = full leak of that artifact. The admin's escape hatch is token rotation. Document this explicitly when introducing a new token-gated surface.
+- Single-field equality lookup (`where("dayOfRoomToken", "==", token)`) requires Firestore's automatic single-field index on the token field. Document the index requirement in PROGRESS.md infra table when introducing a new one.
+
+---
+
+## ADR-018: Cross-Agent Integration Discipline
+
+**Decision:** When dispatching N parallel agents to ship features in the same wave, each agent's prompt explicitly enumerates the files it MAY touch and the files it MUST NOT touch. The coordinator (the parent session) is responsible for resolving any cross-agent merge conflicts at integration time.
+
+**Rationale:**
+- The waves-1-through-12 cycle proved that 4-10 parallel agents can each ship a full feature in 2-15 minutes when their work is genuinely independent. Without explicit collision boundaries, two agents editing the same file overwrite each other's changes (a real risk on shared files like `components/admin/AdminSidebar.tsx`, `lib/db/projects.ts`, `lib/db/photos.ts`).
+- Constraints in agent prompts must be exhaustive — listing only what the agent MAY touch is insufficient because the agent will sometimes need to touch a file you didn't anticipate; listing only what the agent MUST NOT touch is insufficient because the agent will sometimes touch a file outside the listed exclusions. Both sides of the boundary are required.
+- "Single discrete insert" is the pattern for shared-file additions (e.g. AdminSidebar nav entries). The agent commits to NOT restructuring the file, only inserting one block.
+- For `ProjectWorkspaceClient.tsx`-scale files (5000+ lines, multiple tabs) where two agents must both touch it, partition by JSX block: agent A edits OverviewTab + MessagesTab, agent B edits the Day-of tab; neither touches NotesTab or each other's tabs.
+
+**Pattern that works:**
+1. Coordinator gap-analyzes the roadmap and groups work by file-level independence.
+2. Each agent prompt names: the goal, the schema additions (additive only), the server actions, the UI surface, the verification gates (`npm run build` + `npm run lint`), and explicit MAY/MUST-NOT touch lists.
+3. Agents return concise summaries with build/lint exit codes.
+4. Coordinator runs final integration build, manually fixes any AdminSidebar / shared-file collisions, commits the wave with a multi-bullet message documenting tradeoffs, pushes.
+5. Coordinator then refreshes PROGRESS.md in a separate commit so the wave commit and the doc commit can be reviewed independently.
+
+**Trade-offs:**
+- Agent prompts get long (~300-500 words each). The constraint enumeration is the longest part. This is correct: under-specified agents waste a full agent run on a single conflict resolution.
+- Some agents will report build errors caused by other in-flight agents' files. The pattern is: agent reports its own files are clean (`tsc --noEmit` zero errors in the touched paths), reports the other-agent error path, continues. Coordinator reconciles at integration.
+
+---
+
 ## ADR-016: `__origin` UTM Attribution Cookie
 
 **Decision:** `middleware.ts` writes a JS-readable `__origin` cookie on the first page request that lacks one. It carries `{ source, medium, campaign, referralCode, landingUrl, ts }`. `app/booking/actions.ts` reads it (server-side via `cookies()`) and stamps the values onto the new `clients` doc as `firstTouch*` fields.

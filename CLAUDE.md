@@ -300,7 +300,35 @@ assets/{assetId}
   placedInServiceDate, section179Cents?, salvageValueCents?, retiredAt?, photoR2Key?,
   createdAt, updatedAt
   (Depreciable equipment ledger. `currentYearDepreciationCents(asset, year)` is a pure helper.)
+
+styleProfiles/{email}                     # Wave-9 (Phase 2.2)
+  email (doc id, lowercased+trimmed), firstName?, answers (Record<questionId, optionId>),
+  tagSummary (string[] derived dominant tags), submittedAt, updatedAt
+  (Re-submission overwrites atomically. Surfaced on /admin/projects/[id] above the workspace.)
+
+products/{productId}                      # Wave-11 (Phase 4.13)
+  slug (locked post-create), title, type (PRESET_DESKTOP|PRESET_MOBILE|COURSE|EBOOK|OTHER),
+  status (DRAFT|PUBLISHED|ARCHIVED), shortDescription, longDescriptionHtml, priceCents,
+  heroImageUrl?, galleryImageUrls?, fileR2Key, fileSizeBytes?,
+  stripePaymentLinkUrl?, stripePriceId?, purchaseCount?, createdAt, updatedAt
+  (Public /shop renders PUBLISHED only. Stripe Payment Link auto-created on publish.)
+
+productPurchases/{purchaseId}             # Wave-11 (Phase 4.13)
+  productId, productSlug, buyerEmail, buyerName?, amountCents,
+  stripeCheckoutSessionId (idempotency key), deliveryR2Key, deliveredAt?, createdAt
+  (Webhook generates 7-day presigned R2 GET URL + emails buyer via enqueueTrackedMail.)
 ```
+
+### Project subcollections introduced in Wave 9-12
+
+- `projects/{id}/dayOfTimeline` — Wave 8, ordered timeline blocks; `visibleToClient` flag controls /portal + /day-of-room exposure.
+- `projects/{id}.offTheRecordNotes` (field on ProjectDoc, Wave 9) — admin-only; NEVER export. Confirmed clean against welcome-packet, shoot-brief, journal-drafter, contract-renderer, portal, AI consumers.
+- `projects/{id}.{dayOfRoomToken,dayOfRoomTokenIssuedAt,dayOfRoomEnabled,dayOfRoomVendorIds}` (Wave 12) — token-gated cross-vendor read-only view at `/day-of-room/[projectId]?t=<token>`. See ADR-017.
+
+### Settings on `users/{uid}` (admin-only) introduced in Wave 9-12
+
+- `users/{uid}.brandVoiceSamples: BrandVoiceSample[]` (Wave 9) — up to 10 samples, 50–1000 char body cap. Surfaced as voice-anchor card in `/admin/inbox` detail panel.
+- `users/{uid}.replyTemplates: ReplyTemplate[]` (Wave 12) — saved reply blocks, 50–2000 char body, soft cap 30. Quick-insert popover above the message textarea on the project workspace.
 
 `ProjectStatus` is defined in `lib/db/projects.ts` and runs the full lifecycle: `SITE_VISIT → INQUIRY → QUALIFYING → PROPOSAL_SENT → NEGOTIATING → CONTRACT_SENT → DEPOSIT_PENDING → BOOKED → SHOOT_READY → IN_EDITING → GALLERY_DELIVERED → REFERRAL_SENT → COMPLETED` (with `LOST` and `ARCHIVED` as terminal off-ramps).
 
