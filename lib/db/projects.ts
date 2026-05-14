@@ -1,9 +1,8 @@
 import { adminDb } from "@/lib/firebase-admin";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import type { LeadSource } from "./clients";
-import type { CommunicationChannel } from "@/lib/booking-kanban";
 
-export type { CommunicationChannel } from "@/lib/booking-kanban";
+export type CommunicationChannel = "EMAIL" | "PHONE" | "SMS" | "IN_PERSON";
 
 export type ProjectStatus =
   | "SITE_VISIT"

@@ -32,7 +32,9 @@ Direction of dependency: `domain/` and top-level helpers may import from `db/` a
 | `project-transitions.ts` | Server-only. `handleProjectTransition()` runs lifecycle hooks (`onProjectBooked`, `onProposalSent`, `onGalleryDelivered`) for status changes. |
 | `contract-renderer.ts` | Server-only. Token-replaces `{{CLIENT_*}}` / `{{PROJECT_*}}` placeholders against a Project + Client; `generateContractForProject()` writes a draft `contracts/` doc. |
 | `lead-scoring.ts` | Pure function. `calculateLeadScore()` over the structural `LeadScoreInput` shape. Re-run on any change to `tags`, `estimatedValue`, `sessionType`, `message`, `preferredDate`/`shootDate`, or `leadSource`. |
-| `booking-kanban.ts` | Pure types/constants. `CommunicationChannel` (consumed by `lib/db/projects > MessageDoc`); plus legacy `LeadStatus`, `LeadSource`, `KANBAN_STATUSES`, `PRESET_TAGS` left in place for any historical scripts that may still reference them. Safe to import from client components. |
+| `automations/recipes.ts` | Pure types + 8-recipe catalog (`AUTOMATION_RECIPES`) + `getEffectiveAutomationConfig(uid?)`. Consumed by `project-transitions.ts` and `/admin/settings/automations`. |
+| `email/tracking.ts` | Server-only. `enqueueTrackedMail()` — mints `sendId`, rewrites external links via `/t/c/{sendId}`, injects `/t/o/{sendId}` pixel, writes an `emailEvents` "sent" row, posts to `mail/`. Every outbound mail in the app goes through this helper. |
+| `seo/schema.ts` | Pure. `buildPhotographerSchema`, `buildServiceSchema`, `buildBlogPostingSchema`, `buildBreadcrumbSchema` — JSON-LD builders consumed by `<JsonLd>`. |
 | `upload.ts` | Client-only. `uploadMultipartFile()` — drives `/api/upload/multipart/{init,complete}` with parallel part PUTs (`CHUNK_SIZE=10MB`, `CONCURRENCY=3`). |
 | `date.ts` | Pure. `toDate`, `formatDisplayDate`, `formatDateInput`, `formatDateTime` — accept `Date | string | { toDate() }`. Safe everywhere. |
 | `cloudflare.ts` | Deprecated re-export facade. Forwards from `lib/storage/r2` and `lib/storage/images`. Do not add new exports here — import from `lib/storage/*` directly. |

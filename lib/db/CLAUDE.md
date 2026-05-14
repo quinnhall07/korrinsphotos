@@ -60,15 +60,23 @@ NEVER reintroduce a `lib/firestore.ts` (or `lib/db/index.ts`) that re-exports ev
 | File | Collection | One-liner |
 |---|---|---|
 | `activity.ts` | `activityFeed` | Append-only feed for admin dashboard; `logActivity` + `listRecentActivity`. |
-| `clients.ts` | `clients` | Universal Client record (email = unique). Includes referral + first-touch attribution fields. `generateReferralCode()` lives here. |
-| `contracts.ts` | `contracts` | Per-project signed agreements; `DRAFT|SENT|SIGNED|VOIDED`. |
-| `event-access.ts` | `eventAccess` | Per-client gallery access grants. Composite ID `${eventId}_${userId}`. |
-| `events.ts` | `events` | Event/shoot record. Photos live in the `events/{id}/photos` subcollection (NOT the flat `photos` collection). |
-| `invoices.ts` | `invoices` | `DEPOSIT|BALANCE|FULL` invoices with Stripe payment link metadata. |
-| `mail.ts` | `mail` | Firebase Trigger Email queue. `sendEmail(to, subject, html)` just enqueues; the extension delivers. |
+| `clients.ts` | `clients` | Universal Client record (email = unique). Referral fields (`referralCode`, `referralCount`, `referralTier`, `referralRewardsLog`, `referralAttributions`, `referralCredit`, `referredBy`) + first-touch attribution. `generateReferralCode()` lives here. |
+| `contracts.ts` | `contracts` | Per-project signed agreements; `DRAFT|SENT|SIGNED|VOIDED`; token-validated signing flow stores `signingToken`, `tokenExpiresAt`, `signerIp`/`signerUserAgent`, `signedPdfR2Key`. |
+| `email-events.ts` | `emailEvents` | Open / click / sent / bounced / unsub tracking rows written by `lib/email/tracking.ts > enqueueTrackedMail`. |
+| `events.ts` | `events` | Event/shoot record. Canonical `EventStatus = UPCOMING|ACTIVE|COMPLETED|DELIVERED|ARCHIVED`. Photos live in the `events/{id}/photos` subcollection. |
+| `inbox.ts` | `inboxItems` | Aggregated triage feed (inquiries / payments / signings / disputes / refunds / unmatched mail). |
+| `invoices.ts` | `invoices` | `DEPOSIT|BALANCE|FULL` invoices with Stripe payment link metadata + refund/dispute ledger fields (`refundCents`, `disputeStatus`, etc.). |
+| `locations.ts` | `locations` | Reusable shoot-location records (schema reserved for Phase 3.5). |
 | `photos.ts` | `photos` | Flat `photos` collection used by `listPublicPhotos` (portfolio). Per-event photos live under `events/{id}/photos` and are read directly via `adminDb` in `lib/domain/events.ts`. |
-| `projects.ts` | `projects` (+ `projects/{id}/messages`) | Master state machine: `ProjectStatus`, `ProjectDoc`, `MessageDoc`, `projectMessagesCol()`. |
-| `users.ts` | `users` | Firebase Auth user mirror with `role: "ADMIN" | "CLIENT"`. `upsertUser` runs inside a transaction. |
+| `projects.ts` | `projects` (+ `projects/{id}/messages`) | Master state machine: `ProjectStatus`, `ProjectDoc`, `MessageDoc`, `CommunicationChannel`, `projectMessagesCol()`. |
+| `questionnaires.ts` | `questionnaireTemplates` + `questionnaires` | Templates (one per session type) + per-project instances (`PENDING`/`COMPLETED`). 5 seeded defaults. |
+| `reviews.ts` | `reviewRequests` | Multi-step (Google → Knot → Facebook) review request rows fanned out on NPS ≥ 4. |
+| `saved-views.ts` | `users/{uid}/views` | Per-admin saved pipeline filters (5 built-in defaults stay static in code). |
+| `segments.ts` | `segments` | Saved-predicate audience definitions (schema reserved for Phase 4.3). |
+| `sequence-enrollments.ts` | `sequenceEnrollments` | Per-client active drip state consumed by `runDueSequences` in the cron worker. |
+| `sequences.ts` | `sequences` | Reusable email/SMS drip definitions (status-triggered + date-triggered). |
+| `users.ts` | `users` | Firebase Auth user mirror with `role: "ADMIN" \| "CLIENT"`. `upsertUser` runs inside a transaction. `notificationPrefs`, `phone`, `automationConfig` live here. |
+| `vendors.ts` | `vendors` | Venue/planner/HMUA records (schema reserved for Phase 3.8). |
 
 ---
 
@@ -78,4 +86,4 @@ NEVER reintroduce a `lib/firestore.ts` (or `lib/db/index.ts`) that re-exports ev
 - `update*` returns `void`; do not echo back the document.
 - Use `FieldValue.serverTimestamp()` for `updatedAt`; use `Timestamp.now()` for write-time fields on creation when you need to read the value back immediately.
 - Pair `where("field", "!=", null)` with `orderBy("field")` before any secondary `orderBy` — see `listPublicPhotos` in `photos.ts`.
-- Count queries use `.count().get()` (e.g. `countPhotos`, `countEventAccess`, `countBookingInquiries`).
+- Count queries use `.count().get()` (e.g. `countPhotos`, `countEventAccess`).
