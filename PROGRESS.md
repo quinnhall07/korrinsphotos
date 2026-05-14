@@ -1,19 +1,19 @@
 # PROGRESS.md — Korrin's Photos
 
-> Last updated: 2026-05-14 (post-Wave-7)
+> Last updated: 2026-05-14 (post-Wave-8)
 > Source of truth for "what state is the codebase actually in." Update on feature completion, bug discovery/fix, or task abandonment.
 
 ---
 
 ## Overall Status
 
-Single unified Client/Project pipeline is the canonical surface; the legacy `bookingInquiries` Kanban + `/admin/bookings` directory have been fully retired (May 2026). Phase 0 cleanup, Phase 1 CRM, the questionnaire/welcome-packet/NPS/review-request loop (Phase 2 partials), the sequence engine (Phase 4.2), the tiered referral engine (Phase 4.4), the email open/click tracking layer (Phase 1.6), JSON-LD schema markup (Phase 4.12), Stripe refund + dispute ledger (Phase 3.12), PWA install (Phase 1.10), Firestore Security Rules + firebase.json, the public `/investment` page (Phase 2.3), the Phase 3.1 finance dashboard, Phase 3.2 tax/expenses dashboard, Phase 3.4 shoot-brief auto-generator, Phase 3.5 location scouting, Phase 3.6 weather + golden-hour persistence, Phase 3.7 gear checklist, Phase 3.8 vendor CRM, Phase 3.13 editing-workflow tracker, Phase 3.14 capacity heatmap, Phase 4.1 lead magnets, Phase 4.3 segments + broadcast composer, Phase 4.5 referral chain visualization, Phase 4.7 press submission tracker + backlink monitor, Phase 4.8 journal auto-drafter + public `/journal`, Phase 4.9 campaign landing pages at `/c/[slug]`, Phase 2.5 gallery favorites, Phase 13.5 Korrin's-picks overlay, and Phase 13.8 tax-saving calendar are all live. Remaining work tracks the Phase 2.x portal redesign, the tail of Phase 3 (Google Calendar sync, COI, compliance, sales tax), Phase 5 AI assists beyond draft reply / thread summary, and the long tail of Phase 6 / Phase 13 "original ideas".
+Single unified Client/Project pipeline is the canonical surface; the legacy `bookingInquiries` Kanban + `/admin/bookings` directory have been fully retired (May 2026). Phase 0 cleanup, Phase 1 CRM, the questionnaire/welcome-packet/NPS/review-request loop, the sequence engine (4.2), tiered referrals (4.4), email open/click tracking (1.6), JSON-LD schema (4.12), Stripe refund + dispute ledger (3.12), PWA install (1.10), Firestore Security Rules + firebase.json, public `/investment` (2.3), Phase 2.4 client portal `/portal/[projectId]`, Phase 2.5 gallery favorites, Phase 2.6 gallery polish (slideshow + swipe + PIN + resolution tiers), Phase 2.8 day-of-shoot timeline, Phase 3.1 finance dashboard, Phase 3.2 tax/expenses, Phase 3.4 shoot-brief auto-generator, Phase 3.5 location scouting, Phase 3.6 weather + golden-hour persistence, Phase 3.7 gear checklist, Phase 3.8 vendor CRM, Phase 3.9 COI request workflow, Phase 3.10 compliance dashboard, Phase 3.11 sales tax engine, Phase 3.13 editing-workflow tracker, Phase 3.14 capacity heatmap, Phase 4.1 lead magnets, Phase 4.3 segments + broadcast composer, Phase 4.5 referral chain viz, Phase 4.7 press tracker + backlink monitor, Phase 4.8 journal auto-drafter + public `/journal`, Phase 4.9 campaign landing pages at `/c/[slug]`, Phase 13.2 Studio Hours auto-responder, Phase 13.5 Korrin's-picks overlay, Phase 13.6 recurring revenue layer, Phase 13.8 tax-saving calendar, Phase 13.16 far-future-date risk flag, and Phase 13.18 ad-spend / ROAS tracking are all live. Remaining work tracks Phase 2.1/2.2 (multi-step booking + style quiz), the external-dependent Phase 3.3 Google Calendar sync, Phase 5 AI assists beyond draft reply / thread summary (needs `ANTHROPIC_API_KEY`), and the long tail of Phase 6 / Phase 13 "original ideas".
 
 ---
 
 ## Architecture Snapshot
 
-- **Single canonical pipeline.** `clients`, `projects` + `messages` + `gearLog` + `pressSubmissions` subcollections, `contracts`, `invoices`, `scheduledTasks` (SEND_REFERRAL | AUTO_FOLLOW_UP | SNEAK_PEEK | SHOOT_BRIEF), `sequences` + `sequenceEnrollments`, `questionnaires` + `questionnaireTemplates`, `gearTemplates`, `reviewRequests`, `inboxItems`, `emailEvents`, `paymentIntents` (Stripe mirror), `stripeWebhookEvents` (idempotency), `locations`, `vendors`, `segments`, `broadcasts`, `expenses`, `assets`, `analyticsCache`, `leadMagnets`, `leadMagnetDownloads`, `journalPosts`, `campaigns`, plus legacy `events`, `eventAccess`, `mail`, `activityFeed`, `users`. The legacy `bookingInquiries` collection still exists in Firestore but is no longer written to.
+- **Single canonical pipeline.** `clients`, `projects` + `messages` + `gearLog` + `pressSubmissions` + `dayOfTimeline` subcollections, `contracts`, `invoices`, `scheduledTasks` (SEND_REFERRAL | AUTO_FOLLOW_UP | SNEAK_PEEK | SHOOT_BRIEF), `sequences` + `sequenceEnrollments`, `questionnaires` + `questionnaireTemplates`, `gearTemplates`, `reviewRequests`, `inboxItems` (with CLIENT_MESSAGE, RE_ENGAGEMENT_DUE, FAR_FUTURE_RISK, COI_REQUESTED, COI_RECEIVED, SALES_TAX_OVERDUE, PRESS_LINK_DOWN types), `emailEvents`, `paymentIntents` (Stripe mirror), `stripeWebhookEvents` (idempotency), `locations`, `vendors`, `segments`, `broadcasts`, `expenses`, `assets`, `analyticsCache`, `leadMagnets`, `leadMagnetDownloads`, `journalPosts`, `campaigns`, `adSpendEntries`, `dataRequests`, `salesTaxFilings`, plus legacy `events`, `eventAccess`, `mail`, `activityFeed`, `users`. The legacy `bookingInquiries` collection still exists in Firestore but is no longer written to.
 - **No more dual-write.** `app/booking/actions.ts → submitBooking` writes `clients` + `projects` + first inbound `messages` entry + activity log + tracked auto-responder. The legacy `bookingInquiries` insert was removed in the May 2026 retirement commit.
 - **`ProjectStatus` is the master state machine** (`SITE_VISIT → INQUIRY → QUALIFYING → PROPOSAL_SENT → NEGOTIATING → CONTRACT_SENT → DEPOSIT_PENDING → BOOKED → SHOOT_READY → IN_EDITING → GALLERY_DELIVERED → REFERRAL_SENT → COMPLETED` with `LOST` / `ARCHIVED`). Every transition runs through `updateProjectStatus → handleProjectTransition` which: resolves the admin's `automationConfig`, fires per-status hooks (`onProjectBooked` / `onProposalSent` / `onContractSent` / `onDepositPending` / `onGalleryDelivered`), enrolls into every active STATUS_CHANGE sequence, and queues recipe-gated `scheduledTasks` (SEND_REFERRAL, AUTO_FOLLOW_UP, SNEAK_PEEK).
 - **Stripe + Cron + tracked mail.** `/api/webhooks/stripe` handles `checkout.session.completed`, `payment_intent.succeeded`, `charge.refunded`, and `charge.dispute.created|updated|closed` with event-level idempotency via `stripeWebhookEvents/{id}`. `/api/cron/run-tasks` drains `scheduledTasks` (SEND_REFERRAL, AUTO_FOLLOW_UP by recipeKey, SNEAK_PEEK), dispatches due review requests, and runs sequence enrollments. Every outbound mail flows through `lib/email/tracking.ts > enqueueTrackedMail` which mints a `sendId`, rewrites external links to `/t/c/{sendId}`, injects a `/t/o/{sendId}` pixel, and writes `emailEvents` rows.
@@ -139,6 +139,22 @@ Single unified Client/Project pipeline is the canonical surface; the legacy `boo
 - [x] **Editing-workflow tracker** (Phase 3.13). `EditingSubStage` union (`INGESTION | CULLED | EDITED | EXPORTED | DELIVERED`) + `editingSubStageHistory[]` on `ProjectDoc`. Per-sessionType SLA in `lib/editing-sla.ts` (Wedding 56d, Editorial 28d, Commercial 21d, Engagement 14d, Portrait 10d, Family 10d, default 14d). Pure `computeEditingStatus` in `lib/editing-status.ts` returns `{ daysIn, slaDays, pct, status: ON_TRACK | AT_RISK | OVERDUE, pillLabel }`. Pipeline table renders an "Editing — Day 18 of 28" pill with coloured dot only when `status == IN_EDITING`. 5-step stepper in OverviewTab; flipping to `DELIVERED` delegates to `updateProjectStatus(projectId, "GALLERY_DELIVERED")` so `handleProjectTransition` fires exactly once.
 - [x] **Capacity heatmap** (Phase 3.14). `/admin/calendar` — `lib/domain/capacity.ts > buildCapacityHeatmap` returns 64 sequential Monday-anchored `WeekBucket`s (12 back + 52 forward) joined to project metadata. 13-column grid; per-cell colour scale (empty / <50% / 50-100% / 100-150% / >150% of `WEEKLY_CAP=3`); click-to-open side panel listing the week's projects with travel placeholder.
 
+### Client portal + gallery polish + timeline (Phase 2.4, 2.6, 2.8)
+- [x] **Client portal** (Phase 2.4). `/portal/[projectId]` — 7 tabs (Overview / Documents / Invoices / Timeline / Gallery / Inspiration / Contact). Auth via `requireSession()` + email match against `clients/{clientId}.email` (ADMIN bypass for preview). Client → admin messages write INBOUND `messages` rows, queue a `CLIENT_MESSAGE` inbox item, and email Korrin via `enqueueTrackedMail`. `/portal/router` resolves the signed-in user to their most-recent project. Public Navbar gains "My Portal".
+- [x] **Gallery polish** (Phase 2.6). Slideshow overlay (Space/Esc/arrow nav, 3/5/8s auto-advance, optional muted music via `/audio/gallery-loop.mp3` placeholder). Touch-swipe (60px horizontal advance, 120px vertical dismiss) on Lightbox + SlideshowOverlay. `EventDoc.downloadPin` (constant-time `crypto.timingSafeEqual` compare) gates zip / favorites / per-photo downloads with 3-retry + 60s lockout. Resolution-tier picker (`web` → CF `gallery`, `print` → CF `download`, `original` → R2 presigned with `MANIFEST.txt` fallback note).
+- [x] **Day-of-shoot timeline** (Phase 2.8). `projects/{id}/dayOfTimeline` subcollection (`TimelineBlockType` union, HH:mm `startTime` string, `durationMinutes`, `location`, `blockType`, `visibleToClient`). Workspace "Day-of" tab with native HTML5 drag-reorder and `runTransaction`-backed `reorderTimelineBlocks`. Phase 3.4 shoot brief composes the schedule section when present (defensive direct Firestore read).
+
+### Admin — Compliance triangle (Phase 3.9, 3.10, 3.11)
+- [x] **COI request workflow** (Phase 3.9). 9 COI fields on `ProjectDoc` + per-admin `users/{uid}.insurerContact`. Contract-tab `CoiBlock` toggles requirement, edits venue + additional-insured language, sends a templated tracked email to the insurer + a CC copy to Korrin, presigns an R2 PUT for the PDF upload, and writes `coiReceivedAt` on confirm. Pipeline `CoiChip` surfaces overdue COI within 14d of shoot. `/admin/settings/insurer` form.
+- [x] **Compliance dashboard** (Phase 3.10). `/admin/reports/compliance` with 4 sections — contracts (booked-without-signed list), COI (defensive read of B1 fields), data requests (new `dataRequests` collection with 30-day GDPR/CCPA dueBy clock + `OPEN | IN_PROGRESS | FULFILLED | REJECTED` states), sales tax (dynamic-import of B3 module). "Log new request" modal. AdminSidebar entry under **Reports**.
+- [x] **Sales tax engine** (Phase 3.11). Pure `lib/sales-tax-rules.ts` with 12 state rules (NC/SC/VA/GA/FL/TN/MD/DC/NY/CA/TX + OTHER fallback) keyed by `digitalPhotosTaxable` + `printsTaxable` + `ratePct` + filing cadence. `InvoiceDoc` gains `subtotalCents` + `taxCents` + `taxStateCode` + `taxRatePct`; `project-transitions` computes the breakdown on DEPOSIT / BALANCE writes and keeps `amountCents = subtotal + tax` so Stripe Payment Links keep working unchanged. `salesTaxFilings` collection with idempotent `regenerateUpcomingFilings` cron + DUE_SOON → OVERDUE auto-flip + dedup'd `SALES_TAX_OVERDUE` inbox emit. `/admin/reports/sales-tax` (overdue + upcoming + ledger + CSV export). `/admin/settings/tax` config (master switch, default state, per-state overrides).
+
+### Recurring revenue + risk + studio hours + ad spend (Phase 13.2, 13.6, 13.16, 13.18)
+- [x] **Recurring revenue layer** (Phase 13.6). `ClientDoc.recurringCadence` (`ANNUAL | SEMI_ANNUAL | NONE`) + `recurringNextPromptAt` + `recurringPromptsSent` + `lastReengagementInboxItemAt`. `onGalleryDelivered` seeds `ANNUAL` with `deliveredAt + 11 months` for Wedding / Family / Portrait / Engagement (never overrides admin choice). Cron sweep `sweepRecurringClientPrompts` enqueues `RE_ENGAGEMENT_DUE` inbox rows (30-day idempotency guard) and advances `recurringNextPromptAt`. Inline inbox panel: "Send re-engagement email now" + "Snooze 30 days" with subject/body textareas; project workspace `RecurringRevenueBlock` shows current cadence with snooze.
+- [x] **Far-future-date risk flag** (Phase 13.16). Pure `lib/far-future-risk.ts > assessFarFutureRisk` returns `{ risk: NONE|WATCH|FLAG|STALE, monthsOut, depositLocked, lastContactedDaysAgo, reason }` with STALE > FLAG > WATCH precedence (STALE = `monthsOut >= 14 && lastContactedDaysAgo > 60`, FLAG = `monthsOut >= 14 && !depositLocked`, WATCH = `9 <= monthsOut < 14`). Risk dots on the pipeline (kanban + table) and ⚠ glyph on capacity heatmap cells; side-panel chip with the reason. Cron emits `FAR_FUTURE_RISK` inbox rows, idempotent per `(projectId, type)`.
+- [x] **Studio Hours auto-responder** (Phase 13.2). `users/{uid}.studioHours` (timezone, 7-day schedule with `open` / `close` / closed-toggle, holiday dates, vacation start/end, custom message). Pure `lib/studio-hours.ts > isStudioOpen` walks 14 days forward via `Intl.DateTimeFormat.formatToParts` to find `nextOpenAt`. `submitBooking` sends a separate tracked off-hours follow-up after the existing responder when closed, tags the project `OFF_HOURS_INQUIRY`, never blocks on failure. `/admin/settings/studio-hours` form with live preview chip.
+- [x] **Ad-spend / ROAS tracking** (Phase 13.18). `adSpendEntries/{id}` collection (`AdChannel`: GOOGLE_ADS / INSTAGRAM_ADS / META_ADS / PINTEREST_ADS / VENUE_PARTNERSHIP / OTHER). `lib/domain/roas.ts > computeRoasSnapshot` joins spend × campaigns × clients × projects with `channelToMedium` heuristic mapping to `firstTouchMedium`. `/admin/reports/ad-spend` (date-range picker, 4 KPI tiles, per-campaign + per-channel tables with ROAS color tints, entry CRUD). Finance dashboard gains a "View ad-spend" link; campaigns list gains a lifetime ROAS chip per row (defensive dynamic import).
+
 ### Growth surfaces (Phase 4.1, 4.5, 4.7, 4.8, 4.9)
 - [x] **Lead magnets** (Phase 4.1). `leadMagnets/{id}` + `leadMagnetDownloads/{id}`. Public `/magnet/[slug]` gate captures email + firstName + `__origin` first-touch attribution, upserts the client (creates if new), records a download row, increments `downloadCount`, optionally enrolls the client into a follow-up sequence (`enrollInSequence` already accepted nullable `projectId`), and returns an 8h presigned R2 GET URL the form triggers via hidden anchor. `/admin/lead-magnets` CRUD; create modal issues a presigned R2 PUT URL so the file uploads directly from the browser. 4-magnet idempotent seed script in DRAFT.
 - [x] **Referral chain visualization** (Phase 4.5). `/admin/reports/referrals` reads every client + every project (`LOST` and `ARCHIVED` excluded from revenue), builds the graph in `lib/domain/referral-graph.ts > buildReferralGraph`, computes `directReferralCount` + `transitiveReferralCount` + `transitiveRevenueCents` via DFS with cycle guards. Hand-rolled SVG radial layout (no external graph deps) with hover-tooltip + click-to-isolate-subtree. Two leaderboards (top 25 by transitive referrals / by transitive revenue). AdminSidebar entry under **Reports**.
@@ -196,15 +212,9 @@ Single unified Client/Project pipeline is the canonical surface; the legacy `boo
 ### Phase 2 — Client Experience v2
 - [ ] **Phase 2.1 — Multi-step booking inquiry** beyond the current draft persistence.
 - [ ] **Phase 2.2 — Style quiz + mood board** (`/style`).
-- [ ] **Phase 2.4 — Portal redesign `/portal/[projectId]`** with tabs mirroring admin workspace.
-- [ ] **Phase 2.6 — Gallery polish:** slideshow with music, mobile gestures, download PIN, resolution tiers picker.
-- [ ] **Phase 2.8 — Day-of-shoot timeline builder.**
 
 ### Phase 3 — Business Operations
 - [ ] **Phase 3.3 — Google Calendar two-way sync.** (external Google Cloud project required)
-- [ ] **Phase 3.9 — COI request workflow.**
-- [ ] **Phase 3.10 — Compliance dashboard.**
-- [ ] **Phase 3.11 — Sales tax engine.**
 
 ### Phase 4 — Growth Engine
 - [ ] **Phase 4.10 — Pinterest auto-pin** (external API).
@@ -223,9 +233,7 @@ Single unified Client/Project pipeline is the canonical surface; the legacy `boo
 - [ ] **Phase 5.10 — AI tax suggestion engine** (depends on Phase 3.2).
 
 ### Original ideas (Phase 13)
-- [ ] **13.2 — Studio Hours** (auto-responder during off-hours).
 - [ ] **13.4 — Booking-form post-submit calendar embed.**
-- [ ] **13.6 — Recurring revenue layer** (annual family update sessions).
 - [ ] **13.7 — Local SEO autopilot.**
 - [ ] **13.9 — Quiet Season planner.**
 - [ ] **13.10 — Gallery analytics for the client.**
@@ -281,6 +289,26 @@ Single unified Client/Project pipeline is the canonical surface; the legacy `boo
 ---
 
 ## Recently Resolved
+
+### May 2026 — Wave 8 (commit `9196160`)
+
+Ten parallel agents — five client-experience surfaces + five compliance/ops surfaces — in a single integration pass.
+
+**Bundle A — client experience**
+- **Phase 2.4 portal redesign** — `/portal/[projectId]` with 7 tabs (Overview / Documents / Invoices / Timeline / Gallery / Inspiration / Contact), `/portal/router` redirect, "My Portal" link in public Navbar, `CLIENT_MESSAGE` inbox surfacing for client → admin messages.
+- **Phase 2.6 gallery polish** — full-screen slideshow with keyboard + autoplay + music slot, touch-swipe gestures, per-event constant-time `downloadPin` gate, web/print/original resolution tiers with R2 presigned fallback.
+- **Phase 2.8 day-of timeline** — `projects/{id}/dayOfTimeline` subcollection, HTML5 drag-reorder with transactional reorder action, "Day-of" workspace tab, shoot-brief integration.
+- **Phase 13.6 recurring revenue** — `ClientDoc.recurringCadence`, auto-seed on `GALLERY_DELIVERED` for repeat-customer session types, cron sweep + idempotent `RE_ENGAGEMENT_DUE` inbox emit, inline send/snooze panel.
+- **Phase 13.16 far-future-date risk** — pure isomorphic risk-tier assessor (NONE/WATCH/FLAG/STALE), risk dot on pipeline + capacity heatmap, cron-driven `FAR_FUTURE_RISK` inbox emit.
+
+**Bundle B — compliance + ops**
+- **Phase 3.9 COI workflow** — 9 COI fields on `ProjectDoc`, `users/{uid}.insurerContact` setting, Contract-tab `CoiBlock` with templated request email + drag-drop PDF upload via presigned R2 PUT, overdue COI chip on pipeline.
+- **Phase 3.10 compliance dashboard** — `/admin/reports/compliance` with contracts / COI / data-requests / sales-tax cards; new `dataRequests` collection with 30-day GDPR/CCPA dueBy clock; defensive imports of B1 + B3 modules.
+- **Phase 3.11 sales tax engine** — pure 12-state rules table, `subtotalCents`+`taxCents` on `InvoiceDoc` (with back-compat normalizer), idempotent `salesTaxFilings` cron with DUE_SOON → OVERDUE auto-flip, `/admin/reports/sales-tax` + `/admin/settings/tax`, CSV export at `/api/sales-tax/export`.
+- **Phase 13.2 Studio Hours** — `users/{uid}.studioHours` (timezone + 7-day schedule + holidays + vacation), pure `isStudioOpen` walking 14 days forward via `Intl.DateTimeFormat`, separate off-hours follow-up after the existing booking responder, `OFF_HOURS_INQUIRY` tag.
+- **Phase 13.18 ad-spend / ROAS** — `adSpendEntries` collection, per-campaign and per-channel ROAS computation joining spend × campaigns × clients × projects, `/admin/reports/ad-spend` dashboard with color-tinted ROAS columns, finance dashboard link, lifetime ROAS chip on campaigns list.
+
+Cross-agent: `InboxItemType` extended with `CLIENT_MESSAGE`, `RE_ENGAGEMENT_DUE`, `FAR_FUTURE_RISK`, `COI_REQUESTED`, `COI_RECEIVED`, `SALES_TAX_OVERDUE` (inbox view union + label map kept in sync). AdminSidebar gains Compliance / Sales Tax / Ad Spend under **Reports** plus Insurer / Studio Hours / Tax under **Settings**. `lib/db/admin-settings.ts` now hosts `taxConfig`, `studioHours`, and `insurerContact` on `users/{uid}`.
 
 ### May 2026 — Wave 7 (commit `e9a7dfc`)
 
