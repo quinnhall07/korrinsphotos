@@ -13,6 +13,7 @@ import { calculateLeadScore } from "@/lib/lead-scoring";
 import { logActivity } from "@/lib/db/activity";
 import { createInboxItem } from "@/lib/db/inbox";
 import { enqueueTrackedMail } from "@/lib/email/tracking";
+import { getCampaignBySlug, incrementCampaignInquiry } from "@/lib/db/campaigns";
 
 const BookingSchema = z.object({
   firstName:     z.string().min(1, "First name is required").max(100),
@@ -73,6 +74,41 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
   const cookieStore = await cookies();
   const originStr = cookieStore.get("__origin")?.value;
   const origin = originStr ? JSON.parse(originStr) : {};
+
+  // Cookie precedence: `__campaign` (set by /c/[slug] on every visit) wins
+  // over the generic `__origin` UTM cookie for the three firstTouch UTM
+  // fields, because campaigns are explicit higher-intent attribution
+  // sources. We do NOT touch `firstTouchLandingUrl` / `firstTouchAt` —
+  // those still reflect the first-page-hit values from `__origin`.
+  const campaignStr = cookieStore.get("__campaign")?.value;
+  let campaignSlug: string | null = null;
+  let campaignUtm: { source: string; medium: string; campaign: string } | null = null;
+  if (campaignStr) {
+    try {
+      const parsed = JSON.parse(campaignStr) as { slug?: string };
+      const slug = typeof parsed?.slug === "string" ? parsed.slug.trim() : "";
+      if (slug) {
+        const campaignDoc = await getCampaignBySlug(slug);
+        // Only honour ACTIVE campaigns. DRAFT / ARCHIVED / unknown fall back
+        // to the existing __origin behaviour.
+        if (campaignDoc && campaignDoc.status === "ACTIVE") {
+          campaignSlug = campaignDoc.slug;
+          campaignUtm = {
+            source: campaignDoc.defaultUtm.source,
+            medium: campaignDoc.defaultUtm.medium,
+            campaign: campaignDoc.defaultUtm.campaign,
+          };
+        }
+      }
+    } catch (err) {
+      console.error("Failed to resolve __campaign cookie:", err);
+    }
+  }
+
+  // Resolved first-touch UTM tuple — campaign overrides __origin.
+  const firstTouchSource = campaignUtm?.source ?? origin.source ?? "WEBSITE";
+  const firstTouchMedium = campaignUtm?.medium ?? origin.medium ?? null;
+  const firstTouchCampaign = campaignUtm?.campaign ?? origin.campaign ?? null;
 
   try {
     // ── Automatic tagging heuristics ──────────────────────────────────────────
@@ -196,9 +232,9 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
         referredBy: referredByClientId && !selfReferral ? referredByClientId : null,
         referralCredit: 0,
         totalSessionsBooked: 0,
-        firstTouchSource: origin.source ?? "WEBSITE",
-        firstTouchMedium: origin.medium ?? null,
-        firstTouchCampaign: origin.campaign ?? null,
+        firstTouchSource,
+        firstTouchMedium,
+        firstTouchCampaign,
         firstTouchLandingUrl: origin.landingUrl ?? null,
         firstTouchAt: origin.ts ? new Date(origin.ts) : FieldValue.serverTimestamp(),
         createdAt: FieldValue.serverTimestamp(),
@@ -217,7 +253,7 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
       shootDate: effectivePreferredDate ? new Date(effectivePreferredDate) : null,
       shootLocation: locationDetail || locationLabel || null,
       notes: "",
-      leadSource: origin.source ?? "WEBSITE",
+      leadSource: firstTouchSource,
       leadScore,
       tags: autoTags,
       estimatedValue: null,
@@ -270,6 +306,11 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
       projectId,
       sendKind: "auto-responder",
     });
+
+    // Campaign inquiry counter — best-effort, never blocks the response.
+    if (campaignSlug) {
+      await incrementCampaignInquiry(campaignSlug).catch(() => {});
+    }
 
     return { success: true };
   } catch (err) {

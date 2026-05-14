@@ -5,6 +5,7 @@ import { dispatchPendingReviewRequests } from "@/lib/domain/reviews";
 import { recomputeFinanceCache } from "@/lib/domain/analytics";
 import { dispatchScheduledBroadcasts } from "@/lib/broadcasts/sender";
 import { refreshWeatherSnapshotsDue } from "@/lib/domain/weather-snapshots";
+import { checkPressBacklinks } from "@/lib/domain/press-backlinks";
 import { dispatchShootBriefEmail } from "@/lib/domain/shoot-brief";
 import { NextResponse } from "next/server";
 import { createInboxItem } from "@/lib/db/inbox";
@@ -191,6 +192,23 @@ export async function GET(request: Request) {
       console.error("Weather snapshot refresh error:", wErr);
     }
 
+    // Phase 4.7: monthly backlink monitor for press submissions. Walks every
+    // PUBLISHED `pressSubmissions` row, fetches the article URL, and writes
+    // alive/dead/last-status back onto the row. On the 3rd consecutive
+    // failure for a row a single PRESS_LINK_DOWN inbox item is enqueued
+    // (idempotent — only on the transition into a 3+ failure streak).
+    let pressBacklinks: {
+      checked: number;
+      alive: number;
+      dead: number;
+      errors: number;
+    } = { checked: 0, alive: 0, dead: 0, errors: 0 };
+    try {
+      pressBacklinks = await checkPressBacklinks({ now });
+    } catch (pErr) {
+      console.error("Press backlinks check error:", pErr);
+    }
+
     return NextResponse.json({
       success: true,
       processed: processedCount,
@@ -204,6 +222,7 @@ export async function GET(request: Request) {
       weatherSnapshotsSkipped,
       weatherSnapshotsErrors,
       shootBriefsScheduled,
+      pressBacklinks,
     });
   } catch (err) {
     console.error("Cron Error:", err);

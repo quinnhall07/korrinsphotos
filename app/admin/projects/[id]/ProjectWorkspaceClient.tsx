@@ -18,6 +18,13 @@ import { computeEditingStatus, editingStatusColor } from "@/lib/editing-status";
 import { createDraftContract, sendContract } from "../contract-actions";
 import { sendInvoice, markInvoicePaidManually } from "../invoice-actions";
 import { sendProjectMessage } from "../message-actions";
+import {
+  createPressSubmissionAction,
+  updatePressSubmissionAction,
+  deletePressSubmissionAction,
+  type CreatePressSubmissionInput,
+  type UpdatePressSubmissionInput,
+} from "../press-actions";
 import { sendQuestionnaireForProjectAction } from "@/app/admin/questionnaires/templates/actions";
 // AI components — supplied by Agent 5 (AI features) in the same merge.
 // Imported eagerly so the parent's npm build wires the dependency edge.
@@ -35,6 +42,7 @@ import type {
   SerialReviewRequest,
   SerialGearLogEntry,
   SerialGearTemplateOption,
+  SerialPressSubmission,
 } from "./page";
 import {
   initializeGearLog,
@@ -85,6 +93,7 @@ type TabId =
   | "timeline"
   | "files"
   | "gear"
+  | "press"
   | "notes";
 
 const TABS: { id: TabId; label: string }[] = [
@@ -96,6 +105,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "timeline", label: "Timeline" },
   { id: "files", label: "Files" },
   { id: "gear", label: "Gear" },
+  { id: "press", label: "Press" },
   { id: "notes", label: "Notes" },
 ];
 
@@ -238,6 +248,7 @@ interface Props {
   gearTemplateOptions: SerialGearTemplateOption[];
   defaultGearTemplateId: string | null;
   defaultGearTemplateName: string | null;
+  pressSubmissions: SerialPressSubmission[];
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -256,6 +267,7 @@ export function ProjectWorkspaceClient({
   gearTemplateOptions,
   defaultGearTemplateId,
   defaultGearTemplateName,
+  pressSubmissions,
 }: Props) {
   const [tab, setTab] = useState<TabId>("overview");
   const [statusModalOpen, setStatusModalOpen] = useState(false);
@@ -414,6 +426,9 @@ export function ProjectWorkspaceClient({
               defaultTemplateId={defaultGearTemplateId}
               defaultTemplateName={defaultGearTemplateName}
             />
+          )}
+          {tab === "press" && (
+            <PressTab projectId={project.id} submissions={pressSubmissions} />
           )}
           {tab === "notes" && <NotesTab projectId={project.id} initialNotes={project.notes} />}
         </main>
@@ -2571,6 +2586,703 @@ function GearRow({
       >
         ×
       </button>
+    </div>
+  );
+}
+
+// ─── Press tab ────────────────────────────────────────────────────────────────
+
+const PRESS_STATUSES = [
+  "SUBMITTED",
+  "ACKNOWLEDGED",
+  "PUBLISHED",
+  "REJECTED",
+  "WITHDRAWN",
+] as const;
+type PressStatusLiteral = (typeof PRESS_STATUSES)[number];
+
+function pressStatusPillStyle(status: string): React.CSSProperties {
+  // SUBMITTED + ACKNOWLEDGED: olive. PUBLISHED: olive solid. REJECTED + WITHDRAWN: muted.
+  if (status === "PUBLISHED") {
+    return {
+      ...PILL,
+      background: "var(--olive)",
+      color: "var(--white)",
+    };
+  }
+  if (status === "REJECTED" || status === "WITHDRAWN") {
+    return {
+      ...PILL,
+      background: "transparent",
+      color: "var(--charcoal-muted)",
+      border: "0.5px solid var(--border-strong)",
+    };
+  }
+  return PILL;
+}
+
+function timeAgoFromIso(iso: string | null): string {
+  if (!iso) return "—";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "—";
+  const diffMs = Date.now() - then;
+  const min = Math.round(diffMs / 60000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.round(hr / 24);
+  if (day < 30) return `${day}d ago`;
+  const mo = Math.round(day / 30);
+  if (mo < 12) return `${mo}mo ago`;
+  const yr = Math.round(mo / 12);
+  return `${yr}y ago`;
+}
+
+function PressTab({
+  projectId,
+  submissions,
+}: {
+  projectId: string;
+  submissions: SerialPressSubmission[];
+}) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<SerialPressSubmission | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const openCreate = () => {
+    setEditing(null);
+    setModalOpen(true);
+  };
+
+  const openEdit = (row: SerialPressSubmission) => {
+    setEditing(row);
+    setModalOpen(true);
+  };
+
+  const handleDelete = (row: SerialPressSubmission) => {
+    if (!confirm(`Delete the ${row.publicationName} submission? This cannot be undone.`)) {
+      return;
+    }
+    setBusyId(row.id);
+    startTransition(async () => {
+      const res = await deletePressSubmissionAction(projectId, row.id);
+      setBusyId(null);
+      if (res.success) {
+        toast("Submission deleted");
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to delete submission");
+      }
+    });
+  };
+
+  const handleSubmit = (
+    values: PressFormValues,
+    onClose: () => void
+  ) => {
+    startTransition(async () => {
+      if (editing) {
+        const patch: UpdatePressSubmissionInput = {
+          publicationName: values.publicationName,
+          publicationUrl: values.publicationUrl || null,
+          contactName: values.contactName || null,
+          contactEmail: values.contactEmail || null,
+          submittedAt: values.submittedAt || undefined,
+          status: values.status,
+          publishedUrl:
+            values.status === "PUBLISHED" ? values.publishedUrl || null : null,
+          publishedAt:
+            values.status === "PUBLISHED"
+              ? values.publishedAt || null
+              : null,
+          notes: values.notes || null,
+        };
+        const res = await updatePressSubmissionAction(projectId, editing.id, patch);
+        if (res.success) {
+          toast("Submission updated");
+          onClose();
+          router.refresh();
+        } else {
+          toast(res.error ?? "Failed to update submission");
+        }
+        return;
+      }
+
+      const input: CreatePressSubmissionInput = {
+        publicationName: values.publicationName,
+        publicationUrl: values.publicationUrl || undefined,
+        contactName: values.contactName || undefined,
+        contactEmail: values.contactEmail || undefined,
+        submittedAt: values.submittedAt || undefined,
+        status: values.status,
+        publishedUrl:
+          values.status === "PUBLISHED" ? values.publishedUrl || undefined : undefined,
+        publishedAt:
+          values.status === "PUBLISHED" ? values.publishedAt || undefined : undefined,
+        notes: values.notes || undefined,
+      };
+      const res = await createPressSubmissionAction(projectId, input);
+      if (res.success) {
+        toast("Submission logged");
+        onClose();
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to create submission");
+      }
+    });
+  };
+
+  // ─── Empty state ───────────────────────────────────────────────────────────
+  if (submissions.length === 0) {
+    return (
+      <div>
+        <h2 style={SECTION_HEAD}>Press</h2>
+        <div
+          style={{
+            padding: "2rem 1.5rem",
+            border: "0.5px dashed var(--border-strong)",
+            background: "var(--white)",
+            textAlign: "center",
+          }}
+        >
+          <p
+            style={{
+              fontSize: "0.95rem",
+              color: "var(--charcoal-light)",
+              margin: "0 0 1rem 0",
+              lineHeight: 1.55,
+            }}
+          >
+            No press submissions yet.
+          </p>
+          <button type="button" style={BTN_PRIMARY} onClick={openCreate}>
+            + Log submission
+          </button>
+        </div>
+
+        {modalOpen && (
+          <PressModal
+            initial={null}
+            disabled={isPending}
+            onClose={() => setModalOpen(false)}
+            onSubmit={(values) => handleSubmit(values, () => setModalOpen(false))}
+          />
+        )}
+      </div>
+    );
+  }
+
+  // ─── Populated state ───────────────────────────────────────────────────────
+  return (
+    <div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          marginBottom: "1.25rem",
+          gap: "1rem",
+          flexWrap: "wrap",
+        }}
+      >
+        <h2 style={{ ...SECTION_HEAD, margin: 0 }}>Press</h2>
+        <button type="button" style={BTN_PRIMARY} onClick={openCreate}>
+          + Log submission
+        </button>
+      </div>
+
+      <div
+        style={{
+          border: "0.5px solid var(--border)",
+          background: "var(--white)",
+        }}
+      >
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1.4fr 0.9fr 0.9fr 1.3fr 0.9fr auto",
+            gap: "0.75rem",
+            padding: "0.7rem 1rem",
+            background: "rgba(42,42,40,0.03)",
+            ...EYEBROW,
+            fontSize: "0.6rem",
+          }}
+        >
+          <span>Publication</span>
+          <span>Status</span>
+          <span>Submitted</span>
+          <span>Article</span>
+          <span>Backlink</span>
+          <span />
+        </div>
+        {submissions.map((row) => (
+          <PressRow
+            key={row.id}
+            row={row}
+            busy={busyId === row.id}
+            onEdit={() => openEdit(row)}
+            onDelete={() => handleDelete(row)}
+          />
+        ))}
+      </div>
+
+      {modalOpen && (
+        <PressModal
+          initial={editing}
+          disabled={isPending}
+          onClose={() => {
+            setModalOpen(false);
+            setEditing(null);
+          }}
+          onSubmit={(values) =>
+            handleSubmit(values, () => {
+              setModalOpen(false);
+              setEditing(null);
+            })
+          }
+        />
+      )}
+    </div>
+  );
+}
+
+function PressRow({
+  row,
+  busy,
+  onEdit,
+  onDelete,
+}: {
+  row: SerialPressSubmission;
+  busy: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1.4fr 0.9fr 0.9fr 1.3fr 0.9fr auto",
+        gap: "0.75rem",
+        alignItems: "center",
+        padding: "0.85rem 1rem",
+        borderTop: "0.5px solid var(--border)",
+        opacity: busy ? 0.5 : 1,
+        fontSize: "0.85rem",
+      }}
+    >
+      <div style={{ minWidth: 0 }}>
+        <p style={{ margin: 0, color: "var(--charcoal)" }}>
+          {row.publicationUrl ? (
+            <a
+              href={row.publicationUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: "var(--charcoal)", textDecoration: "none" }}
+            >
+              {row.publicationName}
+            </a>
+          ) : (
+            row.publicationName
+          )}
+        </p>
+        {row.contactName && (
+          <p
+            style={{
+              margin: "0.2rem 0 0 0",
+              fontSize: "0.72rem",
+              color: "var(--charcoal-muted)",
+            }}
+          >
+            {row.contactName}
+          </p>
+        )}
+      </div>
+      <div>
+        <span style={pressStatusPillStyle(row.status)}>
+          {String(row.status).toLowerCase()}
+        </span>
+      </div>
+      <div style={{ color: "var(--charcoal-light)", fontSize: "0.8rem" }}>
+        {fmtDate(row.submittedAt)}
+      </div>
+      <div style={{ minWidth: 0, overflow: "hidden" }}>
+        {row.publishedUrl ? (
+          <a
+            href={row.publishedUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              color: "var(--olive)",
+              textDecoration: "underline",
+              fontSize: "0.8rem",
+              display: "block",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+            title={row.publishedUrl}
+          >
+            {row.publishedUrl}
+          </a>
+        ) : (
+          <span style={{ color: "var(--charcoal-muted)", fontSize: "0.8rem" }}>
+            —
+          </span>
+        )}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.15rem" }}>
+        <BacklinkChip row={row} />
+        {row.lastLinkCheckAt && (
+          <span style={{ fontSize: "0.65rem", color: "var(--charcoal-muted)" }}>
+            {timeAgoFromIso(row.lastLinkCheckAt)}
+          </span>
+        )}
+      </div>
+      <div style={{ display: "flex", gap: "0.35rem", justifyContent: "flex-end" }}>
+        <button
+          type="button"
+          onClick={onEdit}
+          disabled={busy}
+          style={{
+            background: "transparent",
+            border: "0.5px solid var(--border-strong)",
+            color: "var(--charcoal-light)",
+            padding: "0.3rem 0.6rem",
+            fontSize: "0.7rem",
+            fontFamily: "'Jost', sans-serif",
+            cursor: "pointer",
+            borderRadius: 0,
+            letterSpacing: "0.05em",
+          }}
+        >
+          Edit
+        </button>
+        <button
+          type="button"
+          onClick={onDelete}
+          disabled={busy}
+          title="Delete submission"
+          style={{
+            background: "transparent",
+            border: "0.5px solid var(--border-strong)",
+            color: "var(--charcoal-light)",
+            padding: "0.3rem 0.55rem",
+            fontSize: "0.7rem",
+            fontFamily: "'Jost', sans-serif",
+            cursor: "pointer",
+            borderRadius: 0,
+          }}
+        >
+          ×
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function BacklinkChip({ row }: { row: SerialPressSubmission }) {
+  if (row.status !== "PUBLISHED" || !row.publishedUrl) {
+    return (
+      <span style={{ fontSize: "0.7rem", color: "var(--charcoal-muted)" }}>
+        —
+      </span>
+    );
+  }
+  if (row.linkAlive === null) {
+    return (
+      <span style={{ fontSize: "0.7rem", color: "var(--charcoal-muted)" }}>
+        not checked
+      </span>
+    );
+  }
+  if (row.linkAlive) {
+    return (
+      <span
+        style={{
+          fontSize: "0.7rem",
+          color: "var(--olive)",
+          letterSpacing: "0.05em",
+          fontWeight: 500,
+        }}
+        title={
+          row.linkLastHttpStatus
+            ? `HTTP ${row.linkLastHttpStatus}`
+            : "Alive"
+        }
+      >
+        ✓ alive
+      </span>
+    );
+  }
+  const failures = row.consecutiveLinkFailures ?? 0;
+  return (
+    <span
+      style={{
+        fontSize: "0.7rem",
+        color: "#b03232",
+        letterSpacing: "0.05em",
+        fontWeight: 500,
+      }}
+      title={
+        row.linkLastHttpStatus
+          ? `HTTP ${row.linkLastHttpStatus} (${failures}× consecutive)`
+          : `${failures}× consecutive failures`
+      }
+    >
+      ✗ dead{failures > 1 ? ` (${failures}×)` : ""}
+    </span>
+  );
+}
+
+// ─── Press modal + form ──────────────────────────────────────────────────────
+
+interface PressFormValues {
+  publicationName: string;
+  publicationUrl: string;
+  contactName: string;
+  contactEmail: string;
+  /** ISO yyyy-mm-dd. */
+  submittedAt: string;
+  status: PressStatusLiteral;
+  publishedUrl: string;
+  /** ISO yyyy-mm-dd. */
+  publishedAt: string;
+  notes: string;
+}
+
+function isoToDateInput(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  // YYYY-MM-DD in local time.
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function PressModal({
+  initial,
+  disabled,
+  onClose,
+  onSubmit,
+}: {
+  initial: SerialPressSubmission | null;
+  disabled: boolean;
+  onClose: () => void;
+  onSubmit: (values: PressFormValues) => void;
+}) {
+  const [values, setValues] = useState<PressFormValues>({
+    publicationName: initial?.publicationName ?? "",
+    publicationUrl: initial?.publicationUrl ?? "",
+    contactName: initial?.contactName ?? "",
+    contactEmail: initial?.contactEmail ?? "",
+    submittedAt: isoToDateInput(initial?.submittedAt ?? null),
+    status:
+      (PRESS_STATUSES as readonly string[]).includes(initial?.status ?? "")
+        ? (initial!.status as PressStatusLiteral)
+        : "SUBMITTED",
+    publishedUrl: initial?.publishedUrl ?? "",
+    publishedAt: isoToDateInput(initial?.publishedAt ?? null),
+    notes: initial?.notes ?? "",
+  });
+
+  const update = <K extends keyof PressFormValues>(
+    key: K,
+    value: PressFormValues[K]
+  ) => setValues((prev) => ({ ...prev, [key]: value }));
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!values.publicationName.trim()) {
+      toast("Publication name is required");
+      return;
+    }
+    onSubmit(values);
+  };
+
+  const inputStyle: React.CSSProperties = {
+    padding: "0.5rem 0.7rem",
+    border: "0.5px solid var(--border-strong)",
+    fontFamily: "'Jost', sans-serif",
+    fontSize: "0.85rem",
+    background: "var(--white)",
+    color: "var(--charcoal)",
+    borderRadius: 0,
+    width: "100%",
+    boxSizing: "border-box",
+  };
+  const labelStyle: React.CSSProperties = {
+    ...EYEBROW,
+    fontSize: "0.6rem",
+    marginBottom: "0.35rem",
+    display: "block",
+  };
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(42,42,40,0.45)",
+        zIndex: 1100,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "2rem",
+      }}
+    >
+      <form
+        onSubmit={handleSubmit}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={initial ? "Edit press submission" : "Log press submission"}
+        style={{
+          background: "var(--white)",
+          border: "0.5px solid var(--border-strong)",
+          padding: "1.75rem",
+          maxWidth: "560px",
+          width: "100%",
+          maxHeight: "85vh",
+          overflowY: "auto",
+        }}
+      >
+        <p style={{ ...EYEBROW, margin: "0 0 0.5rem 0" }}>
+          {initial ? "Edit submission" : "Log submission"}
+        </p>
+        <h3 style={{ ...SECTION_HEAD, fontSize: "1.4rem", margin: "0 0 1.25rem 0" }}>
+          {initial ? initial.publicationName : "New press submission"}
+        </h3>
+
+        <div style={{ display: "grid", gap: "0.85rem" }}>
+          <div>
+            <label style={labelStyle}>Publication name *</label>
+            <input
+              type="text"
+              required
+              value={values.publicationName}
+              onChange={(e) => update("publicationName", e.target.value)}
+              placeholder="e.g. Carolina Bride"
+              style={inputStyle}
+            />
+          </div>
+
+          <div>
+            <label style={labelStyle}>Publication homepage</label>
+            <input
+              type="url"
+              value={values.publicationUrl}
+              onChange={(e) => update("publicationUrl", e.target.value)}
+              placeholder="https://carolinabride.com"
+              style={inputStyle}
+            />
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.85rem" }}>
+            <div>
+              <label style={labelStyle}>Contact name</label>
+              <input
+                type="text"
+                value={values.contactName}
+                onChange={(e) => update("contactName", e.target.value)}
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>Contact email</label>
+              <input
+                type="email"
+                value={values.contactEmail}
+                onChange={(e) => update("contactEmail", e.target.value)}
+                style={inputStyle}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.85rem" }}>
+            <div>
+              <label style={labelStyle}>Submitted on</label>
+              <input
+                type="date"
+                value={values.submittedAt}
+                onChange={(e) => update("submittedAt", e.target.value)}
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>Status</label>
+              <select
+                value={values.status}
+                onChange={(e) =>
+                  update("status", e.target.value as PressStatusLiteral)
+                }
+                style={inputStyle}
+              >
+                {PRESS_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {s.charAt(0) + s.slice(1).toLowerCase()}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {values.status === "PUBLISHED" && (
+            <>
+              <div>
+                <label style={labelStyle}>Article URL *</label>
+                <input
+                  type="url"
+                  value={values.publishedUrl}
+                  onChange={(e) => update("publishedUrl", e.target.value)}
+                  placeholder="https://carolinabride.com/real-weddings/…"
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Published on</label>
+                <input
+                  type="date"
+                  value={values.publishedAt}
+                  onChange={(e) => update("publishedAt", e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+            </>
+          )}
+
+          <div>
+            <label style={labelStyle}>Notes</label>
+            <textarea
+              value={values.notes}
+              onChange={(e) => update("notes", e.target.value)}
+              rows={3}
+              style={{ ...inputStyle, resize: "vertical", fontFamily: "'Jost', sans-serif" }}
+            />
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: "0.5rem",
+            marginTop: "1.25rem",
+          }}
+        >
+          <button type="button" style={BTN_GHOST} onClick={onClose} disabled={disabled}>
+            Cancel
+          </button>
+          <button type="submit" style={BTN_PRIMARY} disabled={disabled}>
+            {disabled ? "Saving…" : initial ? "Save changes" : "Log submission"}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

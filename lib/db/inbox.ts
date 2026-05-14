@@ -12,7 +12,8 @@ export type InboxItemType =
   | "MESSAGE_RECEIVED"
   | "GALLERY_REQUESTED"
   | "UNMATCHED_INBOUND"
-  | "TASK_FIRED";
+  | "TASK_FIRED"
+  | "PRESS_LINK_DOWN";
 
 export interface InboxItemDoc {
   id: string;

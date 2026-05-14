@@ -94,6 +94,19 @@ export function Navbar() {
             </li>
             <li>
               <Link
+                href="/journal"
+                style={{
+                  ...navLinkStyle,
+                  color: isActive("/journal") ? "var(--charcoal)" : "var(--charcoal-light)",
+                  borderBottom: isActive("/journal") ? "0.5px solid var(--olive)" : "none",
+                  paddingBottom: "2px",
+                }}
+              >
+                Journal
+              </Link>
+            </li>
+            <li>
+              <Link
                 href="/investment"
                 style={{
                   ...navLinkStyle,

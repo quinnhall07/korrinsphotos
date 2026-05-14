@@ -30,7 +30,8 @@ export type InboxItemView = {
     | "MESSAGE_RECEIVED"
     | "GALLERY_REQUESTED"
     | "UNMATCHED_INBOUND"
-    | "TASK_FIRED";
+    | "TASK_FIRED"
+    | "PRESS_LINK_DOWN";
   projectId: string | null;
   clientId: string | null;
   title: string;
@@ -53,6 +54,7 @@ const TYPE_LABELS: Record<InboxItemView["type"], string> = {
   GALLERY_REQUESTED: "GALLERY",
   UNMATCHED_INBOUND: "UNMATCHED",
   TASK_FIRED: "AUTOMATION",
+  PRESS_LINK_DOWN: "PRESS LINK DOWN",
 };
 
 function relativeTime(iso: string): string {

@@ -2,14 +2,16 @@
 // Booking inquiry page. The form is a 3-step Client Component that submits
 // via the `submitBooking` Server Action (no API route involved).
 //
-// Accepts an optional `?package=mini|story|day` query param coming from the
-// /investment page CTAs; the param is resolved server-side against
-// INVESTMENT_PACKAGES and the matching sessionType is threaded into the
-// form as `initialSessionType` so the relevant tile is pre-selected.
+// Accepts these query params, all optional, all forwarded to the form:
+//   - `?package=mini|story|day` — from /investment (resolves to sessionType).
+//   - `?sessionType=<Wedding|Portrait|…>` — direct sessionType override (e.g.
+//     from a /c/<slug> campaign CTA).
+//   - `?campaign=<slug>` — informational only; the server reads the cookie
+//     written by `/c/[slug]/page.tsx` for attribution.
 
 import type { Metadata } from "next";
 import { BookingFormSteps } from "./BookingFormSteps";
-import { findPackageById } from "@/app/investment/packages";
+import { findPackageById, type BookingSessionType } from "@/app/investment/packages";
 
 export const metadata: Metadata = {
   title: "Booking",
@@ -17,13 +19,35 @@ export const metadata: Metadata = {
     "Book a photography session — weddings, portraits, editorial, and more.",
 };
 
+const BOOKING_SESSION_TYPES: readonly BookingSessionType[] = [
+  "Wedding",
+  "Portrait",
+  "Editorial",
+  "Family",
+  "Engagement",
+  "Commercial",
+];
+
+function normaliseSessionType(raw: string | undefined): BookingSessionType | null {
+  if (!raw) return null;
+  const match = BOOKING_SESSION_TYPES.find(
+    (t) => t.toLowerCase() === raw.trim().toLowerCase()
+  );
+  return match ?? null;
+}
+
 export default async function BookingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ package?: string }>;
+  searchParams: Promise<{ package?: string; sessionType?: string; campaign?: string }>;
 }) {
-  const { package: packageParam } = await searchParams;
-  const initialSessionType = findPackageById(packageParam)?.sessionType ?? null;
+  const { package: packageParam, sessionType: sessionTypeParam } = await searchParams;
+  // `?package=` wins (it's the older entry point and already maps reliably);
+  // `?sessionType=` is a campaign-level direct override.
+  const initialSessionType =
+    findPackageById(packageParam)?.sessionType ??
+    normaliseSessionType(sessionTypeParam) ??
+    null;
 
   return (
     <div style={{ paddingTop: "72px" }} className="page-fade-in">

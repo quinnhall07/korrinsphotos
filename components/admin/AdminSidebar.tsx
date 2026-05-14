@@ -89,6 +89,38 @@ const NAV = [
           </svg>
         ),
       },
+      {
+        label: "Lead Magnets",
+        href: "/admin/lead-magnets",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <path d="M3 2h7l3 3v9H3z" />
+            <path d="M10 2v3h3" />
+            <path d="M6 9l2 2 2-2M8 7v4" />
+          </svg>
+        ),
+      },
+      {
+        label: "Journal",
+        href: "/admin/journal",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <path d="M3 1h7l3 3v11H3z" />
+            <path d="M10 1v3h3" />
+            <path d="M5 7h6M5 10h6M5 13h4" />
+          </svg>
+        ),
+      },
+      {
+        label: "Campaigns",
+        href: "/admin/campaigns",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <path d="M2 5h9l3 3-3 3H2z" />
+            <path d="M2 5v9" />
+          </svg>
+        ),
+      },
     ],
   },
   {
@@ -173,6 +205,18 @@ const NAV = [
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <rect x="2" y="2" width="12" height="12" rx="0.5" />
             <path d="M5 6h6M5 9h4M5 12h6" />
+          </svg>
+        ),
+      },
+      {
+        label: "Referrals",
+        href: "/admin/reports/referrals",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <circle cx="3" cy="8" r="2" />
+            <circle cx="11" cy="3.5" r="2" />
+            <circle cx="11" cy="12.5" r="2" />
+            <path d="M4.7 7l4.6-2.6M4.7 9l4.6 2.6" />
           </svg>
         ),
       },

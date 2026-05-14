@@ -12,6 +12,10 @@ import {
   listGearTemplatesForSessionType,
   type GearItemCategory,
 } from "@/lib/db/gear-templates";
+import {
+  listPressSubmissionsForProject,
+  type PressSubmissionStatus,
+} from "@/lib/db/press-submissions";
 import { ProjectWorkspaceClient } from "./ProjectWorkspaceClient";
 
 export const metadata: Metadata = { title: "Project Detail | Admin" };
@@ -206,6 +210,24 @@ export type SerialGearTemplateOption = {
   name: string;
   itemCount: number;
   isDefault: boolean;
+};
+
+export type SerialPressSubmission = {
+  id: string;
+  publicationName: string;
+  publicationUrl: string | null;
+  contactName: string | null;
+  contactEmail: string | null;
+  submittedAt: string | null;
+  status: PressSubmissionStatus | string;
+  statusChangedAt: string | null;
+  publishedUrl: string | null;
+  publishedAt: string | null;
+  lastLinkCheckAt: string | null;
+  linkAlive: boolean | null;
+  linkLastHttpStatus: number | null;
+  consecutiveLinkFailures: number;
+  notes: string | null;
 };
 
 export type SerialInvoice = {
@@ -578,6 +600,37 @@ export default async function ProjectDetailPage({ params }: Props) {
     console.error("[ProjectDetailPage] Failed to load gear templates", err);
   }
 
+  // Phase 4.7: pull press-submission rows. Best-effort — Firestore hiccup
+  // shouldn't break the entire workspace.
+  let pressSubmissions: SerialPressSubmission[] = [];
+  try {
+    const docs = await listPressSubmissionsForProject(id);
+    pressSubmissions = docs.map((p) => ({
+      id: p.id,
+      publicationName: p.publicationName ?? "",
+      publicationUrl: p.publicationUrl ?? null,
+      contactName: p.contactName ?? null,
+      contactEmail: p.contactEmail ?? null,
+      submittedAt: ts(p.submittedAt),
+      status: p.status,
+      statusChangedAt: ts(p.statusChangedAt),
+      publishedUrl: p.publishedUrl ?? null,
+      publishedAt: ts(p.publishedAt),
+      lastLinkCheckAt: ts(p.lastLinkCheckAt),
+      linkAlive:
+        typeof p.linkAlive === "boolean" ? p.linkAlive : null,
+      linkLastHttpStatus:
+        typeof p.linkLastHttpStatus === "number" ? p.linkLastHttpStatus : null,
+      consecutiveLinkFailures:
+        typeof p.consecutiveLinkFailures === "number"
+          ? p.consecutiveLinkFailures
+          : 0,
+      notes: p.notes ?? null,
+    }));
+  } catch (err) {
+    console.error("[ProjectDetailPage] Failed to load press submissions", err);
+  }
+
   return (
     <ProjectWorkspaceClient
       project={project}
@@ -593,6 +646,7 @@ export default async function ProjectDetailPage({ params }: Props) {
       gearTemplateOptions={gearTemplateOptions}
       defaultGearTemplateId={defaultGearTemplateId}
       defaultGearTemplateName={defaultGearTemplateName}
+      pressSubmissions={pressSubmissions}
     />
   );
 }

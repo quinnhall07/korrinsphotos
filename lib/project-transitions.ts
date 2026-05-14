@@ -5,6 +5,7 @@ import { listSequencesByStatusTrigger } from "./db/sequences";
 import { enrollInSequence } from "./db/sequence-enrollments";
 import { applyReferralAttribution } from "./domain/referrals";
 import { generateAndUploadWelcomePacket } from "./domain/welcome-packet";
+import { draftJournalPostForProject } from "./domain/journal-drafter";
 import { addProjectMessage } from "./db/projects";
 import {
   getEffectiveAutomationConfig,
@@ -405,6 +406,18 @@ async function onGalleryDelivered(
     status: "PENDING",
     createdAt: FieldValue.serverTimestamp()
   });
+
+  // Phase 4.8 — auto-draft a journal post for Korrin to fill in. Idempotent
+  // (see lib/domain/journal-drafter.ts). Unconditional + try/catch wrapped
+  // so a drafter failure can never block the canonical referral-task write.
+  try {
+    await draftJournalPostForProject(projectId);
+  } catch (err) {
+    console.error("[onGalleryDelivered] journal auto-draft failed", {
+      projectId,
+      err,
+    });
+  }
 }
 
 /**
