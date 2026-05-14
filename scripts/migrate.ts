@@ -1,6 +1,6 @@
 import { adminDb } from "../lib/firebase-admin";
 import { generateReferralCode } from "../lib/db/clients";
-import type { Role } from "../lib/db/clients";
+import type { Role } from "../lib/db/users";
 import { Timestamp } from "firebase-admin/firestore";
 
 async function run() {

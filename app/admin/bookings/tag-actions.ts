@@ -70,27 +70,3 @@ export async function removeTag(
   }
 }
 
-// ─── Recalculate Score (utility for backfill) ─────────────────────────────────
-
-export async function recalculateLeadScore(
-  id: string
-): Promise<{ success: boolean; score?: number; error?: string }> {
-  await requireAdmin();
-
-  try {
-    const doc = await adminDb.collection("bookingInquiries").doc(id).get();
-    if (!doc.exists) return { success: false, error: "Not found." };
-
-    const score = calculateLeadScore(
-      doc.data() as Parameters<typeof calculateLeadScore>[0]
-    );
-    await adminDb.collection("bookingInquiries").doc(id).update({
-      leadScore: score,
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-
-    return { success: true, score };
-  } catch (err) {
-    return { success: false, error: "Failed to recalculate score." };
-  }
-}

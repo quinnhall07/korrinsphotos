@@ -1,6 +1,8 @@
 import { adminAuth, adminDb } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { ProjectStatus } from "./db/projects";
+import { listSequencesByStatusTrigger } from "./db/sequences";
+import { enrollInSequence } from "./db/sequence-enrollments";
 
 // Called when project status changes
 export async function handleProjectTransition(projectId: string, fromStatus: ProjectStatus, toStatus: ProjectStatus) {
@@ -12,6 +14,64 @@ export async function handleProjectTransition(projectId: string, fromStatus: Pro
     await onProposalSent(projectId);
   } else if (toStatus === "GALLERY_DELIVERED") {
     await onGalleryDelivered(projectId);
+  }
+
+  // Status-trigger sequence enrollment. Runs regardless of which status we
+  // advanced into — every active STATUS_CHANGE sequence with a matching
+  // triggerStatus gets its own enrollment. Each enrollment is wrapped in a
+  // try/catch so one bad sequence cannot abort the transition.
+  await enrollMatchingStatusSequences(projectId, toStatus);
+}
+
+async function enrollMatchingStatusSequences(
+  projectId: string,
+  toStatus: ProjectStatus
+) {
+  let sequences;
+  try {
+    sequences = await listSequencesByStatusTrigger(toStatus);
+  } catch (err) {
+    console.error("[enrollMatchingStatusSequences] Failed to list sequences", {
+      projectId,
+      toStatus,
+      err,
+    });
+    return;
+  }
+  if (sequences.length === 0) return;
+
+  let clientId: string | null = null;
+  try {
+    const projectSnap = await adminDb
+      .collection("projects")
+      .doc(projectId)
+      .get();
+    if (projectSnap.exists) {
+      clientId = (projectSnap.data()?.clientId as string | undefined) ?? null;
+    }
+  } catch (err) {
+    console.error("[enrollMatchingStatusSequences] Failed to load project", {
+      projectId,
+      err,
+    });
+    return;
+  }
+  if (!clientId) return;
+
+  for (const sequence of sequences) {
+    try {
+      await enrollInSequence({
+        sequenceId: sequence.id,
+        clientId,
+        projectId,
+      });
+    } catch (err) {
+      console.error("[enrollMatchingStatusSequences] Enrollment failed", {
+        projectId,
+        sequenceId: sequence.id,
+        err,
+      });
+    }
   }
 }
 

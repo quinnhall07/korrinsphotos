@@ -1079,19 +1079,315 @@ function TimelineIcon({ kind }: { kind: TimelineRow["kind"] }) {
 
 // ─── Files tab ────────────────────────────────────────────────────────────────
 
+type ProjectFile = {
+  key: string;
+  name: string;
+  size: number;
+  lastModified: string | null;
+  downloadUrl: string;
+};
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 KB";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function formatUploadedAt(iso: string | null): string {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "—";
+    return d.toLocaleString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return "—";
+  }
+}
+
 function FilesTab({ projectId }: { projectId: string }) {
-  // TODO(phase 1.1+): list R2 objects under `projects/{projectId}/files/` once
-  // a listObjectsV2 helper lands on `lib/storage/r2`, and wire the upload to
-  // the multipart pipeline (large files) or single-PUT (PDFs, < 4.5MB body).
+  const [files, setFiles] = useState<ProjectFile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [deletingKey, setDeletingKey] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const loadFiles = async () => {
+    setError(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/files/list`, {
+        method: "GET",
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error(`List failed (${res.status})`);
+      const data = (await res.json()) as { objects?: ProjectFile[] };
+      setFiles(Array.isArray(data.objects) ? data.objects : []);
+    } catch (err) {
+      console.error(err);
+      setError("Could not load files. Please try again.");
+      setFiles([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    setLoading(true);
+    loadFiles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+
+  const handlePickFile = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // Reset input so picking the same file twice re-fires `change`.
+    if (e.target) e.target.value = "";
+    if (!file) return;
+
+    setUploading(true);
+    setError(null);
+
+    try {
+      const presignRes = await fetch(`/api/projects/${projectId}/files/presign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileName: file.name,
+          contentType: file.type || "application/octet-stream",
+        }),
+      });
+      if (!presignRes.ok) throw new Error(`Presign failed (${presignRes.status})`);
+      const { presignedUrl } = (await presignRes.json()) as {
+        presignedUrl: string;
+        key: string;
+      };
+
+      const putRes = await fetch(presignedUrl, {
+        method: "PUT",
+        body: file,
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+      });
+      if (!putRes.ok) throw new Error(`Upload failed (${putRes.status})`);
+
+      toast(`Uploaded ${file.name}`);
+      await loadFiles();
+    } catch (err) {
+      console.error(err);
+      setError("Upload failed. Please try again.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDelete = async (key: string, name: string) => {
+    if (!confirm(`Delete ${name}? This cannot be undone.`)) return;
+    setDeletingKey(key);
+    setError(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/files/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key }),
+      });
+      if (!res.ok) throw new Error(`Delete failed (${res.status})`);
+      toast(`Deleted ${name}`);
+      setFiles((prev) => prev.filter((f) => f.key !== key));
+    } catch (err) {
+      console.error(err);
+      setError("Delete failed. Please try again.");
+    } finally {
+      setDeletingKey(null);
+    }
+  };
+
   return (
     <div>
-      <h2 style={SECTION_HEAD}>Files</h2>
-      <p style={{ color: "var(--charcoal-muted)", fontSize: "0.9rem", marginBottom: "1rem" }}>
-        No files attached to <code style={{ fontSize: "0.8rem" }}>projects/{projectId}/files/</code> yet.
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          marginBottom: "1.25rem",
+          gap: "1rem",
+          flexWrap: "wrap",
+        }}
+      >
+        <h2 style={{ ...SECTION_HEAD, margin: 0 }}>Files</h2>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <span
+            style={{
+              fontSize: "0.7rem",
+              color: "var(--charcoal-muted)",
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+            }}
+          >
+            {uploading ? "Uploading…" : `${files.length} file${files.length === 1 ? "" : "s"}`}
+          </span>
+          <input
+            ref={fileInputRef}
+            type="file"
+            onChange={handleFileChange}
+            style={{ display: "none" }}
+          />
+          <button
+            type="button"
+            style={BTN_PRIMARY}
+            onClick={handlePickFile}
+            disabled={uploading}
+          >
+            {uploading ? "Uploading…" : "Upload file"}
+          </button>
+        </div>
+      </div>
+
+      <p
+        style={{
+          fontSize: "0.75rem",
+          color: "var(--charcoal-muted)",
+          marginBottom: "1.25rem",
+          fontFamily: "'Jost', sans-serif",
+        }}
+      >
+        Stored under{" "}
+        <code style={{ fontSize: "0.75rem" }}>projects/{projectId}/files/</code> in R2.
       </p>
-      <button style={BTN_GHOST} disabled title="Upload pipeline not yet wired">
-        Upload file (coming soon)
-      </button>
+
+      {error && (
+        <div
+          style={{
+            padding: "0.75rem 1rem",
+            border: "0.5px solid var(--border-strong)",
+            background: "var(--white)",
+            color: "var(--charcoal)",
+            fontSize: "0.85rem",
+            marginBottom: "1rem",
+            fontFamily: "'Jost', sans-serif",
+          }}
+        >
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div
+          style={{
+            padding: "2rem",
+            border: "0.5px solid var(--border)",
+            background: "var(--white)",
+            color: "var(--charcoal-muted)",
+            fontSize: "0.85rem",
+            fontFamily: "'Jost', sans-serif",
+            textAlign: "center",
+          }}
+        >
+          Loading files…
+        </div>
+      ) : files.length === 0 ? (
+        <div
+          style={{
+            padding: "2.5rem 1.5rem",
+            border: "0.5px solid var(--border)",
+            background: "var(--white)",
+            color: "var(--charcoal-muted)",
+            fontSize: "0.9rem",
+            fontFamily: "'Jost', sans-serif",
+            textAlign: "center",
+          }}
+        >
+          No files yet. Upload contracts, questionnaires, or deliverables here.
+        </div>
+      ) : (
+        <div style={{ border: "0.5px solid var(--border)", background: "var(--white)" }}>
+          {files.map((f, idx) => (
+            <div
+              key={f.key}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr auto auto auto",
+                alignItems: "center",
+                gap: "1rem",
+                padding: "0.9rem 1.1rem",
+                borderTop: idx === 0 ? "none" : "0.5px solid var(--border)",
+                fontFamily: "'Jost', sans-serif",
+                fontSize: "0.85rem",
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <div
+                  style={{
+                    color: "var(--charcoal)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                  title={f.name}
+                >
+                  {f.name}
+                </div>
+                <div
+                  style={{
+                    color: "var(--charcoal-muted)",
+                    fontSize: "0.7rem",
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
+                    marginTop: "0.2rem",
+                  }}
+                >
+                  {formatUploadedAt(f.lastModified)}
+                </div>
+              </div>
+              <div
+                style={{
+                  color: "var(--charcoal-muted)",
+                  fontSize: "0.75rem",
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {formatBytes(f.size)}
+              </div>
+              <a
+                href={f.downloadUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  ...BTN_GHOST,
+                  textDecoration: "none",
+                  display: "inline-block",
+                  textAlign: "center",
+                }}
+              >
+                Download
+              </a>
+              <button
+                type="button"
+                onClick={() => handleDelete(f.key, f.name)}
+                disabled={deletingKey === f.key}
+                style={{
+                  ...BTN_GHOST,
+                  color: "var(--charcoal)",
+                  opacity: deletingKey === f.key ? 0.5 : 1,
+                }}
+              >
+                {deletingKey === f.key ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -78,3 +78,33 @@ export async function deactivateSequence(id: string): Promise<void> {
     .doc(id)
     .update({ active: false, updatedAt: FieldValue.serverTimestamp() });
 }
+
+/**
+ * Returns every active sequence whose trigger is STATUS_CHANGE and whose
+ * triggerStatus matches the supplied status. Used by the status-trigger hook
+ * in `lib/project-transitions.ts` to fan enrollments out on every status
+ * advance — keeping the composite Firestore query inside the db layer.
+ */
+export async function listSequencesByStatusTrigger(
+  status: ProjectStatus
+): Promise<SequenceDoc[]> {
+  const snap = await sequencesCol()
+    .where("trigger", "==", "STATUS_CHANGE")
+    .where("triggerStatus", "==", status)
+    .where("active", "==", true)
+    .get();
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as SequenceDoc));
+}
+
+/**
+ * Idempotency helper used by the seed script. Returns the first sequence
+ * whose `name` matches exactly (case-sensitive), or null.
+ */
+export async function findSequenceByName(
+  name: string
+): Promise<SequenceDoc | null> {
+  const snap = await sequencesCol().where("name", "==", name).limit(1).get();
+  if (snap.empty) return null;
+  const d = snap.docs[0];
+  return { id: d.id, ...d.data() } as SequenceDoc;
+}

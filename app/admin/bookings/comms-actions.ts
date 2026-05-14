@@ -56,29 +56,6 @@ export async function logCommunication(
   }
 }
 
-export async function deleteCommunicationLog(
-  id: string,
-  logEntry: {
-    id: string;
-    channel: CommunicationChannel;
-    summary: string;
-    adminUid: string;
-    timestamp: Date;
-  }
-): Promise<{ success: boolean; error?: string }> {
-  await requireAdmin();
-  try {
-    await adminDb.collection("bookingInquiries").doc(id).update({
-      communicationLog: FieldValue.arrayRemove(logEntry),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-    revalidatePath("/admin/bookings");
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: "Failed to delete log entry." };
-  }
-}
-
 // ─── Send Email Response ──────────────────────────────────────────────────────
 
 export async function sendBookingResponse(

@@ -3,6 +3,7 @@ import {
   PutObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
+  ListObjectsV2Command,
   CreateMultipartUploadCommand,
   UploadPartCommand,
   CompleteMultipartUploadCommand,
@@ -133,10 +134,66 @@ export async function deleteFromR2(key: string): Promise<void> {
   await r2.send(command);
 }
 
-export async function generatePresignedGetUrl(key: string): Promise<string> {
+/**
+ * Alias of `deleteFromR2` — preferred name for new call sites that aren't
+ * already importing the legacy helper from `lib/cloudflare`.
+ */
+export async function deleteObject(key: string): Promise<void> {
+  await deleteFromR2(key);
+}
+
+export async function generatePresignedGetUrl(
+  key: string,
+  expiresIn: number = 3600,
+): Promise<string> {
   const command = new GetObjectCommand({
     Bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME!,
     Key: key,
   });
-  return await getSignedUrl(r2, command, { expiresIn: 300 });
+  return await getSignedUrl(r2, command, { expiresIn });
+}
+
+export interface R2Object {
+  key: string;
+  size: number;
+  lastModified: Date | null;
+  etag: string;
+}
+
+export interface ListObjectsV2Result {
+  objects: R2Object[];
+  isTruncated: boolean;
+  nextContinuationToken?: string;
+}
+
+/**
+ * Lists objects under a prefix in the R2 bucket. Wraps `ListObjectsV2Command`
+ * and normalises the AWS SDK result shape into plain values for callers.
+ */
+export async function listObjectsV2({
+  prefix,
+  continuationToken,
+}: {
+  prefix: string;
+  continuationToken?: string;
+}): Promise<ListObjectsV2Result> {
+  const command = new ListObjectsV2Command({
+    Bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME!,
+    Prefix: prefix,
+    ContinuationToken: continuationToken,
+  });
+  const response = await r2.send(command);
+  const objects: R2Object[] = (response.Contents ?? [])
+    .filter((o) => typeof o.Key === "string")
+    .map((o) => ({
+      key: o.Key!,
+      size: typeof o.Size === "number" ? o.Size : 0,
+      lastModified: o.LastModified ?? null,
+      etag: typeof o.ETag === "string" ? o.ETag.replaceAll('"', "") : "",
+    }));
+  return {
+    objects,
+    isTruncated: Boolean(response.IsTruncated),
+    nextContinuationToken: response.NextContinuationToken,
+  };
 }

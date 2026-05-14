@@ -103,6 +103,18 @@ const NAV = [
         ),
       },
       {
+        label: "Sequences",
+        href: "/admin/sequences",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <circle cx="3" cy="3" r="1.5" />
+            <circle cx="13" cy="8" r="1.5" />
+            <circle cx="3" cy="13" r="1.5" />
+            <path d="M4 4l8 3M4 12l8-3" />
+          </svg>
+        ),
+      },
+      {
         label: "Users",
         href: "/admin/users",
         icon: (

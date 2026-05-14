@@ -1,6 +1,9 @@
 import { adminDb } from "@/lib/firebase-admin";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import type { LeadSource } from "./clients";
+import type { CommunicationChannel } from "@/lib/booking-kanban";
+
+export type { CommunicationChannel } from "@/lib/booking-kanban";
 
 export type ProjectStatus =
   | "SITE_VISIT"
@@ -20,7 +23,6 @@ export type ProjectStatus =
   | "ARCHIVED";
 
 export type SessionType = "Wedding" | "Engagement" | "Portrait" | "Family" | "Editorial" | "Commercial" | string;
-export type CommunicationChannel = "EMAIL" | "PHONE" | "SMS" | "IN_PERSON";
 
 export interface Location {
   label: string;

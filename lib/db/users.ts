@@ -1,5 +1,5 @@
 import { adminDb } from "@/lib/firebase-admin";
-import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { FieldValue, type Timestamp } from "firebase-admin/firestore";
 
 export type Role = "ADMIN" | "CLIENT";
 
@@ -15,11 +15,6 @@ export interface UserDoc {
 
 export const usersCol = () => adminDb.collection("users");
 
-export async function getUser(uid: string): Promise<UserDoc | null> {
-  const snap = await usersCol().doc(uid).get();
-  return snap.exists ? ({ uid, ...snap.data() } as UserDoc) : null;
-}
-
 export async function upsertUser(uid: string, data: Partial<UserDoc>): Promise<void> {
   const ref = usersCol().doc(uid);
   await adminDb.runTransaction(async (tx) => {
@@ -31,9 +26,4 @@ export async function upsertUser(uid: string, data: Partial<UserDoc>): Promise<v
       tx.set(ref, { ...data, updatedAt: now }, { merge: true });
     }
   });
-}
-
-export async function listUsers(): Promise<UserDoc[]> {
-  const snap = await usersCol().orderBy("createdAt", "desc").get();
-  return snap.docs.map((d) => ({ uid: d.id, ...d.data() } as UserDoc));
 }
