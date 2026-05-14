@@ -94,6 +94,19 @@ export function Navbar() {
             </li>
             <li>
               <Link
+                href="/investment"
+                style={{
+                  ...navLinkStyle,
+                  color: isActive("/investment") ? "var(--charcoal)" : "var(--charcoal-light)",
+                  borderBottom: isActive("/investment") ? "0.5px solid var(--olive)" : "none",
+                  paddingBottom: "2px",
+                }}
+              >
+                Investment
+              </Link>
+            </li>
+            <li>
+              <Link
                 href="/booking"
                 style={{
                   ...navLinkStyle,

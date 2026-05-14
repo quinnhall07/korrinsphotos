@@ -10,7 +10,7 @@
 // that scrolling container instead of the viewport. Portalling to body escapes
 // all ancestor overflow/transform/will-change stacking contexts entirely.
 
-import { useState, useTransition, useEffect, useCallback } from "react";
+import { useState, useTransition, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import {
@@ -72,7 +72,7 @@ const SIDEBAR_W = 260;
 
 export function LeadDetailDrawer({ inquiry, onClose }: LeadDetailDrawerProps) {
   const router = useRouter();
-  const needsRefresh = { current: false };
+  const needsRefresh = useRef(false);
 
   // SSR guard: createPortal requires document to exist
   const [mounted, setMounted] = useState(false);

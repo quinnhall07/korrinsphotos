@@ -22,25 +22,52 @@ const BookingSchema = z.object({
   }),
   preferredDate: z.string().optional(),
   message:       z.string().min(10, "Please tell me a bit more about your vision").max(5000),
+  // ── Optional multi-step form extensions (all default to safe no-ops) ────
+  phone:           z.string().max(40).optional(),
+  referralSource:  z.enum(["Website", "Instagram", "Google", "Referral", "Other"]).optional(),
+  locationLabel:   z.enum(["Cary / Raleigh-Durham area", "North Carolina", "I'll travel — somewhere else"]).optional(),
+  locationDetail:  z.string().max(200).optional(),
+  moodTag:         z.enum(["light-airy", "dark-moody", "editorial", "documentary", "bold-cinematic"]).optional(),
+  preferredMonth:  z.string().regex(/^\d{4}-\d{2}$/, "Invalid month").optional(),
 });
 
 type BookingResult = { success: true } | { success: false; error: string };
 
 export async function submitBooking(formData: FormData): Promise<BookingResult> {
+  // Normalise empty strings to undefined so optional enums don't reject "".
+  const opt = (v: FormDataEntryValue | null) => {
+    const s = typeof v === "string" ? v.trim() : "";
+    return s === "" ? undefined : s;
+  };
+
   const parsed = BookingSchema.safeParse({
-    firstName:     formData.get("firstName"),
-    lastName:      formData.get("lastName"),
-    email:         formData.get("email"),
-    sessionType:   formData.get("sessionType"),
-    preferredDate: formData.get("preferredDate"),
-    message:       formData.get("message"),
+    firstName:      formData.get("firstName"),
+    lastName:       formData.get("lastName"),
+    email:          formData.get("email"),
+    sessionType:    formData.get("sessionType"),
+    preferredDate:  opt(formData.get("preferredDate")),
+    message:        formData.get("message"),
+    phone:          opt(formData.get("phone")),
+    referralSource: opt(formData.get("referralSource")),
+    locationLabel:  opt(formData.get("locationLabel")),
+    locationDetail: opt(formData.get("locationDetail")),
+    moodTag:        opt(formData.get("moodTag")),
+    preferredMonth: opt(formData.get("preferredMonth")),
   });
 
   if (!parsed.success) {
     return { success: false, error: parsed.error.errors[0]?.message ?? "Invalid form data" };
   }
 
-  const { firstName, lastName, email, sessionType, preferredDate, message } = parsed.data;
+  const {
+    firstName, lastName, email, sessionType, preferredDate, message,
+    phone, referralSource, locationLabel, locationDetail, moodTag, preferredMonth,
+  } = parsed.data;
+
+  // If only a month was provided (no specific date), use the first of that month
+  // so the existing preferredDate-based logic (Rush tag, shootDate) still works.
+  const effectivePreferredDate = preferredDate
+    ?? (preferredMonth ? `${preferredMonth}-01` : undefined);
   
   const cookieStore = await cookies();
   const originStr = cookieStore.get("__origin")?.value;
@@ -55,7 +82,7 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
       lastName,
       email,
       sessionType,
-      preferredDate: preferredDate ? new Date(preferredDate) : null,
+      preferredDate: effectivePreferredDate ? new Date(effectivePreferredDate) : null,
       message,
       status:    initialStatus,
       notes:     "",
@@ -67,6 +94,13 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
       lastRespondedAt: null,
       tags:      [] as string[],
       communicationLog: [] as unknown[],
+      // Optional multi-step extensions — null when not collected.
+      phone:           phone ?? null,
+      referralSource:  referralSource ?? null,
+      locationLabel:   locationLabel ?? null,
+      locationDetail:  locationDetail ?? null,
+      moodTag:         moodTag ?? null,
+      preferredMonth:  preferredMonth ?? null,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     };
@@ -74,10 +108,13 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
     // ── Automatic tagging heuristics ──────────────────────────────────────────
     const autoTags: string[] = [sessionType]; // Automatically tag the session type
 
+    // Mood tile selection → namespaced tag (e.g. "mood:dark-moody").
+    if (moodTag) autoTags.push(`mood:${moodTag}`);
+
     // "Rush" — preferred date is within 30 days
-    if (preferredDate) {
+    if (effectivePreferredDate) {
       const daysUntil = Math.round(
-        (new Date(preferredDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+        (new Date(effectivePreferredDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
       );
       if (daysUntil >= 0 && daysUntil <= 30) {
         autoTags.push("Rush");
@@ -89,7 +126,8 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
       autoTags.push("High Budget");
     }
 
-    // "Destination" — message mentions travel/location keywords
+    // "Destination" — message mentions travel/location keywords, or user
+    // explicitly chose the "I'll travel — somewhere else" location bucket.
     const destinationKeywords = [
       "destination", "travel", "out of state", "out-of-state", "flying",
       "abroad", "international", "beach", "resort", "island", "overseas",
@@ -97,12 +135,16 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
       "spain", "greece", "costa rica", "vineyard", "mountain",
     ];
     const msgLower = message.toLowerCase();
-    if (destinationKeywords.some((kw) => msgLower.includes(kw))) {
+    if (
+      destinationKeywords.some((kw) => msgLower.includes(kw)) ||
+      locationLabel === "I'll travel — somewhere else"
+    ) {
       autoTags.push("Destination");
     }
 
-    // "Needs Follow-Up" — no preferred date means we should reach out to clarify
-    if (!preferredDate) {
+    // "Needs Follow-Up" — no preferred date (specific or month) means we
+    // should reach out to clarify.
+    if (!effectivePreferredDate) {
       autoTags.push("Needs Follow-Up");
     }
 
@@ -113,7 +155,7 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
     const leadScore = calculateLeadScore({
       sessionType,
       message,
-      preferredDate: preferredDate ?? undefined,
+      preferredDate: effectivePreferredDate ?? undefined,
       tags: autoTags,
     });
 
@@ -134,6 +176,7 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
         email,
         firstName,
         lastName,
+        phone: phone ?? null,
         role: "CLIENT",
         referralCode,
         referralCredit: 0,
@@ -156,7 +199,8 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
       status: "INQUIRY",
       sessionType,
       title: `${firstName} ${lastName} — ${sessionType}`,
-      shootDate: preferredDate ? new Date(preferredDate) : null,
+      shootDate: effectivePreferredDate ? new Date(effectivePreferredDate) : null,
+      shootLocation: locationDetail || locationLabel || null,
       notes: "",
       leadSource: origin.source ?? "WEBSITE",
       leadScore,
@@ -165,6 +209,11 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
       followUpDate: null,
       lastContactedAt: null,
       lastRespondedAt: null,
+      // Optional multi-step extensions — null when not collected.
+      moodTag:        moodTag ?? null,
+      locationLabel:  locationLabel ?? null,
+      preferredMonth: preferredMonth ?? null,
+      referralSource: referralSource ?? null,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });

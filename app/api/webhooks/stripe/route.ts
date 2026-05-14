@@ -97,13 +97,13 @@ async function processInvoicePayment(invoiceId: string, paymentIntentId: string)
     }
 
     if (newStatus !== oldStatus) {
-      await handleProjectTransition(project.id, oldStatus, newStatus);
+      await handleProjectTransition(projectDoc.id, oldStatus, newStatus);
 
       // Log Activity (best-effort)
       await logActivity(
         "PAYMENT_RECEIVED",
         `Payment received for ${invoice.type} invoice. Project moved to ${newStatus}.`,
-        { projectId: project.id, invoiceId }
+        { projectId: projectDoc.id, invoiceId }
       ).catch(() => {});
     }
   }

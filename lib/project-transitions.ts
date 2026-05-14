@@ -1,4 +1,4 @@
-import { adminDb } from "@/lib/firebase-admin";
+import { adminAuth, adminDb } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { ProjectStatus } from "./db/projects";
 
@@ -37,11 +37,53 @@ async function onProjectBooked(projectId: string) {
   });
 
   // 2. Auto-grant client portal access
-  // We need the client's Auth UID. If they don't have one, it's created when they log in.
-  // We store access by client email or ID.
-  const accessId = `${project.clientId}_${eventRef.id}`;
+  // Resolve (or provision) the Firebase Auth user for this client so the
+  // eventAccess doc is keyed by the real Auth UID — not the Firestore client
+  // doc id. See ADR-009: `${userId}_${eventId}` where `userId` is the Auth UID.
+  const displayName = `${client.firstName ?? ""} ${client.lastName ?? ""}`.trim();
+  let uid: string;
+  try {
+    const existing = await adminAuth.getUserByEmail(client.email);
+    uid = existing.uid;
+  } catch (err: any) {
+    if (err?.code === "auth/user-not-found") {
+      try {
+        const created = await adminAuth.createUser({
+          email: client.email,
+          ...(displayName ? { displayName } : {}),
+        });
+        uid = created.uid;
+      } catch (createErr) {
+        console.error("[onProjectBooked] Failed to create Firebase Auth user", {
+          projectId,
+          clientId: project.clientId,
+          email: client.email,
+          error: createErr,
+        });
+        throw createErr;
+      }
+    } else {
+      console.error("[onProjectBooked] Failed to resolve Firebase Auth user", {
+        projectId,
+        clientId: project.clientId,
+        email: client.email,
+        error: err,
+      });
+      throw err;
+    }
+  }
+
+  // Upsert the users/{uid} mirror doc so the client can sign in as CLIENT.
+  await adminDb.collection("users").doc(uid).set({
+    email: client.email,
+    role: "CLIENT",
+    ...(displayName ? { displayName } : {}),
+    createdAt: FieldValue.serverTimestamp(),
+  }, { merge: true });
+
+  const accessId = `${uid}_${eventRef.id}`;
   await adminDb.collection("eventAccess").doc(accessId).set({
-    userId: project.clientId, // Simplified, assume client ID maps to user UID when registered
+    userId: uid,
     eventId: eventRef.id,
     createdAt: FieldValue.serverTimestamp(),
   }, { merge: true });

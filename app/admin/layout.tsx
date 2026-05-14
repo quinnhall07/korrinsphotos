@@ -4,6 +4,7 @@
 
 import { requireAdmin } from "@/lib/session";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
+import { CommandPaletteProvider } from "@/components/ui/CommandPaletteProvider";
 
 export default async function AdminLayout({
   children,
@@ -13,19 +14,21 @@ export default async function AdminLayout({
   await requireAdmin();
 
   return (
-    <div style={{ paddingTop: "72px" }}>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "200px 1fr",
-          minHeight: "calc(100vh - 72px)",
-        }}
-      >
-        <AdminSidebar />
-        <div style={{ padding: "1.5rem 2rem", overflowX: "auto" }}>
-          {children}
+    <CommandPaletteProvider>
+      <div style={{ paddingTop: "72px" }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "200px 1fr",
+            minHeight: "calc(100vh - 72px)",
+          }}
+        >
+          <AdminSidebar />
+          <div style={{ padding: "1.5rem 2rem", overflowX: "auto" }}>
+            {children}
+          </div>
         </div>
       </div>
-    </div>
+    </CommandPaletteProvider>
   );
 }

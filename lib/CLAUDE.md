@@ -36,6 +36,8 @@ Direction of dependency: `domain/` and top-level helpers may import from `db/` a
 | `upload.ts` | Client-only. `uploadMultipartFile()` — drives `/api/upload/multipart/{init,complete}` with parallel part PUTs (`CHUNK_SIZE=10MB`, `CONCURRENCY=3`). |
 | `date.ts` | Pure. `toDate`, `formatDisplayDate`, `formatDateInput`, `formatDateTime` — accept `Date | string | { toDate() }`. Safe everywhere. |
 | `cloudflare.ts` | Deprecated re-export facade. Forwards from `lib/storage/r2` and `lib/storage/images`. Do not add new exports here — import from `lib/storage/*` directly. |
+| `golden-hour.ts` | Pure. `computeSunTimes(date, lat, lon)` returns sunrise/sunset, golden- and blue-hour boundaries, and solar noon as `Date` objects via the NOAA Solar Calculations algorithm (no third-party dep). `formatSunTimes(times, tz?)` renders an `Intl.DateTimeFormat` summary (default `America/New_York`). Polar edge case: returns Invalid Date when the sun never rises/sets — guard with `Number.isNaN(d.getTime())`. |
+| `weather.ts` | Server-only Tomorrow.io adapter. `fetchForecastSnapshot({ latitude, longitude, at })` POSTs `/v4/timelines` and returns a normalized `WeatherSnapshot` (Fahrenheit, mph, normalized `conditions` vocabulary, `isOutdoorFriendly` heuristic). Reads `TOMORROW_IO_API_KEY`; warns and returns `null` if unset. 8s `AbortController` timeout; best-effort — never throws, returns `null` on any error. |
 
 ---
 

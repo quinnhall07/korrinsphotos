@@ -29,6 +29,25 @@ export interface Location {
   notes?: string;
 }
 
+export interface StatusHistoryEntry {
+  status: ProjectStatus;
+  at: Timestamp;
+  byUid?: string;
+}
+
+export type LostReason =
+  | "BUDGET"
+  | "GHOSTED"
+  | "DATE_UNAVAILABLE"
+  | "LOST_TO_COMPETITOR"
+  | "OTHER";
+
+export interface WeatherSnapshot {
+  temp: number;
+  conditions: string;
+  fetchedAt: Timestamp;
+}
+
 export interface ProjectDoc {
   id: string;
   clientId: string;
@@ -56,6 +75,14 @@ export interface ProjectDoc {
   notes: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+  statusHistory?: StatusHistoryEntry[];
+  lostReason?: LostReason;
+  engagementScore?: number;
+  lastEngagementAt?: Timestamp;
+  clientNps?: 1 | 2 | 3 | 4 | 5;
+  clientNpsAt?: Timestamp;
+  weatherSnapshot?: WeatherSnapshot;
+  shootBriefR2Key?: string;
 }
 
 export interface MessageDoc {

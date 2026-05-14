@@ -48,6 +48,26 @@ const NAV = [
           </svg>
         ),
       },
+      {
+        label: "Locations",
+        href: "/admin/locations",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <path d="M8 1c-3 0-5 2.2-5 5 0 3.7 5 9 5 9s5-5.3 5-9c0-2.8-2-5-5-5z" />
+            <circle cx="8" cy="6" r="1.6" />
+          </svg>
+        ),
+      },
+      {
+        label: "Vendors",
+        href: "/admin/vendors",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <path d="M2 6l6-4 6 4v8H2z" />
+            <path d="M6 14V9h4v5" />
+          </svg>
+        ),
+      },
     ],
   },
   {

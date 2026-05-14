@@ -4,6 +4,17 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 export type Role = "ADMIN" | "CLIENT";
 export type LeadSource = "WEBSITE" | "INSTAGRAM" | "GOOGLE" | "REFERRAL" | "DIRECT" | "OTHER";
 
+export type ReferralRewardKind = "CREDIT" | "MINI_SESSION" | "GIFT";
+
+export interface ReferralRewardLogEntry {
+  at: Timestamp;
+  tier: number;
+  rewardKind: ReferralRewardKind;
+  amountCents?: number;
+}
+
+export type LifecycleStage = "INQUIRED" | "BOOKED" | "DELIVERED" | "REPEAT" | "CHURNED";
+
 export interface ClientDoc {
   id: string; // Firebase UID once registered, otherwise generated
   email: string; // UNIQUE
@@ -23,6 +34,13 @@ export interface ClientDoc {
   firstTouchAt: Timestamp;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+  referralCount?: number;
+  referralTier?: 1 | 2 | 3 | 4 | 5;
+  referralRewardsLog?: ReferralRewardLogEntry[];
+  smsConsent?: boolean;
+  lifecycleStage?: LifecycleStage;
+  lifeEventTags?: string[];
+  instagramHandle?: string;
 }
 
 export const clientsCol = () => adminDb.collection("clients");

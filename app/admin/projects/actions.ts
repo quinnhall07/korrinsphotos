@@ -3,8 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { adminDb } from "@/lib/firebase-admin";
 import { requireAdmin } from "@/lib/session";
-import { FieldValue } from "firebase-admin/firestore";
-import { ProjectStatus } from "@/lib/db/projects";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { ProjectStatus, StatusHistoryEntry } from "@/lib/db/projects";
 import { handleProjectTransition } from "@/lib/project-transitions";
 import { logActivity } from "@/lib/db/activity";
 
@@ -12,19 +12,26 @@ export async function updateProjectStatus(
   projectId: string,
   newStatus: ProjectStatus
 ): Promise<{ success: boolean; error?: string }> {
-  await requireAdmin();
+  const session = await requireAdmin();
 
   try {
     const doc = await adminDb.collection("projects").doc(projectId).get();
     if (!doc.exists) return { success: false, error: "Project not found" };
-    
+
     const project = doc.data()!;
     const oldStatus = project.status as ProjectStatus;
 
     if (oldStatus === newStatus) return { success: true };
 
+    const historyEntry: StatusHistoryEntry = {
+      status: newStatus,
+      at: Timestamp.now(),
+      ...(session.uid ? { byUid: session.uid } : {}),
+    };
+
     await adminDb.collection("projects").doc(projectId).update({
       status: newStatus,
+      statusHistory: FieldValue.arrayUnion(historyEntry),
       updatedAt: FieldValue.serverTimestamp(),
     });
 

@@ -1,9 +1,9 @@
 // app/booking/page.tsx
-// Booking inquiry page. The form submits via a Next.js Server Action that
-// writes directly to the BookingInquiry table — no API route needed.
+// Booking inquiry page. The form is a 3-step Client Component that submits
+// via the `submitBooking` Server Action (no API route involved).
 
 import type { Metadata } from "next";
-import { BookingForm } from "./BookingForm";
+import { BookingFormSteps } from "./BookingFormSteps";
 
 export const metadata: Metadata = {
   title: "Booking",
@@ -83,7 +83,7 @@ export default function BookingPage() {
             discuss availability and details.
           </p>
 
-          <BookingForm />
+          <BookingFormSteps />
         </div>
       </div>
     </div>

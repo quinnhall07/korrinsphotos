@@ -3,6 +3,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 
 export type InvoiceType = "DEPOSIT" | "BALANCE" | "FULL";
 export type InvoiceStatus = "DRAFT" | "SENT" | "PAID" | "OVERDUE" | "VOID";
+export type DisputeStatus = "NONE" | "NEEDS_RESPONSE" | "UNDER_REVIEW" | "WON" | "LOST";
 
 export interface InvoiceDoc {
   id: string;
@@ -18,6 +19,12 @@ export interface InvoiceDoc {
   stripePaymentLinkUrl?: string | null;
   sentAt?: Timestamp | null;
   createdAt: Timestamp;
+  salesTaxCents?: number;
+  salesTaxRate?: number;
+  salesTaxJurisdiction?: string;
+  disputeStatus?: DisputeStatus;
+  refundCents?: number;
+  refundReason?: string;
 }
 
 export const invoicesCol = () => adminDb.collection("invoices");
