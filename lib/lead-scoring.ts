@@ -2,8 +2,21 @@
 // Calculates an automated lead score (0–100) based on inquiry attributes.
 // Higher scores = higher priority + higher likelihood to book.
 // Call this on inquiry creation and on any field update that affects score.
+//
+// The function is intentionally typed against a minimal structural shape
+// (LeadScoreInput) so the legacy BookingInquiryDoc and the unified ProjectDoc
+// can both be scored without coercion. ProjectDoc names the shoot date
+// `shootDate`; BookingInquiryDoc names it `preferredDate` — we accept either.
 
-import type { BookingInquiryDoc } from "@/lib/db/bookings";
+export interface LeadScoreInput {
+  sessionType?: string | null;
+  message?: string | null;
+  preferredDate?: unknown;   // BookingInquiryDoc (Date | string | null)
+  shootDate?: unknown;       // ProjectDoc (Timestamp | string | null)
+  leadSource?: string | null;
+  tags?: string[];
+  estimatedValue?: number | null;
+}
 
 // ─── Session value weights ─────────────────────────────────────────────────────
 const SESSION_WEIGHTS: Record<string, number> = {
@@ -44,7 +57,7 @@ function parseDate(raw: unknown): Date | null {
 
 // ─── Main scoring function ─────────────────────────────────────────────────────
 
-export function calculateLeadScore(inquiry: Partial<BookingInquiryDoc>): number {
+export function calculateLeadScore(inquiry: LeadScoreInput): number {
   let score = 35; // Reasonable baseline for any genuine inquiry
 
   // ── Session type ──────────────────────────────────────────────────────────
@@ -57,7 +70,8 @@ export function calculateLeadScore(inquiry: Partial<BookingInquiryDoc>): number 
   else if (msgLen > 100) score += 5;
 
   // ── Date urgency ──────────────────────────────────────────────────────────
-  const date = parseDate(inquiry.preferredDate);
+  // Accept either name — BookingInquiryDoc has preferredDate, ProjectDoc has shootDate.
+  const date = parseDate(inquiry.preferredDate ?? inquiry.shootDate);
   if (date) {
     const days = daysBetween(new Date(), date);
     if (days > 0 && days <= 30)       score += 15;  // very soon

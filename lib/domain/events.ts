@@ -18,7 +18,9 @@ export async function deleteEventAndAssets(eventId: string): Promise<void> {
     .collection("photos")
     .get();
 
-  // 2. Delete each photo's external assets (best-effort)
+  // 2. Delete each photo's external assets (best-effort).
+  // R2 object key lives under `r2Key` (single-PUT pipeline) or `storageKey`
+  // (multipart pipeline for RAW exports). Read both so cleanup covers both paths.
   const photoDeletes = photosSnap.docs.map(async (doc) => {
     const data = doc.data();
     try {
@@ -28,9 +30,10 @@ export async function deleteEventAndAssets(eventId: string): Promise<void> {
     } catch (err) {
       console.error("CF Images delete failed:", err);
     }
-    if (data.r2Key) {
+    const r2Key = (data.r2Key ?? data.storageKey) as string | undefined;
+    if (r2Key) {
       try {
-        await deleteFromR2(data.r2Key as string);
+        await deleteFromR2(r2Key);
       } catch (err) {
         console.error("R2 delete failed:", err);
       }
@@ -70,7 +73,8 @@ export async function clearEventGallery(eventId: string): Promise<void> {
     .collection("photos")
     .get();
 
-  // 2. Delete external assets (best-effort)
+  // 2. Delete external assets (best-effort). See deleteEventAndAssets for the
+  // r2Key / storageKey rationale (single-PUT vs multipart pipeline).
   const photoDeletes = photosSnap.docs.map(async (doc) => {
     const data = doc.data();
     try {
@@ -80,9 +84,10 @@ export async function clearEventGallery(eventId: string): Promise<void> {
     } catch (err) {
       console.error("CF Images delete failed:", err);
     }
-    if (data.r2Key) {
+    const r2Key = (data.r2Key ?? data.storageKey) as string | undefined;
+    if (r2Key) {
       try {
-        await deleteFromR2(data.r2Key as string);
+        await deleteFromR2(r2Key);
       } catch (err) {
         console.error("R2 delete failed:", err);
       }

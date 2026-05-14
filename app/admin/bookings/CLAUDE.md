@@ -38,7 +38,7 @@ The dual write is intentional and temporary. Any change to the legacy shape (sta
 
 | File | Exports | Notes |
 |---|---|---|
-| `inquiry-actions.ts` | `updateBookingStatus`, `bulkUpdateStatus`, `updateBookingDetails`, `updateLeadSource`, `setFollowUpDate`, `deleteBookingInquiry`, `createBookingInquiry`, `linkEventToInquiry` | Status transition auto-creates an Event when status becomes `BOOKED` and the inquiry has no `eventId` yet. Mirrors `handleProjectTransition`'s booked side effect — see gotcha below. |
+| `inquiry-actions.ts` | `updateBookingStatus`, `updateBookingDetails`, `updateLeadSource`, `setFollowUpDate`, `deleteBookingInquiry`, `createBookingInquiry`, `linkEventToInquiry` | Status transition auto-creates an Event when status becomes `BOOKED` and the inquiry has no `eventId` yet. Mirrors `handleProjectTransition`'s booked side effect — see gotcha below. |
 | `comms-actions.ts` | `logCommunication`, `deleteCommunicationLog`, `sendBookingResponse` | Adds entries to the `communicationLog[]` array on the inquiry doc (NOT a subcollection). `sendBookingResponse` writes to the Firebase Trigger Email `mail` collection and auto-promotes `PENDING → QUALIFIED`. |
 | `tag-actions.ts` | Tag mutations | Recompute lead score on tag changes. |
 

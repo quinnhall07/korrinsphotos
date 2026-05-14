@@ -66,40 +66,6 @@ export async function updateBookingStatus(
   revalidatePath("/admin");
 }
 
-// ─── Bulk Status Update ───────────────────────────────────────────────────────
-
-export async function bulkUpdateStatus(
-  ids: string[],
-  status: LeadStatus
-): Promise<{ success: boolean; error?: string }> {
-  await requireAdmin();
-  if (ids.length === 0) return { success: true };
-
-  try {
-    const batch = adminDb.batch();
-    ids.forEach((id) => {
-      batch.update(adminDb.collection("bookingInquiries").doc(id), {
-        status,
-        updatedAt: FieldValue.serverTimestamp(),
-      });
-    });
-    await batch.commit();
-
-    await logActivity(
-      "STATUS_CHANGED",
-      `${ids.length} inquir${ids.length === 1 ? "y" : "ies"} bulk-moved to ${status.replace(/_/g, " ").toLowerCase()}`,
-      { ids, status }
-    ).catch(() => { });
-
-    revalidatePath("/admin/bookings");
-    revalidatePath("/admin");
-    return { success: true };
-  } catch (err) {
-    console.error("bulkUpdateStatus error:", err);
-    return { success: false, error: "Failed to update inquiries." };
-  }
-}
-
 // ─── Update Notes & Pricing ───────────────────────────────────────────────────
 
 export async function updateBookingDetails(

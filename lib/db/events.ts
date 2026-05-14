@@ -10,7 +10,7 @@ export interface EventDoc {
   clientId?: string;
   clientEmail?: string;
   clientName?: string;
-  status?: "UPCOMING" | "COMPLETED" | "ACTIVE";
+  status?: "UPCOMING" | "COMPLETED";
   startDate?: string;
   endDate?: string;
   startTime?: string;

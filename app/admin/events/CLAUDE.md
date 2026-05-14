@@ -8,7 +8,7 @@ Root conventions: see root CLAUDE.md. Upload pipeline (single-PUT vs multipart, 
 
 ## Provenance — Auto vs Manual
 
-The expected flow is automatic: when a project transitions to `BOOKED`, `lib/project-transitions.ts > onProjectBooked` writes an `events/{id}` doc with `projectId`, `clientId`, `title`, `shootDate`, `status: "ACTIVE"` and grants `eventAccess` in the same step.
+The expected flow is automatic: when a project transitions to `BOOKED`, `lib/project-transitions.ts > onProjectBooked` writes an `events/{id}` doc with `projectId`, `clientId`, `title`, `shootDate`, `status: "UPCOMING"` and grants `eventAccess` in the same step.
 
 The "Create Event" button in `page.tsx` (and `createEvent` in `actions.ts`) is the **legacy/manual** path — it creates a bare event with just `title` and timestamps. Useful for ad-hoc galleries that have no associated project, but most events should arrive via the project lifecycle. The legacy `updateBookingStatus(_, "BOOKED")` in `app/admin/bookings/inquiry-actions.ts` also auto-creates events; that branch will be removed when dual-write retires.
 

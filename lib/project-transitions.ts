@@ -31,7 +31,7 @@ async function onProjectBooked(projectId: string) {
     clientId: project.clientId,
     title: project.title,
     shootDate: project.shootDate,
-    status: "ACTIVE",
+    status: "UPCOMING",
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   });

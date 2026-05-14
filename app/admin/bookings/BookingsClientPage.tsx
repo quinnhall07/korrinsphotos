@@ -7,7 +7,6 @@
 import { useState, useMemo } from "react";
 import { KanbanBoard } from "./KanbanBoard";
 import { SmartFilters, applySmartFilter } from "./SmartFilters";
-import { BulkActions } from "./BulkActions";
 import { LeadDetailDrawer } from "./LeadDetailDrawer";
 import { NewInquiryModal } from "./NewInquiryModal";
 import type { SmartFilter } from "./SmartFilters";
@@ -56,7 +55,6 @@ interface BookingsClientPageProps {
 export function BookingsClientPage({ inquiries }: BookingsClientPageProps) {
   const [smartFilter, setSmartFilter] = useState<SmartFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [drawerInquiry, setDrawerInquiry] = useState<KanbanInquiry | null>(null);
   const [showNewModal, setShowNewModal] = useState(false);
 
@@ -92,10 +90,6 @@ export function BookingsClientPage({ inquiries }: BookingsClientPageProps) {
 
   function handleOpenDrawer(inq: KanbanInquiry) {
     setDrawerInquiry(inq);
-  }
-
-  function handleClearSelection() {
-    setSelectedIds([]);
   }
 
   return (
@@ -193,9 +187,6 @@ export function BookingsClientPage({ inquiries }: BookingsClientPageProps) {
         inquiries={filtered as KanbanInquiry[]}
         onOpenDrawer={handleOpenDrawer}
       />
-
-      {/* Bulk actions bar */}
-      <BulkActions selectedIds={selectedIds} onClearSelection={handleClearSelection} />
 
       {/* Lead detail drawer */}
       <LeadDetailDrawer
