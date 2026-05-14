@@ -262,7 +262,7 @@ _None open._
 | Firestore Security Rules | **Deployed** | `firestore.rules` + `firebase.json` in repo. Deploy via `firebase deploy --only firestore:rules`. |
 | Cloudflare R2 bucket | Configure | Create bucket; set CORS for `PUT` from the app domain. |
 | Cloudflare Images | Configure | Create variants: `thumbnail` (400px), `gallery` (1200px), `download` (2048px), `public` (800px). |
-| Firestore indexes | As needed | `scheduledTasks(type, projectId, recipeKey, status)` for idempotent AUTO_FOLLOW_UP guard. `scheduledTasks(type, projectId, status)` for SHOOT_BRIEF idempotent enqueue. Follow Firestore error links in logs. |
+| Firestore indexes | As needed | `scheduledTasks(type, projectId, recipeKey, status)` for idempotent AUTO_FOLLOW_UP guard. `scheduledTasks(type, projectId, status)` for SHOOT_BRIEF idempotent enqueue. `projects(dayOfRoomToken)` single-field auto-index used by `findProjectByDayOfRoomToken` (Phase 13.11) — Firestore creates it automatically; no composite required. Follow Firestore error links in logs. |
 | `REVIEW_LINK_GOOGLE` / `KNOT` / `FACEBOOK` | Required for review request | Cron falls back to platform home pages if missing. |
 | `TOMORROW_IO_API_KEY` | Optional (Phase 3.6) | `lib/weather.ts` returns null without it. |
 | Custom domain + HTTPS | Configure | Vercel custom domain, Firebase Auth authorized domains. |

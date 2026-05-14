@@ -14,6 +14,11 @@ import {
   setEditingSubStage,
   setRecurringCadenceAction,
   dismissReengagementPrompt,
+  enableDayOfRoom,
+  disableDayOfRoom,
+  mintNewDayOfRoomToken,
+  revokeDayOfRoomTokenAction,
+  setDayOfRoomVendorIds,
 } from "../actions";
 import { EDITING_SUB_STAGES, type EditingSubStage } from "@/lib/editing-sla";
 import { computeEditingStatus, editingStatusColor } from "@/lib/editing-status";
@@ -59,6 +64,7 @@ import type {
   SerialGearTemplateOption,
   SerialPressSubmission,
   SerialTimelineBlock,
+  SerialDayOfRoomVendorOption,
 } from "./page";
 import {
   initializeGearLog,
@@ -79,6 +85,13 @@ const GEAR_CATEGORIES = [
   "OTHER",
 ] as const;
 type GearCategoryLiteral = (typeof GEAR_CATEGORIES)[number];
+
+/**
+ * Local mirror of `CommunicationChannel` from `lib/db/projects.ts` — that
+ * module imports `adminDb` (server-only), so this client file can't import
+ * the type directly. Keep this in sync with the canonical union.
+ */
+type CommunicationChannel = "EMAIL" | "PHONE" | "SMS" | "IN_PERSON";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -280,9 +293,28 @@ interface Props {
   defaultGearTemplateName: string | null;
   pressSubmissions: SerialPressSubmission[];
   dayOfTimeline: SerialTimelineBlock[];
+  /**
+   * Phase 13.11 — vendors that are either already linked to this project
+   * (via `vendors.linkedProjectIds`) or already in the project's day-of room
+   * allow-list. Drives the multi-select check-list inside the Day-of tab.
+   */
+  dayOfRoomVendorOptions: SerialDayOfRoomVendorOption[];
   /** Phase 3.9 — pre-filled from `users/{uid}.insurerContact`. */
   insurerDefaultAdditionalInsuredText: string | null;
   insurerEmailConfigured: boolean;
+  /** Wave 12 — admin's saved reply templates. */
+  replyTemplates: ReplyTemplateSnippet[];
+}
+
+/**
+ * Wave 12 — saved reply template snippet threaded from the server page.
+ * Body insertions go straight into the MessagesTab textarea via the
+ * "Templates ▾" popover.
+ */
+export interface ReplyTemplateSnippet {
+  id: string;
+  label: string;
+  body: string;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -303,8 +335,10 @@ export function ProjectWorkspaceClient({
   defaultGearTemplateName,
   pressSubmissions,
   dayOfTimeline,
+  dayOfRoomVendorOptions,
   insurerDefaultAdditionalInsuredText,
   insurerEmailConfigured,
+  replyTemplates,
 }: Props) {
   const [tab, setTab] = useState<TabId>("overview");
   const [statusModalOpen, setStatusModalOpen] = useState(false);
@@ -440,7 +474,11 @@ export function ProjectWorkspaceClient({
             />
           )}
           {tab === "messages" && (
-            <MessagesTab projectId={project.id} messages={messages} />
+            <MessagesTab
+              projectId={project.id}
+              messages={messages}
+              replyTemplates={replyTemplates}
+            />
           )}
           {tab === "contract" && (
             <ContractTab
@@ -454,7 +492,17 @@ export function ProjectWorkspaceClient({
           {tab === "invoice" && <InvoiceTab invoices={invoices} />}
           {tab === "gallery" && <GalleryTab eventId={eventId} />}
           {tab === "day-of" && (
-            <DayOfTab projectId={project.id} initialBlocks={dayOfTimeline} />
+            <>
+              <VendorDayOfRoomCard
+                projectId={project.id}
+                enabled={project.dayOfRoomEnabled}
+                token={project.dayOfRoomToken}
+                tokenIssuedAt={project.dayOfRoomTokenIssuedAt}
+                allowList={project.dayOfRoomVendorIds}
+                vendorOptions={dayOfRoomVendorOptions}
+              />
+              <DayOfTab projectId={project.id} initialBlocks={dayOfTimeline} />
+            </>
           )}
           {tab === "timeline" && (
             <TimelineTab
@@ -698,6 +746,11 @@ function OverviewTab({
           </div>
         )}
       </div>
+
+      <FollowUpDateBlock
+        projectId={project.id}
+        followUpDate={project.followUpDate}
+      />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem", marginBottom: "1.5rem" }}>
         <div>
@@ -1233,19 +1286,288 @@ function RecurringRevenueBlock({
   );
 }
 
+// ─── Follow-up date block (Wave 12 — rendered inside Overview tab) ──────────
+//
+// Tiny editor for `ProjectDoc.followUpDate`. Three states:
+//   • empty  — single "Set follow-up date" button.
+//   • set    — "in N days · Wed Jun 5" + Edit / Clear.
+//   • editor — bare `<input type="date">` + Save / Cancel.
+//
+// Persists via `updateProjectDetails(projectId, { followUpDate })`. The
+// allow-list lives in `app/admin/projects/actions.ts`.
+
+function isoToDateInputValue(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  // Use UTC pieces so a noon-UTC stored timestamp renders the same calendar
+  // day in the input regardless of viewer timezone (matches the action's
+  // normalisation rule).
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function relativeFollowUpLabel(iso: string | null): string {
+  if (!iso) return "—";
+  const target = new Date(iso);
+  if (Number.isNaN(target.getTime())) return "—";
+  // Day-bucket diff against today, computed at UTC midnight on each side
+  // so DST and viewer timezone don't shift the count.
+  const tDay = Date.UTC(
+    target.getUTCFullYear(),
+    target.getUTCMonth(),
+    target.getUTCDate()
+  );
+  const now = new Date();
+  const nDay = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const diffDays = Math.round((tDay - nDay) / (24 * 60 * 60 * 1000));
+  if (diffDays === 0) return "today";
+  if (diffDays === 1) return "tomorrow";
+  if (diffDays === -1) return "yesterday";
+  if (diffDays > 1) return `in ${diffDays} days`;
+  return `${Math.abs(diffDays)} days ago`;
+}
+
+function FollowUpDateBlock({
+  projectId,
+  followUpDate,
+}: {
+  projectId: string;
+  followUpDate: string | null;
+}) {
+  const router = useRouter();
+  const [editing, setEditing] = useState(false);
+  const [pending, startTransition] = useTransition();
+  // Optimistic local copy so the chip updates immediately on save.
+  const [optimistic, setOptimistic] = useState<string | null>(followUpDate);
+  const [draft, setDraft] = useState<string>(isoToDateInputValue(followUpDate));
+
+  // Re-sync optimistic + draft whenever the upstream prop changes
+  // (router.refresh() after a mutation rehydrates the Server Component).
+  useEffect(() => {
+    setOptimistic(followUpDate);
+    setDraft(isoToDateInputValue(followUpDate));
+  }, [followUpDate]);
+
+  const persist = (next: string | null) => {
+    startTransition(async () => {
+      const res = await updateProjectDetails(projectId, { followUpDate: next });
+      if (res.success) {
+        setOptimistic(
+          next
+            ? new Date(`${next}T12:00:00Z`).toISOString()
+            : null
+        );
+        setEditing(false);
+        toast(next ? "Follow-up date saved" : "Follow-up date cleared");
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to update follow-up date");
+      }
+    });
+  };
+
+  const handleSave = () => {
+    if (!draft) {
+      toast("Pick a date first");
+      return;
+    }
+    persist(draft);
+  };
+
+  const handleClear = () => {
+    persist(null);
+  };
+
+  const handleCancel = () => {
+    setDraft(isoToDateInputValue(optimistic));
+    setEditing(false);
+  };
+
+  const hasDate = !!optimistic;
+
+  return (
+    <div
+      style={{
+        marginBottom: "1.5rem",
+        border: "0.5px solid var(--border)",
+        padding: "1rem 1.1rem",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: "0.75rem",
+          flexWrap: "wrap",
+        }}
+      >
+        <div>
+          <p style={{ ...EYEBROW, margin: "0 0 0.3rem 0" }}>Follow-up date</p>
+          {editing ? (
+            <div
+              style={{
+                display: "flex",
+                gap: "0.5rem",
+                alignItems: "center",
+                flexWrap: "wrap",
+              }}
+            >
+              <input
+                type="date"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                style={{
+                  padding: "0.4rem 0.55rem",
+                  border: "0.5px solid var(--border-strong)",
+                  background: "var(--white)",
+                  fontFamily: "'Jost', sans-serif",
+                  fontSize: "0.85rem",
+                  borderRadius: 0,
+                  color: "var(--charcoal)",
+                }}
+                disabled={pending}
+              />
+            </div>
+          ) : hasDate ? (
+            <p
+              style={{
+                margin: 0,
+                fontSize: "0.88rem",
+                color: "var(--charcoal-light)",
+              }}
+            >
+              <strong style={{ color: "var(--olive)" }}>
+                {relativeFollowUpLabel(optimistic)}
+              </strong>
+              <span style={{ color: "var(--charcoal-muted)" }}>
+                {" "}· {fmtDate(optimistic)}
+              </span>
+            </p>
+          ) : (
+            <p
+              style={{
+                margin: 0,
+                fontSize: "0.85rem",
+                color: "var(--charcoal-muted)",
+              }}
+            >
+              No follow-up scheduled.
+            </p>
+          )}
+        </div>
+
+        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+          {editing ? (
+            <>
+              <button
+                type="button"
+                style={BTN_PRIMARY}
+                onClick={handleSave}
+                disabled={pending || !draft}
+              >
+                {pending ? "Saving…" : "Save"}
+              </button>
+              <button
+                type="button"
+                style={BTN_GHOST}
+                onClick={handleCancel}
+                disabled={pending}
+              >
+                Cancel
+              </button>
+            </>
+          ) : hasDate ? (
+            <>
+              <button
+                type="button"
+                style={BTN_GHOST}
+                onClick={() => setEditing(true)}
+                disabled={pending}
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                style={BTN_GHOST}
+                onClick={handleClear}
+                disabled={pending}
+              >
+                {pending ? "Clearing…" : "Clear"}
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              style={BTN_GHOST}
+              onClick={() => setEditing(true)}
+              disabled={pending}
+            >
+              Set follow-up date
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Messages tab ─────────────────────────────────────────────────────────────
 
-function MessagesTab({ projectId, messages }: { projectId: string; messages: SerialMessage[] }) {
+/** Channels offered by the MessagesTab composer. EMAIL is the default. */
+const MESSAGE_CHANNEL_OPTIONS: { value: CommunicationChannel; label: string }[] = [
+  { value: "EMAIL", label: "Email" },
+  { value: "PHONE", label: "Phone call" },
+  { value: "IN_PERSON", label: "In-person" },
+  { value: "SMS", label: "SMS" },
+];
+
+function MessagesTab({
+  projectId,
+  messages,
+  replyTemplates,
+}: {
+  projectId: string;
+  messages: SerialMessage[];
+  replyTemplates: ReplyTemplateSnippet[];
+}) {
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [pickedTemplate, setPickedTemplate] = useState<string>("");
+  const [channel, setChannel] = useState<CommunicationChannel>("EMAIL");
   const [sending, setSending] = useState(false);
+  const [savedTemplatesOpen, setSavedTemplatesOpen] = useState(false);
   const router = useRouter();
   const listEndRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const savedTemplatesPopoverRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     listEndRef.current?.scrollIntoView({ behavior: "auto" });
   }, [messages.length]);
+
+  // Close the saved-templates popover on outside click / Escape.
+  useEffect(() => {
+    if (!savedTemplatesOpen) return;
+    const handlePointer = (e: MouseEvent) => {
+      const node = savedTemplatesPopoverRef.current;
+      if (node && !node.contains(e.target as Node)) {
+        setSavedTemplatesOpen(false);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSavedTemplatesOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointer);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handlePointer);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [savedTemplatesOpen]);
 
   const applyTemplate = (id: string) => {
     const tpl = TEMPLATES.find((t) => t.id === id);
@@ -1256,19 +1578,65 @@ function MessagesTab({ projectId, messages }: { projectId: string; messages: Ser
     }
   };
 
+  /**
+   * Insert a saved-reply template body into the textarea. Replaces the
+   * current selection if any, otherwise appends to existing content with a
+   * leading blank line so previously-typed copy is not destroyed.
+   */
+  const insertSavedTemplate = (snippet: ReplyTemplateSnippet) => {
+    const ta = textareaRef.current;
+    if (ta) {
+      const start = ta.selectionStart ?? body.length;
+      const end = ta.selectionEnd ?? body.length;
+      if (start !== end) {
+        // Replace the selection in-place.
+        const next = body.slice(0, start) + snippet.body + body.slice(end);
+        setBody(next);
+        // Restore caret to the end of the inserted text on next tick.
+        setTimeout(() => {
+          if (textareaRef.current) {
+            const caret = start + snippet.body.length;
+            textareaRef.current.focus();
+            textareaRef.current.setSelectionRange(caret, caret);
+          }
+        }, 0);
+      } else if (body.length === 0) {
+        setBody(snippet.body);
+      } else {
+        setBody(`${body}\n${snippet.body}`);
+      }
+    } else if (body.length === 0) {
+      setBody(snippet.body);
+    } else {
+      setBody(`${body}\n${snippet.body}`);
+    }
+    setSavedTemplatesOpen(false);
+  };
+
   const handleSend = async () => {
     if (!body.trim()) {
-      toast("Write a message first");
+      toast(channel === "EMAIL" ? "Write a message first" : "Add a note first");
       return;
     }
     setSending(true);
-    const res = await sendProjectMessage(projectId, body, subject || undefined);
+    const res = await sendProjectMessage(
+      projectId,
+      body,
+      subject || undefined,
+      channel
+    );
     setSending(false);
     if (res.success) {
-      toast("Message sent");
+      toast(
+        channel === "EMAIL"
+          ? "Message sent"
+          : `${channel.replace(/_/g, " ").toLowerCase()} logged`
+      );
       setBody("");
       setSubject("");
       setPickedTemplate("");
+      // Channel intentionally NOT reset — Korrin often logs several touches
+      // on the same channel in a row.
       router.refresh();
     } else {
       toast(res.error ?? "Failed to send");
@@ -1385,7 +1753,9 @@ function MessagesTab({ projectId, messages }: { projectId: string; messages: Ser
 
       {/* Composer */}
       <div style={{ border: "0.5px solid var(--border-strong)", padding: "1rem", background: "var(--white)" }}>
-        <p style={{ ...EYEBROW, margin: "0 0 0.6rem 0" }}>Reply</p>
+        <p style={{ ...EYEBROW, margin: "0 0 0.6rem 0" }}>
+          {channel === "EMAIL" ? "Reply" : "Log communication"}
+        </p>
         <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.6rem", flexWrap: "wrap" }}>
           <select
             value={pickedTemplate}
@@ -1409,7 +1779,9 @@ function MessagesTab({ projectId, messages }: { projectId: string; messages: Ser
           <input
             value={subject}
             onChange={(e) => setSubject(e.target.value)}
-            placeholder="Subject (optional)"
+            placeholder={
+              channel === "EMAIL" ? "Subject (optional)" : "Topic (optional)"
+            }
             style={{
               flex: 1,
               padding: "0.4rem 0.6rem",
@@ -1420,10 +1792,140 @@ function MessagesTab({ projectId, messages }: { projectId: string; messages: Ser
             }}
           />
         </div>
+
+        {/* Wave 12 — saved-template quick-insert popover. Sits above the
+            textarea so a click → insert flow stays one quick path. */}
+        <div
+          ref={savedTemplatesPopoverRef}
+          style={{
+            position: "relative",
+            marginBottom: "0.5rem",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: "0.5rem",
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setSavedTemplatesOpen((v) => !v)}
+            style={{
+              ...BTN_GHOST,
+              padding: "0.35rem 0.7rem",
+              fontSize: "0.7rem",
+            }}
+            aria-haspopup="listbox"
+            aria-expanded={savedTemplatesOpen}
+          >
+            Templates {savedTemplatesOpen ? "▴" : "▾"}
+            {replyTemplates.length > 0 && (
+              <span
+                style={{
+                  marginLeft: "0.4rem",
+                  color: "var(--charcoal-muted)",
+                  fontSize: "0.7rem",
+                }}
+              >
+                · {replyTemplates.length}
+              </span>
+            )}
+          </button>
+
+          {savedTemplatesOpen && (
+            <div
+              role="listbox"
+              style={{
+                position: "absolute",
+                top: "calc(100% + 0.35rem)",
+                left: 0,
+                zIndex: 50,
+                minWidth: "260px",
+                maxWidth: "360px",
+                maxHeight: "260px",
+                overflowY: "auto",
+                background: "var(--white)",
+                border: "0.5px solid var(--border-strong)",
+                boxShadow: "0 4px 16px rgba(42,42,40,0.08)",
+              }}
+            >
+              {replyTemplates.length === 0 ? (
+                <div
+                  style={{
+                    padding: "0.7rem 0.85rem",
+                    fontSize: "0.78rem",
+                    color: "var(--charcoal-muted)",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  No saved templates yet. Add one in{" "}
+                  <Link
+                    href="/admin/settings/reply-templates"
+                    style={{ color: "var(--olive)" }}
+                  >
+                    Settings → Reply templates
+                  </Link>
+                  .
+                </div>
+              ) : (
+                <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                  {replyTemplates.map((tpl) => (
+                    <li key={tpl.id}>
+                      <button
+                        type="button"
+                        onClick={() => insertSavedTemplate(tpl)}
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          textAlign: "left",
+                          padding: "0.55rem 0.85rem",
+                          background: "transparent",
+                          border: "none",
+                          borderBottom: "0.5px solid var(--border)",
+                          cursor: "pointer",
+                          fontFamily: "'Jost', sans-serif",
+                          color: "var(--charcoal)",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: "0.82rem",
+                            fontWeight: 500,
+                            marginBottom: "0.15rem",
+                          }}
+                        >
+                          {tpl.label}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: "0.7rem",
+                            color: "var(--charcoal-muted)",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {tpl.body.length > 60
+                            ? `${tpl.body.slice(0, 60).trimEnd()}…`
+                            : tpl.body}
+                        </div>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+
         <textarea
+          ref={textareaRef}
           value={body}
           onChange={(e) => setBody(e.target.value)}
-          placeholder="Write a reply…"
+          placeholder={
+            channel === "EMAIL"
+              ? "Write a reply…"
+              : "Note what you discussed (e.g. confirmed venue, walked through timeline)"
+          }
           rows={6}
           style={{
             width: "100%",
@@ -1438,15 +1940,46 @@ function MessagesTab({ projectId, messages }: { projectId: string; messages: Ser
             lineHeight: 1.5,
           }}
         />
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "0.6rem", gap: "0.5rem" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "0.6rem", gap: "0.5rem", flexWrap: "wrap" }}>
           <AIDraftReplyButton
             projectId={projectId}
             onDraftReady={(draft) => setBody(draft)}
             disabled={sending}
           />
-          <button onClick={handleSend} style={BTN_PRIMARY} disabled={sending || !body.trim()}>
-            {sending ? "Sending…" : "Send"}
-          </button>
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+            <select
+              value={channel}
+              onChange={(e) =>
+                setChannel(e.target.value as CommunicationChannel)
+              }
+              disabled={sending}
+              aria-label="Communication channel"
+              style={{
+                padding: "0.4rem 0.6rem",
+                border: "0.5px solid var(--border-strong)",
+                fontFamily: "'Jost', sans-serif",
+                fontSize: "0.78rem",
+                background: "var(--white)",
+                borderRadius: 0,
+                color: "var(--charcoal)",
+              }}
+            >
+              {MESSAGE_CHANNEL_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            <button onClick={handleSend} style={BTN_PRIMARY} disabled={sending || !body.trim()}>
+              {sending
+                ? channel === "EMAIL"
+                  ? "Sending…"
+                  : "Logging…"
+                : channel === "EMAIL"
+                  ? "Send"
+                  : "Log"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -2153,6 +2686,408 @@ function GalleryTab({ eventId }: { eventId: string | null }) {
         </p>
       )}
     </div>
+  );
+}
+
+// ─── Vendor day-of room card (Phase 13.11) ────────────────────────────────────
+//
+// Sits at the top of the Day-of tab. Master-switch toggle + token / URL
+// management + vendor allow-list. Public route lives at
+// `app/day-of-room/[projectId]` and is read-only.
+
+function VendorDayOfRoomCard({
+  projectId,
+  enabled,
+  token,
+  tokenIssuedAt,
+  allowList,
+  vendorOptions,
+}: {
+  projectId: string;
+  enabled: boolean;
+  token: string | null;
+  tokenIssuedAt: string | null;
+  allowList: string[];
+  vendorOptions: SerialDayOfRoomVendorOption[];
+}) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [manualVendorId, setManualVendorId] = useState("");
+  const [selected, setSelected] = useState<string[]>(allowList);
+
+  useEffect(() => {
+    setSelected(allowList);
+  }, [allowList]);
+
+  const appUrl =
+    typeof window !== "undefined" ? window.location.origin : "";
+  const publicUrl =
+    enabled && token ? `${appUrl}/day-of-room/${projectId}?t=${token}` : null;
+
+  const handleEnable = () => {
+    startTransition(async () => {
+      const res = await enableDayOfRoom(projectId);
+      if (res.success) {
+        toast("Day-of room enabled");
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to enable");
+      }
+    });
+  };
+
+  const handleDisable = () => {
+    startTransition(async () => {
+      const res = await disableDayOfRoom(projectId);
+      if (res.success) {
+        toast("Day-of room paused");
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to disable");
+      }
+    });
+  };
+
+  const handleMint = () => {
+    if (
+      !confirm(
+        "Mint a fresh token? Any URL you've already shared will stop working immediately."
+      )
+    ) {
+      return;
+    }
+    startTransition(async () => {
+      const res = await mintNewDayOfRoomToken(projectId);
+      if (res.success) {
+        toast("New token minted");
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to mint token");
+      }
+    });
+  };
+
+  const handleRevoke = () => {
+    if (
+      !confirm("Revoke the token and disable the room? This kills the URL.")
+    ) {
+      return;
+    }
+    startTransition(async () => {
+      const res = await revokeDayOfRoomTokenAction(projectId);
+      if (res.success) {
+        toast("Token revoked");
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to revoke");
+      }
+    });
+  };
+
+  const handleCopy = () => {
+    if (!publicUrl) return;
+    try {
+      navigator.clipboard.writeText(publicUrl);
+      toast("URL copied");
+    } catch {
+      toast("Copy failed");
+    }
+  };
+
+  const persistAllowList = (next: string[]) => {
+    setSelected(next);
+    startTransition(async () => {
+      const res = await setDayOfRoomVendorIds(projectId, next);
+      if (res.success) {
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to save vendors");
+        setSelected(allowList);
+      }
+    });
+  };
+
+  const toggleVendor = (vendorId: string, checked: boolean) => {
+    const next = checked
+      ? Array.from(new Set([...selected, vendorId]))
+      : selected.filter((id) => id !== vendorId);
+    persistAllowList(next);
+  };
+
+  const handleAddById = () => {
+    const id = manualVendorId.trim();
+    if (!id) return;
+    if (selected.includes(id)) {
+      toast("Already in the list");
+      setManualVendorId("");
+      return;
+    }
+    persistAllowList([...selected, id]);
+    setManualVendorId("");
+  };
+
+  return (
+    <section style={{ ...CARD, marginBottom: "1.5rem" }}>
+      <div
+        style={{
+          display: "flex",
+          gap: "1rem",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+          marginBottom: "0.85rem",
+        }}
+      >
+        <div>
+          <p style={EYEBROW}>Phase 13.11</p>
+          <h2 style={{ ...SECTION_HEAD, margin: "0.15rem 0 0", fontSize: "1.45rem" }}>
+            Vendor day-of room
+          </h2>
+        </div>
+        <label
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "0.5rem",
+            cursor: isPending ? "wait" : "pointer",
+            fontSize: "0.75rem",
+            letterSpacing: "0.12em",
+            textTransform: "uppercase",
+            color: "var(--charcoal)",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={enabled}
+            disabled={isPending}
+            onChange={(e) => (e.target.checked ? handleEnable() : handleDisable())}
+            style={{ accentColor: "var(--olive)" }}
+          />
+          {enabled ? "Enabled" : "Paused"}
+        </label>
+      </div>
+
+      <p
+        style={{
+          fontSize: "0.85rem",
+          color: "var(--charcoal-muted)",
+          lineHeight: 1.55,
+          margin: "0 0 1rem 0",
+        }}
+      >
+        Public, read-only multi-vendor view of the day. Anyone with the URL can
+        open it — no login required. Pause to block access without losing the
+        URL; revoke to kill the URL entirely.
+      </p>
+
+      {enabled && publicUrl ? (
+        <div
+          style={{
+            background: "var(--olive-dim)",
+            border: "0.5px solid var(--olive)",
+            padding: "0.85rem 1rem",
+            display: "grid",
+            gap: "0.5rem",
+            marginBottom: "1rem",
+          }}
+        >
+          <p style={{ ...EYEBROW, color: "var(--olive)" }}>Shareable URL</p>
+          <div
+            style={{
+              display: "flex",
+              gap: "0.5rem",
+              alignItems: "center",
+              flexWrap: "wrap",
+            }}
+          >
+            <code
+              style={{
+                fontSize: "0.78rem",
+                fontFamily: "monospace",
+                color: "var(--charcoal)",
+                background: "var(--white)",
+                border: "0.5px solid var(--border)",
+                padding: "0.4rem 0.6rem",
+                wordBreak: "break-all",
+                flex: "1 1 320px",
+              }}
+            >
+              {publicUrl}
+            </code>
+            <button
+              type="button"
+              onClick={handleCopy}
+              style={{ ...BTN_GHOST, padding: "0.4rem 0.85rem", fontSize: "0.65rem" }}
+              disabled={isPending}
+            >
+              Copy
+            </button>
+          </div>
+          {tokenIssuedAt ? (
+            <p style={{ fontSize: "0.7rem", color: "var(--charcoal-muted)", margin: 0 }}>
+              Token issued {fmtDateTime(tokenIssuedAt)}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div
+        style={{
+          display: "flex",
+          gap: "0.5rem",
+          flexWrap: "wrap",
+          marginBottom: "1.25rem",
+        }}
+      >
+        <button
+          type="button"
+          onClick={handleMint}
+          style={BTN_GHOST}
+          disabled={isPending}
+        >
+          Mint new token
+        </button>
+        <button
+          type="button"
+          onClick={handleRevoke}
+          style={{
+            ...BTN_GHOST,
+            color: "#8B2E2E",
+            borderColor: "rgba(139,46,46,0.4)",
+          }}
+          disabled={isPending || (!token && !enabled)}
+        >
+          Revoke
+        </button>
+      </div>
+
+      <div>
+        <p
+          style={{
+            ...EYEBROW,
+            color: "var(--charcoal-muted)",
+            marginBottom: "0.5rem",
+          }}
+        >
+          Vendors in the room
+        </p>
+        {vendorOptions.length === 0 && selected.length === 0 ? (
+          <p style={{ fontSize: "0.85rem", color: "var(--charcoal-muted)", margin: "0 0 0.75rem" }}>
+            No vendors are linked to this project yet. Add one by id below, or
+            link vendors from the Vendors page.
+          </p>
+        ) : (
+          <ul
+            style={{
+              listStyle: "none",
+              padding: 0,
+              margin: "0 0 0.75rem 0",
+              display: "grid",
+              gap: "0.4rem",
+            }}
+          >
+            {vendorOptions.map((v) => {
+              const inSelected = selected.includes(v.id);
+              return (
+                <li
+                  key={v.id}
+                  style={{
+                    display: "flex",
+                    gap: "0.7rem",
+                    alignItems: "center",
+                    border: "0.5px solid var(--border)",
+                    background: "var(--white)",
+                    padding: "0.55rem 0.75rem",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={inSelected}
+                    disabled={isPending}
+                    onChange={(e) => toggleVendor(v.id, e.target.checked)}
+                    style={{ accentColor: "var(--olive)" }}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ margin: 0, fontSize: "0.95rem" }}>{v.name}</p>
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: "0.7rem",
+                        color: "var(--charcoal-muted)",
+                        letterSpacing: "0.1em",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {v.category.toLowerCase()}
+                      {v.linkedToProject ? " · linked" : ""}
+                      {!v.linkedToProject && v.inAllowList ? " · added by id" : ""}
+                    </p>
+                  </div>
+                  <span
+                    style={{
+                      fontSize: "0.65rem",
+                      letterSpacing: "0.1em",
+                      textTransform: "uppercase",
+                      color: inSelected ? "var(--olive)" : "var(--charcoal-muted)",
+                    }}
+                  >
+                    {inSelected
+                      ? "In room"
+                      : v.linkedToProject
+                      ? "Linked"
+                      : "Hidden"}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        <div
+          style={{
+            display: "flex",
+            gap: "0.5rem",
+            alignItems: "center",
+            flexWrap: "wrap",
+          }}
+        >
+          <input
+            type="text"
+            placeholder="Vendor id"
+            value={manualVendorId}
+            onChange={(e) => setManualVendorId(e.target.value)}
+            disabled={isPending}
+            style={{
+              flex: "1 1 200px",
+              padding: "0.5rem 0.7rem",
+              border: "0.5px solid var(--border-strong)",
+              background: "var(--white)",
+              fontFamily: "'Jost', sans-serif",
+              fontSize: "0.85rem",
+              borderRadius: 0,
+            }}
+          />
+          <button
+            type="button"
+            onClick={handleAddById}
+            style={BTN_GHOST}
+            disabled={isPending || !manualVendorId.trim()}
+          >
+            + Add by id
+          </button>
+        </div>
+        <p
+          style={{
+            fontSize: "0.7rem",
+            color: "var(--charcoal-muted)",
+            margin: "0.5rem 0 0",
+          }}
+        >
+          Adds a vendor to the room without linking them on the Vendors page.
+          Useful for one-off referrals.
+        </p>
+      </div>
+    </section>
   );
 }
 

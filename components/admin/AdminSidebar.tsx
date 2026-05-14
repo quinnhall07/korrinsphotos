@@ -379,6 +379,16 @@ const NAV = [
           </svg>
         ),
       },
+      {
+        label: "Reply templates",
+        href: "/admin/settings/reply-templates",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <path d="M2 3h12v8H6l-3 3V3z" />
+            <path d="M5 6h6M5 8h4" />
+          </svg>
+        ),
+      },
     ],
   },
 ];

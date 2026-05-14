@@ -54,6 +54,23 @@ type PipelineProject = {
 
 interface Props {
   projects: PipelineProject[];
+  /**
+   * Wave 12 — server-resolved view. When provided, the URL is the source of
+   * truth (kanban=full read, table=paginated read). Falls back to the
+   * localStorage preference when omitted so older callers keep working.
+   */
+  view?: ViewMode;
+  /** Wave 12 — opaque cursor for the next page when in table view. */
+  nextCursor?: string | null;
+  /** Wave 12 — true when this is page 2+ of the table (i.e. `?cursor=` set). */
+  hasCursor?: boolean;
+  /**
+   * Wave 12 — raw `?status=` value preserved across pagination links so the
+   * server-side `where("status", "in", …)` filter doesn't reset on Next.
+   */
+  statusFilterParam?: string | null;
+  /** Wave 12 — page size advertised in the "Showing N projects" indicator. */
+  pageSize?: number;
 }
 
 const PIPELINE_COLUMNS: { id: ProjectStatus; label: string; bg: string }[] = [
@@ -264,7 +281,14 @@ function compareProjects(
   return dir === "asc" ? cmp : -cmp;
 }
 
-export function ProjectsPipelineClientPage({ projects }: Props) {
+export function ProjectsPipelineClientPage({
+  projects,
+  view: serverView,
+  nextCursor = null,
+  hasCursor = false,
+  statusFilterParam = null,
+  pageSize = 50,
+}: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
@@ -272,7 +296,10 @@ export function ProjectsPipelineClientPage({ projects }: Props) {
   // the route revalidates (which re-mounts with fresh props).
   const [now] = useState<number>(() => Date.now());
 
-  const [viewMode, setViewMode] = useState<ViewMode>("kanban");
+  // When the server has resolved a view (i.e. `?view=` is set), the URL wins.
+  // Otherwise fall back to the local-storage preference. We seed local state
+  // to the server view to avoid a flicker on first paint.
+  const [viewMode, setViewMode] = useState<ViewMode>(serverView ?? "kanban");
   // User-saved views live in Firestore (users/{uid}/views). Defaults are static.
   const [userSavedViews, setUserSavedViews] = useState<SavedViewPayload[]>([]);
   const [activeViewId, setActiveViewId] = useState<string>("all");
@@ -285,8 +312,13 @@ export function ProjectsPipelineClientPage({ projects }: Props) {
 
   // Hydrate kanban/table preference from localStorage (purely a UI affordance,
   // not a saved view) and load saved views from Firestore on mount.
+  //
+  // Wave 12 — when the server has resolved a view from `?view=`, the URL is
+  // the source of truth and we skip the localStorage hydration. This keeps a
+  // page 2 deep-link from being silently flipped back to "kanban" on mount.
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (serverView) return;
     try {
       const persistedView = window.localStorage.getItem(VIEW_STORAGE_KEY);
       if (persistedView === "kanban" || persistedView === "table") {
@@ -295,7 +327,7 @@ export function ProjectsPipelineClientPage({ projects }: Props) {
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [serverView]);
 
   // Persist view mode (kanban/table toggle) — not a "saved view".
   useEffect(() => {
@@ -629,7 +661,17 @@ export function ProjectsPipelineClientPage({ projects }: Props) {
                   type="button"
                   role="tab"
                   aria-selected={active}
-                  onClick={() => setViewMode(mode)}
+                  onClick={() => {
+                    setViewMode(mode);
+                    // Wave 12 — switching modes navigates to the canonical URL
+                    // for that mode so the server can pick the right read path
+                    // (full vs paginated). Status filter is preserved; cursor
+                    // is dropped because we always land on page 1.
+                    const sp = new URLSearchParams();
+                    sp.set("view", mode);
+                    if (statusFilterParam) sp.set("status", statusFilterParam);
+                    router.push(`/admin/projects?${sp.toString()}`);
+                  }}
                   style={{
                     fontFamily: "'Jost', sans-serif",
                     fontSize: "0.75rem",
@@ -661,10 +703,22 @@ export function ProjectsPipelineClientPage({ projects }: Props) {
           flexWrap: "wrap",
         }}
       >
-        <span>
-          Showing <strong style={{ color: "var(--charcoal)" }}>{filteredProjects.length}</strong> of{" "}
-          {projects.length} projects
-        </span>
+        {viewMode === "table" ? (
+          // Wave 12 — in table view we're showing one paginated page; the
+          // overall collection size is unknown, so describe the visible slice
+          // rather than the dataset.
+          <span>
+            Showing{" "}
+            <strong style={{ color: "var(--charcoal)" }}>{filteredProjects.length}</strong>{" "}
+            project{filteredProjects.length === 1 ? "" : "s"}
+            {hasCursor ? " on this page" : ` (page 1 · up to ${pageSize} per page)`}
+          </span>
+        ) : (
+          <span>
+            Showing <strong style={{ color: "var(--charcoal)" }}>{filteredProjects.length}</strong> of{" "}
+            {projects.length} projects
+          </span>
+        )}
         {activeView.id !== "all" && (
           <span>
             Filter: <strong style={{ color: "var(--charcoal)" }}>{activeView.name}</strong>
@@ -690,6 +744,9 @@ export function ProjectsPipelineClientPage({ projects }: Props) {
           onBulkArchive={handleBulkArchive}
           isPending={isPending}
           now={now}
+          nextCursor={nextCursor}
+          hasCursor={hasCursor}
+          statusFilterParam={statusFilterParam}
         />
       )}
     </div>
@@ -933,6 +990,9 @@ function TableView({
   onBulkArchive,
   isPending,
   now,
+  nextCursor,
+  hasCursor,
+  statusFilterParam,
 }: {
   projects: PipelineProject[];
   sortKey: SortKey;
@@ -944,6 +1004,9 @@ function TableView({
   onBulkArchive: () => void;
   isPending: boolean;
   now: number;
+  nextCursor: string | null;
+  hasCursor: boolean;
+  statusFilterParam: string | null;
 }) {
   const router = useRouter();
   const allSelected =
@@ -1235,8 +1298,102 @@ function TableView({
           </tbody>
         </table>
       </div>
+
+      {/*
+        Wave 12 — Forward-only pagination footer. Only renders in table view.
+        "Back to start" jumps to page 1 (cursor cleared); Next forwards the
+        opaque cursor returned by the server. We preserve `?status=` so the
+        Firestore-side filter survives the navigation; the saved-view
+        selection lives client-side and is unaffected.
+      */}
+      {(hasCursor || nextCursor) && (
+        <nav
+          aria-label="Pipeline pagination"
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginTop: "1rem",
+            fontSize: "0.78rem",
+            color: "var(--charcoal-muted)",
+            fontFamily: "'Jost', sans-serif",
+          }}
+        >
+          <div>
+            {hasCursor ? (
+              <Link
+                href={buildTablePaginationHref({ statusFilterParam })}
+                style={paginationLinkStyle("ghost")}
+              >
+                ← Back to start
+              </Link>
+            ) : (
+              <span style={{ opacity: 0.5 }}>Page 1</span>
+            )}
+          </div>
+          <div>
+            {nextCursor ? (
+              <Link
+                href={buildTablePaginationHref({
+                  cursor: nextCursor,
+                  statusFilterParam,
+                })}
+                style={paginationLinkStyle("primary")}
+              >
+                Next →
+              </Link>
+            ) : (
+              <span style={{ opacity: 0.5 }}>End of list</span>
+            )}
+          </div>
+        </nav>
+      )}
     </div>
   );
+}
+
+/**
+ * Wave 12 — build a `/admin/projects?view=table&...` href that preserves the
+ * server-side status filter and (optionally) the next cursor. Saved-view
+ * selection is intentionally NOT round-tripped through the URL because that
+ * predicate is applied client-side.
+ */
+function buildTablePaginationHref(params: {
+  cursor?: string;
+  statusFilterParam: string | null;
+}): string {
+  const sp = new URLSearchParams();
+  sp.set("view", "table");
+  if (params.cursor) sp.set("cursor", params.cursor);
+  if (params.statusFilterParam) sp.set("status", params.statusFilterParam);
+  return `/admin/projects?${sp.toString()}`;
+}
+
+function paginationLinkStyle(variant: "ghost" | "primary"): React.CSSProperties {
+  if (variant === "primary") {
+    return {
+      padding: "0.5rem 1rem",
+      fontSize: "0.65rem",
+      letterSpacing: "0.14em",
+      textTransform: "uppercase",
+      color: "var(--white)",
+      background: "var(--olive)",
+      border: "0.5px solid var(--olive)",
+      textDecoration: "none",
+      display: "inline-block",
+    };
+  }
+  return {
+    padding: "0.5rem 1rem",
+    fontSize: "0.65rem",
+    letterSpacing: "0.14em",
+    textTransform: "uppercase",
+    color: "var(--charcoal)",
+    border: "0.5px solid var(--border-strong)",
+    background: "transparent",
+    textDecoration: "none",
+    display: "inline-block",
+  };
 }
 
 /* ─────────────────────────────  TABLE HELPERS  ───────────────────────────── */

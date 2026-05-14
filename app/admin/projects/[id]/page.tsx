@@ -23,6 +23,7 @@ import {
 import { getStyleProfile } from "@/lib/db/style-profiles";
 import { STYLE_QUESTIONS } from "@/app/style/questions";
 import { formatDisplayDate } from "@/lib/date";
+import { getReplyTemplates } from "@/lib/db/admin-settings";
 import { ProjectWorkspaceClient } from "./ProjectWorkspaceClient";
 
 export const metadata: Metadata = { title: "Project Detail | Admin" };
@@ -127,6 +128,11 @@ export type SerialProject = {
   coiVenueAddress: string | null;
   coiAdditionalInsuredText: string | null;
   coiR2Key: string | null;
+  // ── Phase 13.11 — Cross-vendor day-of room ────────────────────────────────
+  dayOfRoomEnabled: boolean;
+  dayOfRoomToken: string | null;
+  dayOfRoomTokenIssuedAt: string | null;
+  dayOfRoomVendorIds: string[];
 };
 
 export type SerialSunTimes = {
@@ -249,6 +255,17 @@ export type SerialTimelineBlock = {
   blockType: TimelineBlockType;
   notes: string | null;
   visibleToClient: boolean;
+};
+
+/** Phase 13.11 — vendor entry rendered in the Day-of room admin card. */
+export type SerialDayOfRoomVendorOption = {
+  id: string;
+  name: string;
+  category: string;
+  /** True when the vendor's `linkedProjectIds` already contains this project. */
+  linkedToProject: boolean;
+  /** True when the vendor is currently in `dayOfRoomVendorIds`. */
+  inAllowList: boolean;
 };
 
 export type SerialPressSubmission = {
@@ -478,6 +495,15 @@ export default async function ProjectDetailPage({ params }: Props) {
         : null,
     coiR2Key:
       typeof projectData.coiR2Key === "string" ? projectData.coiR2Key : null,
+    dayOfRoomEnabled: projectData.dayOfRoomEnabled === true,
+    dayOfRoomToken:
+      typeof projectData.dayOfRoomToken === "string" ? projectData.dayOfRoomToken : null,
+    dayOfRoomTokenIssuedAt: ts(projectData.dayOfRoomTokenIssuedAt),
+    dayOfRoomVendorIds: Array.isArray(projectData.dayOfRoomVendorIds)
+      ? (projectData.dayOfRoomVendorIds as unknown[]).filter(
+          (id): id is string => typeof id === "string"
+        )
+      : [],
   };
 
   const rawCadence =
@@ -759,6 +785,36 @@ export default async function ProjectDetailPage({ params }: Props) {
     console.error("[ProjectDetailPage] Failed to load admin insurer contact", err);
   }
 
+  // Phase 13.11 — pull every vendor that's already linked to this project so
+  // the Day-of room admin block can present a check-list. We probe the
+  // (currently un-typed) `linkedProjectIds` field and union with whatever is
+  // already in `dayOfRoomVendorIds`. NEVER ships notes / rating / etc.
+  let dayOfRoomVendorOptions: SerialDayOfRoomVendorOption[] = [];
+  try {
+    const allVendorsSnap = await adminDb.collection("vendors").get();
+    const allowSet = new Set(project.dayOfRoomVendorIds);
+    dayOfRoomVendorOptions = allVendorsSnap.docs
+      .map((d) => {
+        const v = d.data() ?? {};
+        const linkedProjectIds = Array.isArray(v.linkedProjectIds)
+          ? (v.linkedProjectIds as unknown[]).filter(
+              (x): x is string => typeof x === "string"
+            )
+          : [];
+        return {
+          id: d.id,
+          name: typeof v.name === "string" ? v.name : "(unnamed)",
+          category: typeof v.category === "string" ? v.category : "OTHER",
+          linkedToProject: linkedProjectIds.includes(id),
+          inAllowList: allowSet.has(d.id),
+        };
+      })
+      .filter((v) => v.linkedToProject || v.inAllowList)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  } catch (err) {
+    console.error("[ProjectDetailPage] Failed to load day-of room vendors", err);
+  }
+
   // Phase 2.2 — pull the style-quiz profile for this client's email (if any).
   // Surfaces above the workspace so Korrin sees the chosen aesthetic
   // alongside the questionnaire. Defensive: any failure (missing email,
@@ -770,6 +826,21 @@ export default async function ProjectDetailPage({ params }: Props) {
     } catch (err) {
       console.error("[ProjectDetailPage] Failed to load style profile", err);
     }
+  }
+
+  // Wave 12 — saved reply templates owned by the current admin. Surfaced in
+  // the MessagesTab as a "Templates ▾" quick-insert popover. Best-effort:
+  // any failure leaves the dropdown empty without breaking the workspace.
+  let replyTemplates: { id: string; label: string; body: string }[] = [];
+  try {
+    const rows = await getReplyTemplates(session.uid);
+    replyTemplates = rows.map((t) => ({
+      id: t.id,
+      label: t.label,
+      body: t.body,
+    }));
+  } catch (err) {
+    console.error("[ProjectDetailPage] Failed to load reply templates", err);
   }
 
   return (
@@ -798,8 +869,10 @@ export default async function ProjectDetailPage({ params }: Props) {
         defaultGearTemplateName={defaultGearTemplateName}
         pressSubmissions={pressSubmissions}
         dayOfTimeline={dayOfTimeline}
+        dayOfRoomVendorOptions={dayOfRoomVendorOptions}
         insurerDefaultAdditionalInsuredText={insurerDefaultAdditionalInsuredText}
         insurerEmailConfigured={insurerEmailConfigured}
+        replyTemplates={replyTemplates}
       />
     </>
   );

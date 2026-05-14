@@ -9,6 +9,8 @@ import {
   StatusHistoryEntry,
   EDITING_SUB_STAGES,
   type EditingSubStage,
+  mintDayOfRoomToken,
+  revokeDayOfRoomToken as revokeDayOfRoomTokenDb,
 } from "@/lib/db/projects";
 import { handleProjectTransition } from "@/lib/project-transitions";
 import { generateAndUploadWelcomePacket } from "@/lib/domain/welcome-packet";
@@ -94,6 +96,12 @@ export async function updateProjectDetails(
     offTheRecordNotes?: string | null;
     estimatedValue?: number;
     packagePriceUsd?: number;
+    /**
+     * Wave 12 — admin-set follow-up reminder date for the OverviewTab card.
+     * Pass `"YYYY-MM-DD"` (interpreted at noon UTC to dodge timezone-rollover
+     * surprises), an ISO datetime string, or `null` to clear the field.
+     */
+    followUpDate?: string | null;
   }
 ) {
   await requireAdmin();
@@ -111,6 +119,23 @@ export async function updateProjectDetails(
     }
     if (typeof updates.packagePriceUsd === "number") {
       safe.packagePriceUsd = updates.packagePriceUsd;
+    }
+    if ("followUpDate" in updates) {
+      const v = updates.followUpDate;
+      if (typeof v === "string" && v.trim()) {
+        // Accept either YYYY-MM-DD or any ISO-parseable date. Normalise
+        // bare dates to noon UTC so display rendering stays the same day
+        // regardless of viewer timezone.
+        const isBareDate = /^\d{4}-\d{2}-\d{2}$/.test(v.trim());
+        const ms = isBareDate
+          ? Date.parse(`${v.trim()}T12:00:00Z`)
+          : Date.parse(v);
+        if (!Number.isNaN(ms)) {
+          safe.followUpDate = Timestamp.fromMillis(ms);
+        }
+      } else {
+        safe.followUpDate = null;
+      }
     }
 
     await adminDb.collection("projects").doc(projectId).update({
@@ -607,5 +632,134 @@ export async function dismissReengagementPrompt(
   } catch (err) {
     console.error("dismissReengagementPrompt error:", err);
     return { success: false, error: "Failed to snooze prompt." };
+  }
+}
+
+/* ─────────────────  Day-of room (Phase 13.11)  ───────────────────── */
+
+/**
+ * Enable the cross-vendor day-of room. Mints a fresh token if the project
+ * doesn't already have one, then sets `dayOfRoomEnabled = true`. Returns the
+ * shareable URL so the workspace can copy it directly.
+ */
+export async function enableDayOfRoom(
+  projectId: string
+): Promise<{ success: boolean; url?: string; token?: string; error?: string }> {
+  await requireAdmin();
+  if (!projectId) return { success: false, error: "Missing project id." };
+  try {
+    const ref = adminDb.collection("projects").doc(projectId);
+    const snap = await ref.get();
+    if (!snap.exists) return { success: false, error: "Project not found." };
+
+    const existing: string | undefined = snap.data()?.dayOfRoomToken;
+    const token = existing && typeof existing === "string"
+      ? existing
+      : await mintDayOfRoomToken(projectId);
+
+    await ref.update({
+      dayOfRoomEnabled: true,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "");
+    const url = `${appUrl}/day-of-room/${projectId}?t=${token}`;
+
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true, url, token };
+  } catch (err) {
+    console.error("enableDayOfRoom error:", err);
+    return { success: false, error: "Failed to enable day-of room." };
+  }
+}
+
+/**
+ * Pause access to the day-of room without rotating the token. Re-enabling
+ * via `enableDayOfRoom` restores the same shareable URL.
+ */
+export async function disableDayOfRoom(
+  projectId: string
+): Promise<{ success: boolean; error?: string }> {
+  await requireAdmin();
+  if (!projectId) return { success: false, error: "Missing project id." };
+  try {
+    await adminDb.collection("projects").doc(projectId).update({
+      dayOfRoomEnabled: false,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true };
+  } catch (err) {
+    console.error("disableDayOfRoom error:", err);
+    return { success: false, error: "Failed to disable day-of room." };
+  }
+}
+
+/**
+ * Rotate the day-of room token. Any previously-shared URL stops working
+ * immediately. Leaves `dayOfRoomEnabled` untouched so the room stays live
+ * with the new token.
+ */
+export async function mintNewDayOfRoomToken(
+  projectId: string
+): Promise<{ success: boolean; url?: string; token?: string; error?: string }> {
+  await requireAdmin();
+  if (!projectId) return { success: false, error: "Missing project id." };
+  try {
+    const token = await mintDayOfRoomToken(projectId);
+    const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "");
+    const url = `${appUrl}/day-of-room/${projectId}?t=${token}`;
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true, url, token };
+  } catch (err) {
+    console.error("mintNewDayOfRoomToken error:", err);
+    return { success: false, error: "Failed to mint new token." };
+  }
+}
+
+/**
+ * Revoke the day-of room: clears the token AND sets `dayOfRoomEnabled = false`.
+ * Re-enabling later requires `enableDayOfRoom` to mint a fresh credential.
+ */
+export async function revokeDayOfRoomTokenAction(
+  projectId: string
+): Promise<{ success: boolean; error?: string }> {
+  await requireAdmin();
+  if (!projectId) return { success: false, error: "Missing project id." };
+  try {
+    await revokeDayOfRoomTokenDb(projectId);
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true };
+  } catch (err) {
+    console.error("revokeDayOfRoomTokenAction error:", err);
+    return { success: false, error: "Failed to revoke token." };
+  }
+}
+
+/**
+ * Replace the explicit allow-list of vendor IDs surfaced in the day-of room.
+ * Pass an empty array to fall back to the `vendors.linkedProjectIds`-only
+ * lookup. Filters out non-string entries defensively.
+ */
+export async function setDayOfRoomVendorIds(
+  projectId: string,
+  ids: string[]
+): Promise<{ success: boolean; error?: string }> {
+  await requireAdmin();
+  if (!projectId) return { success: false, error: "Missing project id." };
+  if (!Array.isArray(ids)) return { success: false, error: "Invalid vendor list." };
+  const cleaned = Array.from(
+    new Set(ids.filter((id): id is string => typeof id === "string" && id.trim().length > 0))
+  );
+  try {
+    await adminDb.collection("projects").doc(projectId).update({
+      dayOfRoomVendorIds: cleaned,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true };
+  } catch (err) {
+    console.error("setDayOfRoomVendorIds error:", err);
+    return { success: false, error: "Failed to update vendor list." };
   }
 }

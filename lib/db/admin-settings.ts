@@ -367,3 +367,137 @@ export async function updateBrandVoiceSample(
     { merge: true }
   );
 }
+
+// ─── Wave 12 — Reply templates ────────────────────────────────────────────────
+
+/**
+ * A saved-reply template stored on the admin's `users/{uid}` doc as
+ * `replyTemplates: ReplyTemplate[]`. Used by the project workspace's
+ * MessagesTab "Templates ▾" quick-insert popover to pre-fill the reply
+ * textarea with frequently-typed copy.
+ *
+ * No hard cap is enforced; the settings UI soft-recommends ≤30 to keep
+ * the dropdown comfortably scannable.
+ */
+export interface ReplyTemplate {
+  /** crypto.randomUUID() — opaque; immutable. */
+  id: string;
+  /** Short title, e.g. "Wedding inquiry — quick reply". */
+  label: string;
+  /** Reply body, up to REPLY_TEMPLATE_MAX_BODY chars. */
+  body: string;
+  createdAt: Timestamp;
+}
+
+/** Maximum body length for a single template. */
+export const REPLY_TEMPLATE_MAX_BODY = 2000;
+/** Maximum label length. */
+export const REPLY_TEMPLATE_MAX_LABEL = 80;
+/**
+ * Soft cap surfaced in the settings UI. Not enforced by the helpers — going
+ * over only degrades the dropdown UX, so it stays a recommendation.
+ */
+export const REPLY_TEMPLATE_SOFT_CAP = 30;
+
+type StoredReplyTemplate = ReplyTemplate;
+
+/**
+ * Read the admin's saved reply templates. Returns `[]` when the user doc
+ * doesn't exist or the field has never been set.
+ */
+export async function getReplyTemplates(uid: string): Promise<ReplyTemplate[]> {
+  const snap = await usersCol().doc(uid).get();
+  if (!snap.exists) return [];
+  const data = snap.data() as Partial<UserDoc> & {
+    replyTemplates?: StoredReplyTemplate[];
+  };
+  return Array.isArray(data.replyTemplates) ? data.replyTemplates : [];
+}
+
+/**
+ * Append a reply template. Trims `label`; preserves `body` whitespace
+ * (it's a writing sample). Returns the created entry so the caller can
+ * splice it into local state without a re-read.
+ */
+export async function addReplyTemplate(
+  uid: string,
+  input: { label: string; body: string }
+): Promise<ReplyTemplate> {
+  const ref = usersCol().doc(uid);
+  const snap = await ref.get();
+  const existing =
+    (snap.exists
+      ? (snap.data() as Partial<UserDoc> & {
+          replyTemplates?: StoredReplyTemplate[];
+        }).replyTemplates
+      : undefined) ?? [];
+
+  const template: ReplyTemplate = {
+    id: randomUUID(),
+    label: input.label.trim(),
+    body: input.body,
+    createdAt: Timestamp.now(),
+  };
+
+  const next: StoredReplyTemplate[] = [...existing, template];
+  await ref.set(
+    { replyTemplates: next, updatedAt: FieldValue.serverTimestamp() },
+    { merge: true }
+  );
+  return template;
+}
+
+/**
+ * Patch an existing reply template. Only `label` and `body` are editable —
+ * `id` and `createdAt` are immutable. No-op when the id is unknown.
+ */
+export async function updateReplyTemplate(
+  uid: string,
+  id: string,
+  partial: { label?: string; body?: string }
+): Promise<void> {
+  const ref = usersCol().doc(uid);
+  const snap = await ref.get();
+  if (!snap.exists) return;
+  const existing =
+    (snap.data() as Partial<UserDoc> & {
+      replyTemplates?: StoredReplyTemplate[];
+    }).replyTemplates ?? [];
+
+  let touched = false;
+  const next: StoredReplyTemplate[] = existing.map((t) => {
+    if (t.id !== id) return t;
+    touched = true;
+    return {
+      id: t.id,
+      label: partial.label !== undefined ? partial.label.trim() : t.label,
+      body: partial.body !== undefined ? partial.body : t.body,
+      createdAt: t.createdAt,
+    };
+  });
+
+  if (!touched) return;
+  await ref.set(
+    { replyTemplates: next, updatedAt: FieldValue.serverTimestamp() },
+    { merge: true }
+  );
+}
+
+/**
+ * Remove a reply template by id. No-op when the id isn't present.
+ */
+export async function removeReplyTemplate(uid: string, id: string): Promise<void> {
+  const ref = usersCol().doc(uid);
+  const snap = await ref.get();
+  if (!snap.exists) return;
+  const existing =
+    (snap.data() as Partial<UserDoc> & {
+      replyTemplates?: StoredReplyTemplate[];
+    }).replyTemplates ?? [];
+  const next = existing.filter((t) => t.id !== id);
+  if (next.length === existing.length) return;
+  await ref.set(
+    { replyTemplates: next, updatedAt: FieldValue.serverTimestamp() },
+    { merge: true }
+  );
+}

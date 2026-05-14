@@ -4,24 +4,52 @@ import { revalidatePath } from "next/cache";
 import { adminDb } from "@/lib/firebase-admin";
 import { requireAdmin } from "@/lib/session";
 import { FieldValue } from "firebase-admin/firestore";
-import { addProjectMessage, projectMessagesCol } from "@/lib/db/projects";
+import {
+  addProjectMessage,
+  projectMessagesCol,
+  type CommunicationChannel,
+} from "@/lib/db/projects";
 import { logActivity } from "@/lib/db/activity";
 import { enqueueTrackedMail } from "@/lib/email/tracking";
 
 /**
- * Append an outbound message to projects/{id}/messages and enqueue an email
- * for the Firebase Trigger Email extension. First line is requireAdmin().
+ * Channels accepted by `sendProjectMessage`. Mirrors `CommunicationChannel`
+ * but spelled out here so the TS narrowing is local to this file.
+ */
+const VALID_CHANNELS: readonly CommunicationChannel[] = [
+  "EMAIL",
+  "PHONE",
+  "SMS",
+  "IN_PERSON",
+];
+
+/**
+ * Append an outbound message to projects/{id}/messages.
+ *
+ * - Channel `EMAIL` (default for backwards-compat) enqueues a tracked email
+ *   via `enqueueTrackedMail` and stamps the resulting `sendId` on the
+ *   message doc.
+ * - Channel `PHONE` / `SMS` / `IN_PERSON` is a manual log entry only —
+ *   nothing is sent. Subject is preserved when provided.
+ *
+ * First line is requireAdmin().
  */
 export async function sendProjectMessage(
   projectId: string,
   body: string,
   subject?: string,
+  channel?: CommunicationChannel,
 ): Promise<{ success: boolean; error?: string }> {
   const session = await requireAdmin();
 
   if (!projectId || !body?.trim()) {
     return { success: false, error: "Message body is required." };
   }
+
+  // Default to EMAIL so existing callers (and any future caller that omits
+  // the channel) keep their email-send behaviour.
+  const resolvedChannel: CommunicationChannel =
+    channel && VALID_CHANNELS.includes(channel) ? channel : "EMAIL";
 
   try {
     const projectSnap = await adminDb.collection("projects").doc(projectId).get();
@@ -36,26 +64,28 @@ export async function sendProjectMessage(
       subject?.trim() ||
       (project.title ? `Re: ${project.title}` : "An update from Korrin's Photography");
 
-    // Persist the message in the project subcollection.
+    // Persist the message in the project subcollection on the chosen channel.
     const message = await addProjectMessage(projectId, {
       direction: "OUTBOUND",
-      channel: "EMAIL",
+      channel: resolvedChannel,
       subject: finalSubject,
       body: body.trim(),
       adminUid: session.uid ?? null,
       isAutomatic: false,
     });
 
-    // Bump lastContactedAt so the pipeline view reflects activity.
+    // Bump lastContactedAt so the pipeline view reflects activity. True for
+    // every channel — a logged phone call is still real client contact.
     await adminDb.collection("projects").doc(projectId).update({
       lastContactedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    // Enqueue the outbound email through the tracked-mail wrapper. The
-    // returned sendId is persisted on the message subcollection doc so the
-    // workspace can render "opened 2×, clicked link" engagement chips.
-    if (clientEmail) {
+    // EMAIL channel: enqueue the outbound email through the tracked-mail
+    // wrapper. The returned sendId is persisted on the message subcollection
+    // doc so the workspace can render "opened 2×, clicked link" engagement
+    // chips. Non-EMAIL channels are log-only — no mail is enqueued.
+    if (resolvedChannel === "EMAIL" && clientEmail) {
       const safeBody = body
         .trim()
         .split(/\n\n+/)
@@ -78,9 +108,11 @@ export async function sendProjectMessage(
     }
 
     await logActivity(
-      "EMAIL_SENT",
-      `Email sent for project "${project.title ?? projectId}"`,
-      { projectId, subject: finalSubject },
+      resolvedChannel === "EMAIL" ? "EMAIL_SENT" : "NOTE_ADDED",
+      resolvedChannel === "EMAIL"
+        ? `Email sent for project "${project.title ?? projectId}"`
+        : `${resolvedChannel.replace(/_/g, " ").toLowerCase()} logged for project "${project.title ?? projectId}"`,
+      { projectId, subject: finalSubject, channel: resolvedChannel },
     ).catch(() => {});
 
     revalidatePath(`/admin/projects/${projectId}`);

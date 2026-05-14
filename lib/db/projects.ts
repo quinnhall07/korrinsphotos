@@ -208,6 +208,24 @@ export interface ProjectDoc {
   coiReceivedAt?: Timestamp;
   /** State machine: NONE (default) → REQUESTED → RECEIVED → EXPIRED. */
   coiStatus?: "NONE" | "REQUESTED" | "RECEIVED" | "EXPIRED";
+
+  // ─── Phase 13.11 — Cross-vendor day-of room ─────────────────────────────────
+  //
+  // A public, token-gated, read-only multi-vendor view of a wedding/event day.
+  // Vendors open `${origin}/day-of-room/${projectId}?t=${token}` without
+  // logging in. Token is constant-time compared on the public route; admin
+  // can pause without revoking via `dayOfRoomEnabled`.
+  /** 32-char hex; minted on demand by `mintDayOfRoomToken`. */
+  dayOfRoomToken?: string;
+  /** When the current `dayOfRoomToken` was minted. */
+  dayOfRoomTokenIssuedAt?: Timestamp;
+  /** Admin master switch — when false the public route rejects even with a valid token. */
+  dayOfRoomEnabled?: boolean;
+  /**
+   * Explicit allow-list of vendor IDs surfaced in the room (overrides /
+   * supplements the array-contains lookup on `vendors.linkedProjectIds`).
+   */
+  dayOfRoomVendorIds?: string[];
 }
 
 export interface MessageDoc {
@@ -258,4 +276,182 @@ export async function addProjectMessage(projectId: string, message: Omit<Message
   const fullMessage = { ...message, sentAt: Timestamp.now() };
   await ref.set(fullMessage);
   return { id: ref.id, ...fullMessage } as MessageDoc;
+}
+
+// ---------------------------------------------------------------------------
+// Wave 12 — Paginated listing
+// ---------------------------------------------------------------------------
+//
+// `listProjects` reads the entire `projects/` collection in one shot, which is
+// fine for the Kanban board (columns are inherently capped by status) but
+// scales poorly for the table view as the pipeline grows. `listProjectsPaginated`
+// is the cursor-based variant used by the table view at /admin/projects.
+//
+// Order: `updatedAt desc, __name__ desc` — most-recently-touched first, with
+// the document ID as a stable tiebreaker (Firestore requires every orderBy
+// field to participate in the cursor).
+//
+// Cursor: base64url-encoded `{ lastUpdatedAtMs, lastDocId }`. Forward-only —
+// callers preserve the prior cursor in the URL stack if they want a back path.
+
+export interface ListProjectsPage {
+  projects: ProjectDoc[];
+  nextCursor: string | null;
+}
+
+interface ProjectsCursorPayload {
+  lastUpdatedAtMs: number;
+  lastDocId: string;
+}
+
+function encodeProjectsCursor(payload: ProjectsCursorPayload): string {
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+function decodeProjectsCursor(cursor: string): ProjectsCursorPayload | null {
+  try {
+    const json = Buffer.from(cursor, "base64url").toString("utf8");
+    const parsed = JSON.parse(json) as Partial<ProjectsCursorPayload>;
+    if (
+      typeof parsed.lastUpdatedAtMs !== "number" ||
+      typeof parsed.lastDocId !== "string"
+    ) {
+      return null;
+    }
+    return {
+      lastUpdatedAtMs: parsed.lastUpdatedAtMs,
+      lastDocId: parsed.lastDocId,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Cursor-paginated project list, ordered by `updatedAt desc` with the document
+ * ID as a stable tiebreaker.
+ *
+ * - `pageSize` defaults to 50.
+ * - `cursor` is the opaque token returned as `nextCursor` from the prior page.
+ *   Invalid / undecodable cursors are silently ignored (page 1 is returned).
+ * - `statusFilter` (when non-empty) adds `where("status", "in", statusFilter)`.
+ *   Firestore's `in` operator caps at 30 values — passing more throws.
+ *
+ * Note: legacy projects written before `updatedAt` was always stamped will be
+ * omitted from this list because Firestore drops docs missing the orderBy
+ * field. The Kanban view (which still uses `listProjects`) is the safety net
+ * for any such documents.
+ */
+export async function listProjectsPaginated(opts: {
+  pageSize?: number;
+  cursor?: string | null;
+  statusFilter?: ProjectStatus[];
+}): Promise<ListProjectsPage> {
+  const pageSize = opts.pageSize ?? 50;
+  if (opts.statusFilter && opts.statusFilter.length > 30) {
+    throw new Error(
+      "listProjectsPaginated: statusFilter exceeds Firestore 'in' cap of 30 values."
+    );
+  }
+
+  let query: FirebaseFirestore.Query = projectsCol();
+  if (opts.statusFilter && opts.statusFilter.length > 0) {
+    query = query.where("status", "in", opts.statusFilter);
+  }
+  query = query
+    .orderBy("updatedAt", "desc")
+    .orderBy("__name__", "desc")
+    .limit(pageSize + 1);
+
+  if (opts.cursor) {
+    const decoded = decodeProjectsCursor(opts.cursor);
+    if (decoded) {
+      query = query.startAfter(
+        Timestamp.fromMillis(decoded.lastUpdatedAtMs),
+        decoded.lastDocId
+      );
+    }
+  }
+
+  const snap = await query.get();
+  const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() } as ProjectDoc));
+  const hasMore = docs.length > pageSize;
+  const trimmed = hasMore ? docs.slice(0, pageSize) : docs;
+
+  let nextCursor: string | null = null;
+  if (hasMore && trimmed.length > 0) {
+    const last = trimmed[trimmed.length - 1];
+    const lastUpdatedAtMs = last.updatedAt?.toMillis?.() ?? 0;
+    nextCursor = encodeProjectsCursor({
+      lastUpdatedAtMs,
+      lastDocId: last.id,
+    });
+  }
+
+  return { projects: trimmed, nextCursor };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 13.11 — Cross-vendor day-of room helpers
+// ---------------------------------------------------------------------------
+//
+// Token model: a 32-char hex string (16 bytes from `crypto.randomBytes`)
+// stored on the project. The public route at `app/day-of-room/[projectId]`
+// constant-time compares against the stored token; admins can pause access
+// without revoking by flipping `dayOfRoomEnabled` off (the token survives so
+// re-enabling restores the same shareable URL).
+//
+// Index requirement: `findProjectByDayOfRoomToken` queries
+// `where("dayOfRoomToken", "==", token).limit(1)`. Firestore satisfies this
+// with the auto-built single-field index on `dayOfRoomToken`; no composite
+// index is required. Documented in PROGRESS.md infra table.
+
+import { randomBytes } from "crypto";
+
+/**
+ * Mint a fresh 32-char hex token for the day-of room, persist it, and return
+ * the new value. Stamps `dayOfRoomTokenIssuedAt` and leaves `dayOfRoomEnabled`
+ * untouched (callers flip the switch separately). Calling this rotates the
+ * token — any previously-shared URL stops working.
+ */
+export async function mintDayOfRoomToken(projectId: string): Promise<string> {
+  const token = randomBytes(16).toString("hex");
+  await projectsCol().doc(projectId).update({
+    dayOfRoomToken: token,
+    dayOfRoomTokenIssuedAt: Timestamp.now(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+  return token;
+}
+
+/**
+ * Clear the day-of room token AND set `dayOfRoomEnabled = false`. This is the
+ * "kill the URL" path — re-enabling later requires `mintDayOfRoomToken` to
+ * generate a fresh credential.
+ */
+export async function revokeDayOfRoomToken(projectId: string): Promise<void> {
+  await projectsCol().doc(projectId).update({
+    dayOfRoomToken: FieldValue.delete(),
+    dayOfRoomTokenIssuedAt: FieldValue.delete(),
+    dayOfRoomEnabled: false,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+}
+
+/**
+ * Look up a project by its day-of room token. Returns `null` when no doc
+ * matches. Backed by Firestore's auto-built single-field index on
+ * `dayOfRoomToken`; no composite index needed.
+ */
+export async function findProjectByDayOfRoomToken(
+  token: string
+): Promise<ProjectDoc | null> {
+  if (!token) return null;
+  const snap = await projectsCol()
+    .where("dayOfRoomToken", "==", token)
+    .limit(1)
+    .get();
+  if (snap.empty) return null;
+  const d = snap.docs[0];
+  return { id: d.id, ...d.data() } as ProjectDoc;
 }
