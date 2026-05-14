@@ -6,10 +6,13 @@ import { notFound } from "next/navigation";
 export const metadata: Metadata = { title: "Project Detail | Admin" };
 export const dynamic = "force-dynamic";
 
-export default async function ProjectDetailPage({ params }: { params: { id: string } }) {
-  await requireAdmin();
+type Props = { params: Promise<{ id: string }> };
 
-  const doc = await adminDb.collection("projects").doc(params.id).get();
+export default async function ProjectDetailPage({ params }: Props) {
+  await requireAdmin();
+  const { id } = await params;
+
+  const doc = await adminDb.collection("projects").doc(id).get();
   if (!doc.exists) {
     notFound();
   }

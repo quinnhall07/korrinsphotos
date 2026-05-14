@@ -28,6 +28,7 @@ async function getEventPhotos(eventId: string): Promise<MasonryPhoto[]> {
     .collection("events")
     .doc(eventId)
     .collection("photos")
+    .where("galleryReady", "==", true)
     .orderBy("uploadedAt", "asc")
     .get();
 

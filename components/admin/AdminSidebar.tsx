@@ -22,6 +22,17 @@ const NAV = [
           </svg>
         ),
       },
+      {
+        label: "Pipeline",
+        href: "/admin/projects",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <rect x="1" y="2" width="4" height="12" rx="0.5" />
+            <rect x="6" y="2" width="4" height="8" rx="0.5" />
+            <rect x="11" y="2" width="4" height="5" rx="0.5" />
+          </svg>
+        ),
+      },
     ],
   },
   {

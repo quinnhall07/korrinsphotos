@@ -16,7 +16,7 @@ export async function grantEventAccess(
   eventId: string,
   email: string
 ): Promise<void> {
-  const docId = `${eventId}_${userId}`;
+  const docId = `${userId}_${eventId}`;
   await eventAccessCol().doc(docId).set(
     { userId, eventId, email, createdAt: Timestamp.now() },
     { merge: true }
@@ -24,12 +24,12 @@ export async function grantEventAccess(
 }
 
 export async function revokeEventAccess(userId: string, eventId: string): Promise<void> {
-  const docId = `${eventId}_${userId}`;
+  const docId = `${userId}_${eventId}`;
   await eventAccessCol().doc(docId).delete();
 }
 
 export async function userHasEventAccess(userId: string, eventId: string): Promise<boolean> {
-  const docId = `${eventId}_${userId}`;
+  const docId = `${userId}_${eventId}`;
   const snap = await eventAccessCol().doc(docId).get();
   return snap.exists;
 }

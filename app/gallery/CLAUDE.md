@@ -20,33 +20,25 @@ Client photo portal.
    Admins (`session.role === "ADMIN"`) bypass; clients without a matching
    doc receive `notFound()`.
 
-### `eventAccess` Doc ID — Drift to Resolve
+### `eventAccess` Doc ID
 
-`DECISION.md` ADR-009 declares the composite ID format set in stone, but the
-codebase currently has two conventions:
-
-| Location | Format |
-|---|---|
-| `lib/db/event-access.ts` (grant/revoke/has) | `${eventId}_${userId}` |
-| `app/gallery/[id]/page.tsx` line ~51 | `${session.uid}_${id}` → `${userId}_${eventId}` |
-
-These do not match. Granted access docs will be missed by the gallery lookup
-unless one side is corrected. Before touching either path, confirm ADR-009's
-format and bring both sides into alignment in the same change — `eventAccess`
-is read by multiple call sites.
+`DECISION.md` ADR-009 fixes the composite ID format as `${userId}_${eventId}`
+(uid first, then eventId). All call sites — `lib/db/event-access.ts`
+(grant/revoke/has), `app/gallery/[id]/page.tsx`, `app/api/invite/route.ts`,
+`app/admin/events/[id]/actions.ts`, and `lib/project-transitions.ts` — now
+agree on this order. Do not flip it back.
 
 ---
 
 ## Photo Fetch
 
 `[id]/page.tsx` → `getEventPhotos(eventId)` reads the **subcollection**
-`events/{eventId}/photos`, ordered by `uploadedAt asc`. It does **not** use
-`lib/db/photos.ts` (which queries a different top-level `photos` collection).
-
-The gallery currently shows **every photo in the subcollection** — no
-`galleryReady` or `status` filter is applied. Photos uploaded but not yet
-marked ready appear immediately. If filtering is desired, add it here and
-align `lib/db/photos.ts` with the subcollection schema.
+`events/{eventId}/photos`, filtered by `where("galleryReady", "==", true)`
+and ordered by `uploadedAt asc`. It does **not** use `lib/db/photos.ts`
+(which queries a different top-level `photos` collection). The combination
+of `where` + `orderBy` on different fields requires a Firestore composite
+index — if you see an index error in logs, follow the link in the error to
+create it.
 
 The dashboard `page.tsx` similarly reads `events/{id}/photos` directly via
 `adminDb` for `photoCount` and a cover photo (first by `uploadedAt asc`).

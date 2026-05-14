@@ -33,6 +33,7 @@ async function onProjectBooked(projectId: string) {
     shootDate: project.shootDate,
     status: "ACTIVE",
     createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
   });
 
   // 2. Auto-grant client portal access

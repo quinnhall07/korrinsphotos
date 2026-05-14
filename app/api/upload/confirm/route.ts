@@ -35,6 +35,8 @@ export async function POST(req: NextRequest) {
   const { imageId, deliveryUrl } = await uploadToCloudflareImages(r2ObjectUrl, { eventId, label: label ?? "" });
 
   // Write photo as a subcollection document under the event
+  // r2Key is persisted so the object can be cleaned up on photo/event delete
+  // (parity with the multipart pipeline's `storageKey`).
   const photoRef = await adminDb
     .collection("events")
     .doc(eventId)
@@ -42,6 +44,7 @@ export async function POST(req: NextRequest) {
     .add({
       cloudflareUrl:     deliveryUrl,
       cloudflareImageId: imageId,
+      r2Key:             key,
       label:             label ?? null,
       category:          category ?? null,
       uploadedAt:        FieldValue.serverTimestamp(),

@@ -5,7 +5,8 @@ export type ActivityAction =
   | "LEAD_RECEIVED"
   | "STATUS_CHANGED"
   | "EMAIL_SENT"
-  | "NOTE_ADDED";
+  | "NOTE_ADDED"
+  | "PAYMENT_RECEIVED";
 
 export interface ActivityDoc {
   id: string;

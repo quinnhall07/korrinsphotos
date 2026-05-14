@@ -60,5 +60,5 @@ invoice-actions.ts   sendInvoice  (creates Stripe Payment Link, marks invoice SE
 ## Gotchas
 
 - `updateProjectDetails` only revalidates `/admin/projects/${projectId}`, not the list. If you add fields that surface in the pipeline view (e.g. `estimatedValue`), add `revalidatePath("/admin/projects")` too.
-- `[id]/page.tsx` reads `params.id` synchronously — Next.js 15 expects `await params`. Fix when you next touch the file.
+- `[id]/page.tsx` follows the Next.js 15 async-params shape: `params: Promise<{ id: string }>` then `const { id } = await params;`. Keep this when adding `searchParams`.
 - Messages are a **subcollection** (`projects/{id}/messages`), not an array field. Use `addProjectMessage` from `lib/db/projects.ts`.

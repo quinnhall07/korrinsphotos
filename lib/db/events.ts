@@ -6,15 +6,19 @@ export interface EventDoc {
   title: string;
   coverPhotoUrl?: string;
   bookingId?: string;
+  projectId?: string;
+  clientId?: string;
   clientEmail?: string;
   clientName?: string;
-  status?: "UPCOMING" | "COMPLETED";
+  status?: "UPCOMING" | "COMPLETED" | "ACTIVE";
   startDate?: string;
   endDate?: string;
   startTime?: string;
   endTime?: string;
   isMultiDay?: boolean;
   location?: string;
+  shootDate?: Timestamp;
+  shootEndDate?: Timestamp;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

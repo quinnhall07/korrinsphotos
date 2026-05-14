@@ -124,9 +124,7 @@ export function GalleryViewer({
             </p>
           </div>
         ) : (
-          <div style={{ columns: 4, columnGap: "0.75rem" }}>
-            <MasonryGrid photos={photos} columns={4} eventName={eventTitle} />
-          </div>
+          <MasonryGrid photos={photos} columns={4} eventName={eventTitle} />
         )}
       </div>
     </div>

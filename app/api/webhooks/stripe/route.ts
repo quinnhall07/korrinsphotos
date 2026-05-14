@@ -2,10 +2,11 @@ import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { adminDb } from "@/lib/firebase-admin";
-import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { FieldValue } from "firebase-admin/firestore";
 import { handleProjectTransition } from "@/lib/project-transitions";
+import { logActivity } from "@/lib/db/activity";
 import type { InvoiceDoc } from "@/lib/db/invoices";
-import type { ProjectDoc, ProjectStatus } from "@/lib/db/projects";
+import type { ProjectDoc } from "@/lib/db/projects";
 
 export async function POST(req: Request) {
   const body = await req.text();
@@ -97,14 +98,13 @@ async function processInvoicePayment(invoiceId: string, paymentIntentId: string)
 
     if (newStatus !== oldStatus) {
       await handleProjectTransition(project.id, oldStatus, newStatus);
-      
-      // Log Activity
-      await adminDb.collection("activityLogs").add({
-        type: "PAYMENT_RECEIVED",
-        message: `Payment received for ${invoice.type} invoice. Project moved to ${newStatus}.`,
-        metadata: { projectId: project.id, invoiceId },
-        timestamp: FieldValue.serverTimestamp()
-      });
+
+      // Log Activity (best-effort)
+      await logActivity(
+        "PAYMENT_RECEIVED",
+        `Payment received for ${invoice.type} invoice. Project moved to ${newStatus}.`,
+        { projectId: project.id, invoiceId }
+      ).catch(() => {});
     }
   }
 }
