@@ -1,13 +1,13 @@
 # PROGRESS.md — Korrin's Photos
 
-> Last updated: 2026-05-14 (post-Wave-11)
+> Last updated: 2026-05-14 (post-Wave-12)
 > Source of truth for "what state is the codebase actually in." Update on feature completion, bug discovery/fix, or task abandonment.
 
 ---
 
 ## Overall Status
 
-Wave 11 closes the differentiation-polish backlog. Wave 9 shipped the multi-step booking wizard (2.1), public style quiz (2.2), gallery analytics (13.10), off-the-record notes (13.12), brand voice calibration (13.13), First 100 Clients dashboard (13.15), Commercial Brand Brief auto-attach (13.17), and vendor reciprocity tracking (13.19). Wave 10 added local SEO autopilot (13.7), quiet season planner (13.9), image category + label editing on uploads, /admin/users pagination, an admin-wide global search (`/admin/search`), and resolved the R2 public-URL bug. Wave 11 added the digital products store (4.13), a dedicated `/admin/clients` listing + detail surface, the `/admin/health` operational dashboard, and an `/admin/exports` CSV center. Single unified Client/Project pipeline remains the canonical surface; the legacy `bookingInquiries` Kanban + `/admin/bookings` directory were retired in May 2026. The remaining backlog is now exclusively the external-dependency items (1.5 Gmail, 1.8 scheduler-on-3.3, 3.3 Google Calendar, 4.10 Pinterest, 4.11 Instagram, 5.3-5.10 AI assists needing `ANTHROPIC_API_KEY`) plus the always-optional 13.4 booking-form calendar embed and 13.11 cross-vendor day-of room.
+Wave 12 closes the entire non-external-dependency backlog. Wave 9 shipped the multi-step booking wizard (2.1), public style quiz (2.2), gallery analytics (13.10), off-the-record notes (13.12), brand voice calibration (13.13), First 100 Clients dashboard (13.15), Commercial Brand Brief auto-attach (13.17), and vendor reciprocity tracking (13.19). Wave 10 added local SEO autopilot (13.7), quiet season planner (13.9), image category + label editing on uploads, /admin/users pagination, admin-wide global search (`/admin/search`), and resolved the R2 public-URL bug. Wave 11 added the digital products store (4.13), `/admin/clients`, `/admin/health`, and `/admin/exports`. Wave 12 added the cross-vendor day-of room (13.11), pagination on `/admin/projects` table view + `/admin/events`, plus project workspace polish (follow-up date editor, multi-channel comms entry, reusable reply templates). Single unified Client/Project pipeline remains the canonical surface; the legacy `bookingInquiries` Kanban + `/admin/bookings` directory were retired in May 2026. The remaining backlog is exclusively external-dependency items (1.5 Gmail, 1.8 scheduler-on-3.3, 3.3 Google Calendar, 4.10 Pinterest, 4.11 Instagram, 5.3-5.10 AI assists needing `ANTHROPIC_API_KEY`) plus the optional 13.4 booking-form calendar embed.
 
 ---
 
@@ -229,14 +229,10 @@ Wave 11 closes the differentiation-polish backlog. Wave 9 shipped the multi-step
 
 ### Original ideas (Phase 13) — remaining
 - [ ] **13.4 — Booking-form post-submit calendar embed.** Optional; pairs with 1.8 / 3.3.
-- [ ] **13.11 — Cross-vendor wedding-day room.** Multi-vendor read-only timeline; pairs with 2.8 + 3.8.
 
 ### Other (low priority)
 - [ ] **Custom Firebase Auth email templates.** Magic link emails use the Firebase default. Brand in the Firebase Console.
-- [ ] **Pagination on `/admin/projects` + `/admin/events`** — `/admin/users` paginated in Wave 10; the other two still single-page.
 - [ ] **Real PNG icons** for PWA manifest (currently favicon placeholder for 192 + 512).
-- [ ] **Follow-up date editor UI** on the project workspace (field exists on `ProjectDoc`, no editor).
-- [ ] **Manual multi-channel comms entry** on the project workspace (channel selection for PHONE / IN_PERSON / SMS — currently can be captured in NotesTab).
 
 ---
 
@@ -270,6 +266,20 @@ _None open._
 ---
 
 ## Recently Resolved
+
+### May 2026 — Wave 12 (commit `cfcd3fb`)
+
+Four parallel agents shipping the last non-external-dependency items in the original roadmap.
+
+- **Phase 13.11 cross-vendor day-of room** — `dayOfRoomToken` / `dayOfRoomTokenIssuedAt` / `dayOfRoomEnabled` / `dayOfRoomVendorIds` on `ProjectDoc`. `mintDayOfRoomToken` / `revokeDayOfRoomToken` / `findProjectByDayOfRoomToken` helpers (single-field auto-index lookup; document the `projects(dayOfRoomToken)` index need). Public `/day-of-room/[projectId]?t=<token>` with `crypto.timingSafeEqual` constant-time compare, `dynamic = "force-dynamic"`, `robots: noindex`. Whitelist serializer renders only project title/shootDate/venue, client first names + phone + email, `visibleToClient` timeline blocks, and minimal vendor fields (name/category/phone/email). Vendors grouped by category with vCard data-URL "Add to contacts" download. Admin "Vendor day-of room" card injected at the top of the workspace Day-of tab — master-switch toggle, copyable URL with token-issued timestamp, mint/revoke buttons, vendor allow-list (linked + by-id).
+- **`/admin/projects` pagination (table view only)** — `listProjectsPaginated` with base64url cursor (`updatedAt desc + __name__ desc` tiebreaker, n+1 over-fetch). Kanban view keeps the existing full read because columns are inherently capped by status. View toggle navigates via canonical URL preserving status filter, dropping cursor on mode change.
+- **`/admin/events` pagination + status filter** — `listEventsPaginated` with base64url cursor (`createdAt desc + __name__ desc`) and `where("status", "in", […])` filter. Status pill row at the top (All / Upcoming / Active / Completed / Delivered / Archived); switching pills clears the cursor. Forward-only Next + Back-to-start.
+- **Project workspace polish (3 sub-tasks bundled into one ProjectWorkspaceClient.tsx edit)**
+  - **Follow-up date editor on OverviewTab** — `FollowUpDateBlock` under the NBA chip. Empty / set ("in N days · Wed Jun 5") / inline date input. Persists via `updateProjectDetails(projectId, { followUpDate: <Timestamp | null> })` (allow-list extended; YYYY-MM-DD normalised to noon UTC).
+  - **Multi-channel comms entry on MessagesTab** — Channel `<select>` next to Send: Email (default) | Phone call | In-person | SMS. EMAIL keeps the existing `enqueueTrackedMail` path; non-email channels write only the OUTBOUND `MessageDoc` + bump `lastContactedAt` + log `NOTE_ADDED` activity. Default-EMAIL preserves backward compat for callers omitting `channel`.
+  - **Reusable reply templates** — `ReplyTemplate[]` on `users/{uid}` (50–2000 char body, soft cap 30, label cap 80). `/admin/settings/reply-templates` CRUD. `MessagesTab` gains a "Templates ▾" popover above the textarea — clicking a template inserts its body (replaces selection if any, else appends with leading newline).
+
+Cross-agent integration: workspace-polish + day-of-room agents both edited `ProjectWorkspaceClient.tsx` without JSX overlap (workspace-polish stayed in OverviewTab + MessagesTab; day-of-room stayed in the Day-of tab). `lib/db/projects.ts` collected 4 day-of-room fields + 3 helpers + `listProjectsPaginated` additively. `lib/db/admin-settings.ts` gained `ReplyTemplate` + helpers next to `brandVoiceSamples`. AdminSidebar gained the "Reply templates" Settings entry. Final: `npm run build` exit 0; `npm run lint` 0 errors / 23 pre-existing warnings.
 
 ### May 2026 — Waves 9 + 10 + 11 (commit `5dd26a3`)
 
