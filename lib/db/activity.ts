@@ -6,7 +6,10 @@ export type ActivityAction =
   | "STATUS_CHANGED"
   | "EMAIL_SENT"
   | "NOTE_ADDED"
-  | "PAYMENT_RECEIVED";
+  | "PAYMENT_RECEIVED"
+  | "PAYMENT_REFUNDED"
+  | "PAYMENT_DISPUTE_CREATED"
+  | "PAYMENT_DISPUTE_CLOSED";
 
 export interface ActivityDoc {
   id: string;

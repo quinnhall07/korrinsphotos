@@ -12,10 +12,10 @@
 | Audience | Routes | Auth |
 |---|---|---|
 | Public visitors | `/`, `/portfolio`, `/booking`, `/login` | None |
-| Admin (Korrin) | `/admin`, `/admin/bookings`, `/admin/projects`, `/admin/events`, `/admin/users` | Firebase session cookie + `role: "ADMIN"` claim |
+| Admin (Korrin) | `/admin`, `/admin/inbox`, `/admin/projects`, `/admin/events`, `/admin/users` | Firebase session cookie + `role: "ADMIN"` claim |
 | Clients | `/gallery/**` | Firebase session cookie + `eventAccess` Firestore doc |
 
-`/admin/projects` is the new pipeline workspace built around the unified Client/Project model (see `docs/architecture/unified-client-lifecycle.md`). It runs alongside the legacy `/admin/bookings` Kanban while the data migration completes.
+`/admin/projects` is the canonical pipeline workspace built around the unified Client/Project model (see `docs/architecture/unified-client-lifecycle.md`). The legacy `/admin/bookings` Kanban and the `bookingInquiries` write have been retired (May 2026).
 
 The codebase is **proprietary** (see `LICENSE.md`). Do not copy, publish, or reference external repositories.
 
@@ -27,7 +27,6 @@ The codebase is **proprietary** (see `LICENSE.md`). Do not copy, publish, or ref
 korrin-photos/
 ├── app/                              # Next.js App Router pages & API routes
 │   ├── admin/                        # Admin dashboard (server-guarded)
-│   │   ├── bookings/                 # Legacy Kanban CRM pipeline (reads bookingInquiries)
 │   │   ├── events/                   # Event management + [id] detail (gallery editor lives here)
 │   │   ├── projects/                 # Unified pipeline (reads projects + clients)
 │   │   │   ├── [id]/page.tsx
@@ -76,7 +75,6 @@ korrin-photos/
 ├── lib/
 │   ├── db/                           # Per-collection Firestore helpers (canonical DB layer)
 │   │   ├── activity.ts
-│   │   ├── bookings.ts               # Legacy bookingInquiries (read by /admin/bookings)
 │   │   ├── clients.ts                # Universal Client record (email = key)
 │   │   ├── contracts.ts
 │   │   ├── event-access.ts
@@ -91,14 +89,14 @@ korrin-photos/
 │   ├── storage/
 │   │   ├── images.ts                 # Cloudflare Images upload/delete + buildCdnUrl
 │   │   └── r2.ts                     # R2 presign (single + multipart), delete, get-URL
-│   ├── booking-kanban.ts             # LeadStatus types + Kanban column config (legacy)
+│   ├── booking-kanban.ts             # CommunicationChannel + legacy LeadStatus types (still imported by lib/db/projects)
 │   ├── cloudflare.ts                 # Deprecated re-export facade for lib/storage/*
 │   ├── contract-renderer.ts          # Merges project + client data into HTML contract template
 │   ├── date.ts                       # toDate / formatDisplayDate / formatDateTime helpers
 │   ├── firebase-admin.ts             # Admin SDK singleton (server-only)
 │   ├── firebase-email.ts             # Identity Toolkit magic link sender (server-only)
 │   ├── firebase.ts                   # Client SDK singleton (client-only)
-│   ├── lead-scoring.ts               # 0-100 lead score algorithm (typed against BookingInquiryDoc)
+│   ├── lead-scoring.ts               # 0-100 lead score algorithm (structural LeadScoreInput shape)
 │   ├── project-transitions.ts        # handleProjectTransition + lifecycle hooks
 │   ├── session.ts                    # Session cookie create/verify/clear + requireAdmin/requireSession
 │   ├── stripe.ts                     # Stripe SDK + createPaymentLinkForInvoice
@@ -306,14 +304,6 @@ events/{eventId}
 eventAccess/{eventId_userId}
   userId, eventId, email, createdAt
 
-bookingInquiries/{id}
-  firstName, lastName, email, sessionType, preferredDate?, message,
-  status (PENDING|QUALIFIED|SENT_PROPOSAL|CONTRACT_SENT|BOOKED|ARCHIVED),
-  notes, pricing, leadScore, tags[], leadSource?,
-  estimatedValue?, followUpDate?, lastContactedAt?, lastRespondedAt?,
-  communicationLog[{id, timestamp, channel, summary, adminUid}],
-  eventId?, eventName?, createdAt, updatedAt
-
 mail/{id}                     # Firebase Trigger Email extension watches this
   to, message: { subject, html }, createdAt
 
@@ -321,15 +311,19 @@ activityFeed/{id}
   action, message, timestamp, metadata?
 ```
 
-### Booking dual-write (transition state)
+> Historical `bookingInquiries/{id}` documents still exist in Firestore from the pre-unified era but are no longer written to or read by the app. The collection will be migrated off-line when convenient.
 
-`app/booking/actions.ts` (`submitBooking`) writes to **both** sides on every public form submission:
+### Booking submission flow
+
+`app/booking/actions.ts` (`submitBooking`) on every public form submission:
 1. Finds or creates a `clients/{clientId}` doc (keyed by email).
 2. Creates a `projects/{projectId}` doc in status `INQUIRY` with `clientId`.
 3. Adds the first inbound message to `projects/{projectId}/messages`.
-4. Also writes a legacy `bookingInquiries/{id}` doc so the existing `/admin/bookings` Kanban keeps working.
+4. Surfaces the inquiry in the admin inbox via `createInboxItem(...)` (best-effort).
+5. Logs `LEAD_RECEIVED` to the activity feed (best-effort).
+6. Enqueues the auto-responder email through `enqueueTrackedMail`.
 
-The dual write is intentional and temporary — see the "In-flight" section of `PROGRESS.md` for the punch-list to remove it. **Subcollection queries** that cross multiple events require `collectionGroup()`. Always pair `where("field", "!=", null)` with `orderBy("field")` before any secondary `orderBy` or Firestore will reject the query.
+**Subcollection queries** that cross multiple events require `collectionGroup()`. Always pair `where("field", "!=", null)` with `orderBy("field")` before any secondary `orderBy` or Firestore will reject the query.
 
 ---
 

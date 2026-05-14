@@ -15,11 +15,11 @@ app/admin/layout.tsx → requireAdmin() → <AdminSidebar /> + <children />
 
 The sidebar component is at `components/admin/AdminSidebar.tsx` (NOT inside `app/admin/`). Import it as `@/components/admin/AdminSidebar`. It is a `"use client"` component because it uses `usePathname()` for active-link highlighting.
 
-`AdminSidebar` lists: Dashboard, Pipeline (`/admin/projects`), Events, Booking Inquiries, Users. The `isActive` check uses `pathname.startsWith(href)` for non-root entries, so the Pipeline entry highlights for `/admin/projects` and `/admin/projects/[id]` alike.
+`AdminSidebar` is organised into four groups: **Overview** (Dashboard, Inbox, Pipeline), **Content** (Events, Locations, Vendors), **Clients** (Segments, Sequences, Questionnaires, Users), **Settings** (Automations). The `isActive` check uses `pathname.startsWith(href)` for non-root entries, so the Pipeline entry highlights for `/admin/projects` and `/admin/projects/[id]` alike.
 
 ## Dashboard (`page.tsx`)
 
-Single Server Component, `export const dynamic = "force-dynamic"`. Uses `adminDb.collection(...).count().get()` for cheap counts in parallel via `Promise.all`. Recent inquiries are still pulled from `bookingInquiries` (legacy collection) — when the projects migration completes, swap these to `projects`.
+Single Server Component, `export const dynamic = "force-dynamic"`. Uses `adminDb.collection(...).count().get()` for cheap counts in parallel via `Promise.all`. The "Pending Inquiries" counter reads `projects where status == "INQUIRY"`; the "Recent Inquiries" table reads the five most recent `projects` and joins each one's `clients/{clientId}` for the display name.
 
 ## Activity Feed
 
@@ -45,8 +45,8 @@ Every mutation in `app/admin/**/*actions.ts` follows this shape:
 After dashboard-relevant mutations, revalidate both the specific route AND `/admin` so the dashboard cards refresh:
 
 ```ts
-revalidatePath("/admin/bookings");
+revalidatePath("/admin/projects");
 revalidatePath("/admin");
 ```
 
-See `inquiry-actions.ts` for the canonical pattern.
+See `app/admin/projects/actions.ts > updateProjectStatus` for the canonical pattern.

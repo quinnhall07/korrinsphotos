@@ -4,7 +4,12 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "@/components/ui/Toaster";
-import { updateProjectStatus, updateProjectDetails, archiveProject } from "../actions";
+import {
+  updateProjectStatus,
+  updateProjectDetails,
+  archiveProject,
+  regenerateWelcomePacket,
+} from "../actions";
 import { createDraftContract, sendContract } from "../contract-actions";
 import { sendInvoice, markInvoicePaidManually } from "../invoice-actions";
 import { sendProjectMessage } from "../message-actions";
@@ -640,6 +645,8 @@ function OverviewTab({
 
       <QuestionnaireBlock projectId={project.id} questionnaires={questionnaires} />
 
+      <WelcomePacketBlock projectId={project.id} />
+
       <div style={{ display: "flex", gap: "1.5rem", fontSize: "0.8rem", color: "var(--charcoal-muted)", flexWrap: "wrap" }}>
         <span>Status changes: <strong style={{ color: "var(--charcoal)" }}>{project.statusHistory.length}</strong></span>
         <span>Last contacted: <strong style={{ color: "var(--charcoal)" }}>{fmtDate(project.lastContactedAt)}</strong></span>
@@ -734,6 +741,65 @@ function QuestionnaireBlock({
               ? "Submitted"
               : "Resend"
             : "Send"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Welcome packet block (rendered inside Overview tab) ─────────────────────
+
+function WelcomePacketBlock({ projectId }: { projectId: string }) {
+  const [isPending, startTransition] = useTransition();
+
+  const handleRegenerate = () => {
+    startTransition(async () => {
+      const res = await regenerateWelcomePacket(projectId);
+      if (res.success && res.url) {
+        toast("Welcome packet regenerated");
+        // Best-effort clipboard copy so the admin can paste the fresh link
+        // straight into a manual message if they want.
+        try {
+          await navigator.clipboard?.writeText(res.url);
+        } catch {
+          /* no-op */
+        }
+      } else {
+        toast(res.error ?? "Failed to regenerate");
+      }
+    });
+  };
+
+  return (
+    <div
+      style={{
+        marginBottom: "1.5rem",
+        border: "0.5px solid var(--border)",
+        padding: "1rem 1.1rem",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: "0.75rem",
+          flexWrap: "wrap",
+        }}
+      >
+        <div>
+          <p style={{ ...EYEBROW, margin: "0 0 0.3rem 0" }}>Welcome packet</p>
+          <p style={{ margin: 0, fontSize: "0.82rem", color: "var(--charcoal-muted)" }}>
+            Mints a fresh read link. Old links stop working.
+          </p>
+        </div>
+        <button
+          type="button"
+          style={BTN_GHOST}
+          onClick={handleRegenerate}
+          disabled={isPending}
+        >
+          {isPending ? "Generating…" : "Regenerate"}
         </button>
       </div>
     </div>
@@ -1046,6 +1112,62 @@ function ContractTab({ projectId, contract }: { projectId: string; contract: Ser
 
 // ─── Invoice tab ──────────────────────────────────────────────────────────────
 
+// Phase 3.12: render refund / dispute state as small badges under the invoice
+// amount. Red accent for disputes, gray for refunds. Compact on purpose — the
+// finance dashboard (Phase 3.1) will surface the full ledger.
+function LedgerBadges({ inv }: { inv: SerialInvoice }) {
+  const badges: { label: string; tone: "refund" | "dispute" }[] = [];
+
+  if (inv.disputeStatus && inv.disputeStatus !== "NONE") {
+    const closed = !!inv.disputeClosedAt;
+    const tone: "refund" | "dispute" = inv.disputeStatus === "WON" ? "refund" : "dispute";
+    const prefix = closed ? "Dispute" : "Dispute open";
+    const amount =
+      typeof inv.disputeAmountCents === "number"
+        ? ` ${fmtUSDCents(inv.disputeAmountCents)}`
+        : "";
+    badges.push({
+      label: `${prefix}: ${inv.disputeStatus.replace(/_/g, " ").toLowerCase()}${amount}`,
+      tone,
+    });
+  }
+
+  if (typeof inv.refundCents === "number" && inv.refundCents > 0) {
+    const reason = inv.refundReason ? ` (${inv.refundReason})` : "";
+    badges.push({
+      label: `Refunded ${fmtUSDCents(inv.refundCents)}${reason}`,
+      tone: "refund",
+    });
+  }
+
+  if (badges.length === 0) return null;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem", marginTop: "0.4rem" }}>
+      {badges.map((b, idx) => {
+        const isDispute = b.tone === "dispute";
+        const style: React.CSSProperties = {
+          display: "inline-block",
+          padding: "0.15rem 0.45rem",
+          fontSize: "0.6rem",
+          letterSpacing: "0.08em",
+          textTransform: "uppercase",
+          border: `0.5px solid ${isDispute ? "rgba(176, 50, 50, 0.6)" : "rgba(42,42,40,0.3)"}`,
+          color: isDispute ? "#b03232" : "var(--charcoal-light)",
+          background: isDispute ? "rgba(176, 50, 50, 0.06)" : "rgba(42,42,40,0.04)",
+          fontWeight: 500,
+          width: "fit-content",
+        };
+        return (
+          <span key={idx} style={style}>
+            {b.label}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 function InvoiceTab({ invoices }: { invoices: SerialInvoice[] }) {
   const router = useRouter();
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -1103,6 +1225,7 @@ function InvoiceTab({ invoices }: { invoices: SerialInvoice[] }) {
                 <p style={{ margin: "0.2rem 0 0 0", fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", fontWeight: 300 }}>
                   {fmtUSDCents(inv.amountCents)}
                 </p>
+                <LedgerBadges inv={inv} />
               </div>
               <div style={{ fontSize: "0.8rem", color: "var(--charcoal-light)" }}>
                 <Row label="Status" value={inv.status} />

@@ -83,15 +83,6 @@ const NAV = [
     group: "Clients",
     items: [
       {
-        label: "Booking Inquiries",
-        href: "/admin/bookings",
-        icon: (
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
-            <path d="M2 4h12M2 8h12M2 12h7" />
-          </svg>
-        ),
-      },
-      {
         label: "Segments",
         href: "/admin/segments",
         icon: (

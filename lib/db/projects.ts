@@ -85,6 +85,13 @@ export interface ProjectDoc {
   clientNpsAt?: Timestamp;
   weatherSnapshot?: WeatherSnapshot;
   shootBriefR2Key?: string;
+  /** Phase 2.7 welcome packet — set by `lib/domain/welcome-packet.ts`. */
+  welcomePacketR2Key?: string;
+  welcomePacketGeneratedAt?: Timestamp;
+  /** 32-char hex token. Re-minted on each regeneration. The public read
+   *  route checks `?t=<token>` against this; expiry is enforced by the R2
+   *  presigned-URL lifetime. */
+  welcomePacketToken?: string;
 }
 
 export interface MessageDoc {

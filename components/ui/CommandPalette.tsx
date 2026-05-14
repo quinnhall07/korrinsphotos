@@ -34,16 +34,16 @@ const STATIC_COMMANDS: PaletteItem[] = [
   { id: "cmd-create-project", kind: "command", label: "Create project",       href: "/admin/projects?new=1" },
   { id: "cmd-send-invoice",   kind: "command", label: "Send invoice",         href: "/admin/projects" },
   { id: "cmd-pipeline",       kind: "command", label: "Go to pipeline",       href: "/admin/projects" },
-  { id: "cmd-inbox",          kind: "command", label: "Go to inbox",          href: "/admin/bookings" },
+  { id: "cmd-inbox",          kind: "command", label: "Go to inbox",          href: "/admin/inbox" },
   { id: "cmd-settings",       kind: "command", label: "Open admin settings",  href: "/admin/users" },
 ];
 
 // Mirrors AdminSidebar's NAV table. Kept in sync manually — small surface.
 const NAV_ITEMS: PaletteItem[] = [
   { id: "nav-dashboard", kind: "nav", label: "Dashboard",         href: "/admin" },
+  { id: "nav-inbox",     kind: "nav", label: "Inbox",             href: "/admin/inbox" },
   { id: "nav-pipeline",  kind: "nav", label: "Pipeline",          href: "/admin/projects" },
   { id: "nav-events",    kind: "nav", label: "Events",            href: "/admin/events" },
-  { id: "nav-bookings",  kind: "nav", label: "Booking Inquiries", href: "/admin/bookings" },
   { id: "nav-users",     kind: "nav", label: "Users",             href: "/admin/users" },
 ];
 

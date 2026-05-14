@@ -1,9 +1,15 @@
 // app/booking/page.tsx
 // Booking inquiry page. The form is a 3-step Client Component that submits
 // via the `submitBooking` Server Action (no API route involved).
+//
+// Accepts an optional `?package=mini|story|day` query param coming from the
+// /investment page CTAs; the param is resolved server-side against
+// INVESTMENT_PACKAGES and the matching sessionType is threaded into the
+// form as `initialSessionType` so the relevant tile is pre-selected.
 
 import type { Metadata } from "next";
 import { BookingFormSteps } from "./BookingFormSteps";
+import { findPackageById } from "@/app/investment/packages";
 
 export const metadata: Metadata = {
   title: "Booking",
@@ -11,7 +17,14 @@ export const metadata: Metadata = {
     "Book a photography session — weddings, portraits, editorial, and more.",
 };
 
-export default function BookingPage() {
+export default async function BookingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ package?: string }>;
+}) {
+  const { package: packageParam } = await searchParams;
+  const initialSessionType = findPackageById(packageParam)?.sessionType ?? null;
+
   return (
     <div style={{ paddingTop: "72px" }} className="page-fade-in">
       <div
@@ -83,7 +96,7 @@ export default function BookingPage() {
             discuss availability and details.
           </p>
 
-          <BookingFormSteps />
+          <BookingFormSteps initialSessionType={initialSessionType} />
         </div>
       </div>
     </div>

@@ -4,6 +4,8 @@ import { ProjectStatus } from "./db/projects";
 import { listSequencesByStatusTrigger } from "./db/sequences";
 import { enrollInSequence } from "./db/sequence-enrollments";
 import { applyReferralAttribution } from "./domain/referrals";
+import { generateAndUploadWelcomePacket } from "./domain/welcome-packet";
+import { addProjectMessage } from "./db/projects";
 import {
   getEffectiveAutomationConfig,
   isRecipeEnabled,
@@ -206,18 +208,55 @@ async function onProjectBooked(
     });
   }
 
-  // 4b. Auto-send welcome packet — placeholder body until the PDF
-  // generator lands; toggle controls whether we send at all.
+  // 4b. Auto-send welcome packet (Phase 2.7).
+  // The generator renders a personalized HTML packet, uploads it to R2,
+  // and stamps a read token on the project doc. We then email the client
+  // a link to the public read route (`/welcome-packet/{projectId}?t=...`).
+  // Wrapped in try/catch so a packet failure cannot abort the rest of the
+  // BOOKED hook (event creation, access grant, invoice, etc.).
   if (isRecipeEnabled(automationConfig, "auto_send_welcome_packet")) {
-    await enqueueTrackedMail({
-      to: client.email,
-      subject: `Welcome — your ${project.sessionType} prep guide`,
-      html: `<p>Hi ${client.firstName ?? ""},</p><p>Here's everything you need to prep for our shoot. (Welcome packet PDF coming soon.)</p>`,
-      text: `Hi ${client.firstName ?? ""}, here's everything you need to prep for our shoot. (Welcome packet PDF coming soon.)`,
-      recipientClientId: project.clientId,
-      projectId,
-      sendKind: "welcome-packet",
-    });
+    try {
+      const { token } = await generateAndUploadWelcomePacket(projectId);
+      const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "");
+      const packetUrl = `${appUrl}/welcome-packet/${projectId}?t=${token}`;
+      const firstName = (client.firstName ?? "").trim() || "there";
+      await enqueueTrackedMail({
+        to: client.email,
+        subject: `Your welcome packet is ready, ${firstName}`,
+        html:
+          `<p>Hi ${firstName},</p>` +
+          `<p>Your welcome packet is ready — it has shoot logistics, prep tips, and what to expect next.</p>` +
+          `<p><a href="${packetUrl}">View your welcome packet</a></p>` +
+          `<p style="color:#8A8A85;font-size:0.85rem;margin-top:2rem;">— Korrin's Photography</p>`,
+        text: `Hi ${firstName}, your welcome packet is ready: ${packetUrl}`,
+        recipientClientId: project.clientId,
+        projectId,
+        sendKind: "welcome-packet",
+      });
+
+      // Append an OUTBOUND auto-message so the admin sees the touch in the
+      // project's conversation history. Best-effort.
+      try {
+        await addProjectMessage(projectId, {
+          direction: "OUTBOUND",
+          channel: "EMAIL",
+          subject: `Your welcome packet is ready, ${firstName}`,
+          body: `Sent automated welcome packet email to ${client.email}.`,
+          isAutomatic: true,
+        });
+      } catch (msgErr) {
+        console.error("[onProjectBooked] welcome packet message log failed", {
+          projectId,
+          err: msgErr,
+        });
+      }
+    } catch (err) {
+      console.error("[onProjectBooked] welcome packet generation failed", {
+        projectId,
+        clientId: project.clientId,
+        err,
+      });
+    }
   }
 
   // 5. Create balance invoice — gated. Roadmap (§1.9) targets

@@ -1,6 +1,6 @@
 # CLAUDE.md — /admin/projects
 
-> **Master state machine.** This is the canonical pipeline. `/admin/bookings` is legacy. New CRM behaviour belongs here.
+> **Master state machine.** This is the canonical pipeline workspace. The legacy `/admin/bookings` Kanban has been retired (May 2026); all CRM behaviour lives here.
 
 Canonical schema reference: `docs/architecture/unified-client-lifecycle.md`.
 Root conventions: see root CLAUDE.md > "Critical Architecture Rules".
@@ -41,7 +41,7 @@ A Project always points at exactly one `clients/{clientId}` doc (universal recor
 | `BOOKED` | `onProjectBooked` — auto-creates `events/{id}`, grants `eventAccess`, increments `clients/{id}.totalSessionsBooked`, queues questionnaire email, creates DRAFT balance invoice |
 | `GALLERY_DELIVERED` | `onGalleryDelivered` — schedules `SEND_REFERRAL` task in `scheduledTasks` for +7 days |
 
-**Never duplicate these side effects.** The Stripe webhook at `app/api/webhooks/stripe/route.ts` is the *only* other writer of project status — it advances `DEPOSIT_PENDING → BOOKED` and `IN_EDITING → GALLERY_DELIVERED` on paid invoices, and it goes through `handleProjectTransition` too. Adding a third writer (or skipping the transition hook) will leak invoices / events / referral tasks.
+**Never duplicate these side effects.** The Stripe webhook at `app/api/webhooks/stripe/route.ts` is the *only* other writer of project status — it advances `DEPOSIT_PENDING → BOOKED` and `IN_EDITING → GALLERY_DELIVERED` on paid invoices, and it goes through `handleProjectTransition` too. Adding a third writer (or skipping the transition hook) will leak invoices / events / referral tasks. `bulkArchiveProjects` and `archiveProject` are the deliberate exceptions — archive is a terminal off-ramp with no lifecycle side effects, so they skip the hook on purpose.
 
 ## Sibling Action Files
 
@@ -55,7 +55,7 @@ invoice-actions.ts   sendInvoice  (creates Stripe Payment Link, marks invoice SE
 
 ## Project Detail Page
 
-`[id]/page.tsx` is currently a thin scaffold — header, client sidebar, single "Overview" panel. Tabs (Messages, Contract, Invoice, Gallery, Timeline) are stubbed but not yet implemented; the "Advance Status" / "Send Email" header buttons are not wired. Extending this page is expected work — keep the `await requireAdmin()` call as the first line of the Server Component and pass serialised props to any new client tabs.
+`[id]/page.tsx` hydrates a Server Component fan-out (`projects`, `clients`, `messages`, `invoices`, `contracts`, `events`, `questionnaires`, `reviews`, `emailEvents`) and serialises everything into `ProjectWorkspaceClient`. The workspace renders eight tabs: Overview, Messages, Contract, Invoice, Gallery, Timeline, Files, Notes — plus the header's "Advance Status" modal, "Send Email" jump-to-tab, and "Archive" button. All mutations route through Server Actions in this directory (`actions.ts`, `contract-actions.ts`, `invoice-actions.ts`, `message-actions.ts`). Keep `await requireAdmin()` as the first line of any new Server Action or Server Component and pass serialised props to any new client tabs.
 
 ## Gotchas
 

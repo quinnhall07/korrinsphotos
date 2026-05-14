@@ -14,10 +14,11 @@ export const dynamic = "force-dynamic";
 type Props = { params: Promise<{ id: string }> };
 
 /**
- * Next-best-action hint per status. Pure mapping — exported so other code
- * (Kanban cards, inbox, etc.) can render the same chip if needed.
+ * Next-best-action hint per status. Pure mapping. Kept local — Next.js 16
+ * disallows non-page exports from a route file. If another surface needs
+ * the same chip, lift this into a shared helper module.
  */
-export function getNextBestAction(status: ProjectStatus | string): string {
+function getNextBestAction(status: ProjectStatus | string): string {
   switch (status) {
     case "SITE_VISIT":
       return "Confirm site visit";
@@ -159,6 +160,16 @@ export type SerialInvoice = {
   sentAt: string | null;
   stripePaymentLinkUrl: string | null;
   createdAt: string | null;
+
+  // Refund / dispute ledger (Phase 3.12)
+  refundCents: number | null;
+  refundReason: string | null;
+  refundedAt: string | null;
+  disputeStatus: string | null;
+  disputeReason: string | null;
+  disputeAmountCents: number | null;
+  disputeOpenedAt: string | null;
+  disputeClosedAt: string | null;
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -322,6 +333,15 @@ export default async function ProjectDetailPage({ params }: Props) {
         sentAt: ts(i.sentAt),
         stripePaymentLinkUrl: i.stripePaymentLinkUrl ?? null,
         createdAt: ts(i.createdAt),
+        refundCents: typeof i.refundCents === "number" ? i.refundCents : null,
+        refundReason: typeof i.refundReason === "string" ? i.refundReason : null,
+        refundedAt: ts(i.refundedAt),
+        disputeStatus: typeof i.disputeStatus === "string" ? i.disputeStatus : null,
+        disputeReason: typeof i.disputeReason === "string" ? i.disputeReason : null,
+        disputeAmountCents:
+          typeof i.disputeAmountCents === "number" ? i.disputeAmountCents : null,
+        disputeOpenedAt: ts(i.disputeOpenedAt),
+        disputeClosedAt: ts(i.disputeClosedAt),
       };
     })
     // Order: DEPOSIT first, then BALANCE, then FULL, then by createdAt

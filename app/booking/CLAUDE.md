@@ -6,27 +6,20 @@ the `submitBooking` Server Action. No API route is involved.
 
 ---
 
-## `submitBooking` — Coupled Four-Write Transaction
+## `submitBooking` — Unified Write Sequence
 
-`actions.ts` → `submitBooking(formData)` runs four sequential writes. All four
-MUST stay coupled until the dual-write migration is complete. Order matters.
+`actions.ts` → `submitBooking(formData)` runs sequentially. Order matters.
 
-| Step | Collection | Purpose |
+| Step | Target | Purpose |
 |---|---|---|
 | 1 | `clients/{clientId}` | Find by email or create new; stamps first-touch attribution |
 | 2 | `projects/{projectId}` | New `INQUIRY` project with `clientId`, `leadScore`, `tags` |
 | 3 | `projects/{projectId}/messages/{id}` | First INBOUND message containing the inquiry body |
-| 4 | `bookingInquiries/{id}` | **Temporary Migration Step** — legacy doc for `/admin/bookings` |
+| 4 | `inboxItems` | `createInboxItem(...)` (best-effort) so `/admin/inbox` surfaces the new lead |
+| 5 | `activityFeed` | `logActivity("LEAD_RECEIVED", …)` (best-effort) |
+| 6 | `mail/` via `enqueueTrackedMail` | Tracked auto-responder (open/click counters land on the project) |
 
-Step 4 is flagged in-code with `// 4. (Temporary Migration Step)`. That is
-the **last line to delete** when retiring the legacy collection. Until then:
-**if you change one side of the dual write, mirror the change on the other.**
-The Kanban reads only from `bookingInquiries`; the projects pipeline reads
-only from `projects`. Drift surfaces as bugs visible in only one admin page.
-
-After step 4: `logActivity("LEAD_RECEIVED", …)` (best-effort) and a `mail/{id}`
-write picked up by the Firebase Trigger Email extension to send the
-auto-responder (`buildAutoResponderHtml`).
+The legacy `bookingInquiries` write was retired May 2026 — do not reintroduce it.
 
 ---
 
@@ -54,10 +47,10 @@ is immutable.
 ## Lead Scoring + Auto-Tagging
 
 `calculateLeadScore()` from `@/lib/lead-scoring` runs **at write time**, after
-tags are computed and before steps 2 + 4, so both copies persist the same
-score. See `DECISION.md` ADR-008. The function is typed against
-`BookingInquiryDoc`; pass a compatible subset (`sessionType`, `message`,
-`preferredDate`, `tags`).
+tags are computed and before step 2, so the project doc persists the score.
+See `DECISION.md` ADR-008. The function uses the structural `LeadScoreInput`
+shape — pass a compatible subset (`sessionType`, `message`, `preferredDate`,
+`tags`).
 
 Auto-tags applied inline:
 

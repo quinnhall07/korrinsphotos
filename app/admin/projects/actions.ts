@@ -6,6 +6,7 @@ import { requireAdmin } from "@/lib/session";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { ProjectStatus, StatusHistoryEntry } from "@/lib/db/projects";
 import { handleProjectTransition } from "@/lib/project-transitions";
+import { generateAndUploadWelcomePacket } from "@/lib/domain/welcome-packet";
 import { logActivity } from "@/lib/db/activity";
 import {
   createSavedView,
@@ -74,6 +75,27 @@ export async function updateProjectDetails(
   } catch (err) {
     console.error(err);
     return { success: false, error: "Failed to update project" };
+  }
+}
+
+/**
+ * Phase 2.7 — regenerate the welcome packet HTML and re-upload to R2.
+ * Re-mints the read token (so any previously-sent links stop working).
+ * Returns the new shareable URL so the admin can copy it directly.
+ */
+export async function regenerateWelcomePacket(
+  projectId: string
+): Promise<{ success: boolean; url?: string; error?: string }> {
+  await requireAdmin();
+  try {
+    const { token } = await generateAndUploadWelcomePacket(projectId);
+    const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "");
+    const url = `${appUrl}/welcome-packet/${projectId}?t=${token}`;
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true, url };
+  } catch (err) {
+    console.error("[regenerateWelcomePacket] failed", { projectId, err });
+    return { success: false, error: "Failed to regenerate welcome packet." };
   }
 }
 

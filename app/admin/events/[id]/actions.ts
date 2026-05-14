@@ -110,8 +110,10 @@ export async function updateEventStatus(
     updatedAt: FieldValue.serverTimestamp(),
   });
 
-  // If marked terminal (COMPLETED/DELIVERED/ARCHIVED) and linked to a booking,
-  // close the booking out.
+  // Legacy: events linked to a historical bookingInquiry (pre-Project model)
+  // get their booking doc archived when the event hits a terminal status.
+  // The /admin/bookings UI no longer exists, but the field is still read by
+  // any old scripts/reports until the historical collection is migrated.
   const TERMINAL_FOR_BOOKING: ReadonlySet<EventStatus> = new Set([
     "COMPLETED",
     "DELIVERED",
@@ -119,14 +121,13 @@ export async function updateEventStatus(
   ]);
   if (TERMINAL_FOR_BOOKING.has(status) && eventData?.bookingId) {
     await adminDb.collection("bookingInquiries").doc(eventData.bookingId).update({
-      status: "ARCHIVED", // legacy bookingInquiries terminal status
+      status: "ARCHIVED",
       updatedAt: FieldValue.serverTimestamp(),
     });
   }
 
   revalidatePath(`/admin/events/${eventId}`);
   revalidatePath("/admin/events");
-  revalidatePath("/admin/bookings");
   return { success: true };
 }
 

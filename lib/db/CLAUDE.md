@@ -60,7 +60,6 @@ NEVER reintroduce a `lib/firestore.ts` (or `lib/db/index.ts`) that re-exports ev
 | File | Collection | One-liner |
 |---|---|---|
 | `activity.ts` | `activityFeed` | Append-only feed for admin dashboard; `logActivity` + `listRecentActivity`. |
-| `bookings.ts` | `bookingInquiries` | Legacy CRM lead doc. Read by `/admin/bookings` Kanban. Re-exports `LeadStatus`/`LeadSource`/`CommunicationChannel` from `lib/booking-kanban`. |
 | `clients.ts` | `clients` | Universal Client record (email = unique). Includes referral + first-touch attribution fields. `generateReferralCode()` lives here. |
 | `contracts.ts` | `contracts` | Per-project signed agreements; `DRAFT|SENT|SIGNED|VOIDED`. |
 | `event-access.ts` | `eventAccess` | Per-client gallery access grants. Composite ID `${eventId}_${userId}`. |

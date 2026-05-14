@@ -43,13 +43,13 @@ async function getDashboardData(): Promise<DashboardData> {
     adminDb.collection("events").count().get(),
     adminDb.collectionGroup("photos").count().get(),
     adminDb
-      .collection("bookingInquiries")
-      .where("status", "==", "PENDING")
+      .collection("projects")
+      .where("status", "==", "INQUIRY")
       .count()
       .get(),
     adminDb.collection("users").where("role", "==", "CLIENT").count().get(),
     adminDb
-      .collection("bookingInquiries")
+      .collection("projects")
       .orderBy("createdAt", "desc")
       .limit(5)
       .get(),
@@ -89,22 +89,36 @@ async function getDashboardData(): Promise<DashboardData> {
     })
   );
 
-  const recentInquiries = recentInquiriesSnap.docs.map((doc) => {
-    const data = doc.data();
-    return {
-      id: doc.id,
-      name: `${data.firstName} ${data.lastName}`,
-      sessionType: data.sessionType as string,
-      preferredDate: data.preferredDate
-        ? data.preferredDate.toDate().toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          })
-        : null,
-      status: data.status as string,
-    };
-  });
+  // Hydrate client names for the recent projects list. Best-effort: a missing
+  // client doc falls back to "—" without breaking the dashboard.
+  const recentInquiries = await Promise.all(
+    recentInquiriesSnap.docs.map(async (doc) => {
+      const data = doc.data();
+      let name = "—";
+      if (data.clientId) {
+        try {
+          const clientSnap = await adminDb.collection("clients").doc(data.clientId).get();
+          const c = clientSnap.data();
+          if (c) name = `${c.firstName ?? ""} ${c.lastName ?? ""}`.trim() || c.email || "—";
+        } catch {
+          /* swallow */
+        }
+      }
+      return {
+        id: doc.id,
+        name,
+        sessionType: (data.sessionType as string) ?? "—",
+        preferredDate: data.shootDate?.toDate
+          ? data.shootDate.toDate().toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            })
+          : null,
+        status: (data.status as string) ?? "INQUIRY",
+      };
+    })
+  );
 
   return {
     activeEventsCount: eventsCountSnap.data().count,
@@ -116,13 +130,23 @@ async function getDashboardData(): Promise<DashboardData> {
   };
 }
 
+// ProjectStatus badge colours used on the dashboard recent-projects table.
 const STATUS_STYLES: Record<string, React.CSSProperties> = {
-  PENDING:       { background: "#FEF3C7", color: "#92400E" },
-  QUALIFIED:     { background: "#E0E7FF", color: "#3730A3" },
-  SENT_PROPOSAL: { background: "#DBEAFE", color: "#1D4ED8" },
-  CONTRACT_SENT: { background: "#FED7AA", color: "#9A3412" },
-  BOOKED:        { background: "#D1FAE5", color: "#065F46" },
-  ARCHIVED:      { background: "rgba(42,42,40,0.06)", color: "var(--charcoal-muted)" },
+  SITE_VISIT:        { background: "#FEF3C7", color: "#92400E" },
+  INQUIRY:           { background: "#FEF3C7", color: "#92400E" },
+  QUALIFYING:        { background: "#E0E7FF", color: "#3730A3" },
+  PROPOSAL_SENT:     { background: "#DBEAFE", color: "#1D4ED8" },
+  NEGOTIATING:       { background: "#E0E7FF", color: "#3730A3" },
+  CONTRACT_SENT:     { background: "#FED7AA", color: "#9A3412" },
+  DEPOSIT_PENDING:   { background: "#FEE2E2", color: "#991B1B" },
+  BOOKED:            { background: "#D1FAE5", color: "#065F46" },
+  SHOOT_READY:       { background: "#CCFBF1", color: "#0F766E" },
+  IN_EDITING:        { background: "#E0E7FF", color: "#3730A3" },
+  GALLERY_DELIVERED: { background: "#F3E8FF", color: "#6B21A8" },
+  REFERRAL_SENT:     { background: "#F3E8FF", color: "#6B21A8" },
+  COMPLETED:         { background: "#F1F5F9", color: "var(--charcoal)" },
+  LOST:              { background: "rgba(42,42,40,0.06)", color: "var(--charcoal-muted)" },
+  ARCHIVED:          { background: "rgba(42,42,40,0.06)", color: "var(--charcoal-muted)" },
 };
 
 const ACTIVITY_ICONS: Record<string, string> = {
@@ -223,7 +247,7 @@ export default async function AdminDashboard() {
             note:
               pendingInquiriesCount > 0 ? "Needs attention" : "All caught up",
             noteColor: pendingInquiriesCount > 0 ? "#B45309" : "var(--olive)",
-            href: "/admin/bookings",
+            href: "/admin/projects",
           },
           {
             label: "Active Clients",
@@ -313,9 +337,9 @@ export default async function AdminDashboard() {
                 fontWeight: 500,
               }}
             >
-              Recent Booking Inquiries
+              Recent Inquiries
             </span>
-            <Link href="/admin/bookings" style={btnOutlineDark}>
+            <Link href="/admin/projects" style={btnOutlineDark}>
               View All
             </Link>
           </div>
@@ -372,7 +396,7 @@ export default async function AdminDashboard() {
                       </span>
                     </td>
                     <td style={tdStyle}>
-                      <Link href="/admin/bookings" style={btnOutlineDark}>
+                      <Link href={`/admin/projects/${inq.id}`} style={btnOutlineDark}>
                         Review
                       </Link>
                     </td>

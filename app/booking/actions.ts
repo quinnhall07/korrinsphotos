@@ -13,7 +13,6 @@ import { calculateLeadScore } from "@/lib/lead-scoring";
 import { logActivity } from "@/lib/db/activity";
 import { createInboxItem } from "@/lib/db/inbox";
 import { enqueueTrackedMail } from "@/lib/email/tracking";
-import type { LeadStatus } from "@/lib/booking-kanban";
 
 const BookingSchema = z.object({
   firstName:     z.string().min(1, "First name is required").max(100),
@@ -76,37 +75,6 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
   const origin = originStr ? JSON.parse(originStr) : {};
 
   try {
-    const initialStatus: LeadStatus = "PENDING";
-
-    // Build initial pipeline data so the lead lands directly on the Kanban board.
-    const inquiryData = {
-      firstName,
-      lastName,
-      email,
-      sessionType,
-      preferredDate: effectivePreferredDate ? new Date(effectivePreferredDate) : null,
-      message,
-      status:    initialStatus,
-      notes:     "",
-      pricing:   null,
-      leadSource: "WEBSITE" as const,
-      estimatedValue: null,
-      followUpDate: null,
-      lastContactedAt: null,
-      lastRespondedAt: null,
-      tags:      [] as string[],
-      communicationLog: [] as unknown[],
-      // Optional multi-step extensions — null when not collected.
-      phone:           phone ?? null,
-      referralSource:  referralSource ?? null,
-      locationLabel:   locationLabel ?? null,
-      locationDetail:  locationDetail ?? null,
-      moodTag:         moodTag ?? null,
-      preferredMonth:  preferredMonth ?? null,
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    };
-
     // ── Automatic tagging heuristics ──────────────────────────────────────────
     const autoTags: string[] = [sessionType]; // Automatically tag the session type
 
@@ -149,9 +117,6 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
     if (!effectivePreferredDate) {
       autoTags.push("Needs Follow-Up");
     }
-
-    // Apply auto-tags to inquiry data
-    inquiryData.tags = autoTags;
 
     // Calculate initial lead score (with tags applied so they influence score)
     const leadScore = calculateLeadScore({
@@ -277,13 +242,7 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
       isAutomatic: false,
     });
 
-    // 4. (Temporary Migration Step) Keep writing to bookingInquiries so current Admin Dashboard doesn't break until Phase 2 is complete.
-    const docRef = await adminDb.collection("bookingInquiries").add({
-      ...inquiryData,
-      leadScore,
-    });
-
-    // 5. Surface in the unified admin inbox (best-effort — must not break submission).
+    // 4. Surface in the unified admin inbox (best-effort — must not break submission).
     await createInboxItem({
       type: "INQUIRY_RECEIVED",
       projectId,
@@ -298,7 +257,7 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
     await logActivity(
       "LEAD_RECEIVED",
       `New ${sessionType.toLowerCase()} inquiry from ${firstName} ${lastName}`,
-      { inquiryId: docRef.id, projectId: projectId, sessionType, email }
+      { projectId, sessionType, email }
     ).catch(() => {});
 
     // Auto-responder: route through the tracked-mail wrapper so we see

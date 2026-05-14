@@ -111,8 +111,8 @@ export const AUTOMATION_RECIPES: AutomationRecipe[] = [
     key: "auto_send_welcome_packet",
     label: "Auto-send welcome packet",
     description:
-      "Sends the welcome packet (logistics + style guide PDF) when a project enters BOOKED. Currently a placeholder until the PDF generator ships — toggle still controls whether it fires.",
-    defaultEnabled: false,
+      "Generates a personalized welcome packet (logistics, prep tips, what's next) on BOOKED, stores it in R2, and emails the client a link to view it.",
+    defaultEnabled: true,
   },
   {
     key: "sneak_peek_drop_hours",

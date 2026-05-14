@@ -9,9 +9,9 @@
 //   Step 3 — Contact details + referral source + soft commitment checkbox.
 //
 // On submit, all fields are forwarded to the existing `submitBooking`
-// Server Action via FormData. Dual-write semantics (clients + projects +
-// bookingInquiries) are preserved server-side — this component does not
-// touch the DB directly.
+// Server Action via FormData. Persistence (clients + projects + first
+// inbound message + inbox item + auto-responder) is handled server-side —
+// this component does not touch the DB directly.
 //
 // Persistence: progress is mirrored to localStorage under
 // `korrin-booking-draft` on every change. Cleared on successful submit.
@@ -232,7 +232,17 @@ function buildMonthOptions(): { value: string; label: string }[] {
 
 // ─── Component ─────────────────────────────────────────────────────────────
 
-export function BookingFormSteps() {
+export function BookingFormSteps({
+  initialSessionType = null,
+}: {
+  /**
+   * Optional pre-selected session type. Sourced from /investment via
+   * `?package=mini|story|day` and resolved server-side. When present we
+   * override whatever the local draft says so the visitor lands on the form
+   * with the relevant tile already selected.
+   */
+  initialSessionType?: SessionType | null;
+} = {}) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [hydrated, setHydrated] = useState(false);
@@ -243,11 +253,17 @@ export function BookingFormSteps() {
   const monthOptions = useMemo(() => buildMonthOptions(), []);
   const topRef = useRef<HTMLDivElement | null>(null);
 
-  // Rehydrate from localStorage on mount.
+  // Rehydrate from localStorage on mount. If a `?package=` arrived from
+  // /investment, overlay its sessionType on top of the rehydrated draft.
   useEffect(() => {
-    setDraft(loadDraft());
+    const loaded = loadDraft();
+    setDraft(
+      initialSessionType
+        ? { ...loaded, sessionType: initialSessionType }
+        : loaded,
+    );
     setHydrated(true);
-  }, []);
+  }, [initialSessionType]);
 
   // Persist on every change, but only after hydration so we don't overwrite
   // existing draft with the empty default on first render.
