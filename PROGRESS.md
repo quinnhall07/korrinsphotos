@@ -1,26 +1,26 @@
 # PROGRESS.md — Korrin's Photos
 
-> Last updated: 2026-05-14 (post-Wave-8)
+> Last updated: 2026-05-14 (post-Wave-11)
 > Source of truth for "what state is the codebase actually in." Update on feature completion, bug discovery/fix, or task abandonment.
 
 ---
 
 ## Overall Status
 
-Single unified Client/Project pipeline is the canonical surface; the legacy `bookingInquiries` Kanban + `/admin/bookings` directory have been fully retired (May 2026). Phase 0 cleanup, Phase 1 CRM, the questionnaire/welcome-packet/NPS/review-request loop, the sequence engine (4.2), tiered referrals (4.4), email open/click tracking (1.6), JSON-LD schema (4.12), Stripe refund + dispute ledger (3.12), PWA install (1.10), Firestore Security Rules + firebase.json, public `/investment` (2.3), Phase 2.4 client portal `/portal/[projectId]`, Phase 2.5 gallery favorites, Phase 2.6 gallery polish (slideshow + swipe + PIN + resolution tiers), Phase 2.8 day-of-shoot timeline, Phase 3.1 finance dashboard, Phase 3.2 tax/expenses, Phase 3.4 shoot-brief auto-generator, Phase 3.5 location scouting, Phase 3.6 weather + golden-hour persistence, Phase 3.7 gear checklist, Phase 3.8 vendor CRM, Phase 3.9 COI request workflow, Phase 3.10 compliance dashboard, Phase 3.11 sales tax engine, Phase 3.13 editing-workflow tracker, Phase 3.14 capacity heatmap, Phase 4.1 lead magnets, Phase 4.3 segments + broadcast composer, Phase 4.5 referral chain viz, Phase 4.7 press tracker + backlink monitor, Phase 4.8 journal auto-drafter + public `/journal`, Phase 4.9 campaign landing pages at `/c/[slug]`, Phase 13.2 Studio Hours auto-responder, Phase 13.5 Korrin's-picks overlay, Phase 13.6 recurring revenue layer, Phase 13.8 tax-saving calendar, Phase 13.16 far-future-date risk flag, and Phase 13.18 ad-spend / ROAS tracking are all live. Remaining work tracks Phase 2.1/2.2 (multi-step booking + style quiz), the external-dependent Phase 3.3 Google Calendar sync, Phase 5 AI assists beyond draft reply / thread summary (needs `ANTHROPIC_API_KEY`), and the long tail of Phase 6 / Phase 13 "original ideas".
+Wave 11 closes the differentiation-polish backlog. Wave 9 shipped the multi-step booking wizard (2.1), public style quiz (2.2), gallery analytics (13.10), off-the-record notes (13.12), brand voice calibration (13.13), First 100 Clients dashboard (13.15), Commercial Brand Brief auto-attach (13.17), and vendor reciprocity tracking (13.19). Wave 10 added local SEO autopilot (13.7), quiet season planner (13.9), image category + label editing on uploads, /admin/users pagination, an admin-wide global search (`/admin/search`), and resolved the R2 public-URL bug. Wave 11 added the digital products store (4.13), a dedicated `/admin/clients` listing + detail surface, the `/admin/health` operational dashboard, and an `/admin/exports` CSV center. Single unified Client/Project pipeline remains the canonical surface; the legacy `bookingInquiries` Kanban + `/admin/bookings` directory were retired in May 2026. The remaining backlog is now exclusively the external-dependency items (1.5 Gmail, 1.8 scheduler-on-3.3, 3.3 Google Calendar, 4.10 Pinterest, 4.11 Instagram, 5.3-5.10 AI assists needing `ANTHROPIC_API_KEY`) plus the always-optional 13.4 booking-form calendar embed and 13.11 cross-vendor day-of room.
 
 ---
 
 ## Architecture Snapshot
 
-- **Single canonical pipeline.** `clients`, `projects` + `messages` + `gearLog` + `pressSubmissions` + `dayOfTimeline` subcollections, `contracts`, `invoices`, `scheduledTasks` (SEND_REFERRAL | AUTO_FOLLOW_UP | SNEAK_PEEK | SHOOT_BRIEF), `sequences` + `sequenceEnrollments`, `questionnaires` + `questionnaireTemplates`, `gearTemplates`, `reviewRequests`, `inboxItems` (with CLIENT_MESSAGE, RE_ENGAGEMENT_DUE, FAR_FUTURE_RISK, COI_REQUESTED, COI_RECEIVED, SALES_TAX_OVERDUE, PRESS_LINK_DOWN types), `emailEvents`, `paymentIntents` (Stripe mirror), `stripeWebhookEvents` (idempotency), `locations`, `vendors`, `segments`, `broadcasts`, `expenses`, `assets`, `analyticsCache`, `leadMagnets`, `leadMagnetDownloads`, `journalPosts`, `campaigns`, `adSpendEntries`, `dataRequests`, `salesTaxFilings`, plus legacy `events`, `eventAccess`, `mail`, `activityFeed`, `users`. The legacy `bookingInquiries` collection still exists in Firestore but is no longer written to.
+- **Single canonical pipeline.** `clients`, `projects` + `messages` + `gearLog` + `pressSubmissions` + `dayOfTimeline` subcollections, `contracts`, `invoices`, `scheduledTasks` (SEND_REFERRAL | AUTO_FOLLOW_UP | SNEAK_PEEK | SHOOT_BRIEF), `sequences` + `sequenceEnrollments`, `questionnaires` + `questionnaireTemplates`, `gearTemplates`, `reviewRequests`, `inboxItems` (with CLIENT_MESSAGE, RE_ENGAGEMENT_DUE, FAR_FUTURE_RISK, COI_REQUESTED, COI_RECEIVED, SALES_TAX_OVERDUE, PRESS_LINK_DOWN types), `emailEvents`, `paymentIntents` (Stripe mirror), `stripeWebhookEvents` (idempotency), `locations`, `vendors`, `segments`, `broadcasts`, `expenses`, `assets`, `analyticsCache`, `leadMagnets`, `leadMagnetDownloads`, `journalPosts`, `campaigns`, `adSpendEntries`, `dataRequests`, `salesTaxFilings`, `styleProfiles` (Wave-9), `products` + `productPurchases` (Wave-11), plus legacy `events`, `eventAccess`, `mail`, `activityFeed`, `users`. The legacy `bookingInquiries` collection still exists in Firestore but is no longer written to. `users/{uid}.brandVoiceSamples` (Wave-9) holds Korrin's voice anchors for future AI assists.
 - **No more dual-write.** `app/booking/actions.ts → submitBooking` writes `clients` + `projects` + first inbound `messages` entry + activity log + tracked auto-responder. The legacy `bookingInquiries` insert was removed in the May 2026 retirement commit.
 - **`ProjectStatus` is the master state machine** (`SITE_VISIT → INQUIRY → QUALIFYING → PROPOSAL_SENT → NEGOTIATING → CONTRACT_SENT → DEPOSIT_PENDING → BOOKED → SHOOT_READY → IN_EDITING → GALLERY_DELIVERED → REFERRAL_SENT → COMPLETED` with `LOST` / `ARCHIVED`). Every transition runs through `updateProjectStatus → handleProjectTransition` which: resolves the admin's `automationConfig`, fires per-status hooks (`onProjectBooked` / `onProposalSent` / `onContractSent` / `onDepositPending` / `onGalleryDelivered`), enrolls into every active STATUS_CHANGE sequence, and queues recipe-gated `scheduledTasks` (SEND_REFERRAL, AUTO_FOLLOW_UP, SNEAK_PEEK).
 - **Stripe + Cron + tracked mail.** `/api/webhooks/stripe` handles `checkout.session.completed`, `payment_intent.succeeded`, `charge.refunded`, and `charge.dispute.created|updated|closed` with event-level idempotency via `stripeWebhookEvents/{id}`. `/api/cron/run-tasks` drains `scheduledTasks` (SEND_REFERRAL, AUTO_FOLLOW_UP by recipeKey, SNEAK_PEEK), dispatches due review requests, and runs sequence enrollments. Every outbound mail flows through `lib/email/tracking.ts > enqueueTrackedMail` which mints a `sendId`, rewrites external links to `/t/c/{sendId}`, injects a `/t/o/{sendId}` pixel, and writes `emailEvents` rows.
 - **`__origin` UTM cookie writes first-touch attribution.** `middleware.ts` sets a 30-day JS-readable JSON cookie; `submitBooking` stamps `firstTouch{Source,Medium,Campaign,LandingUrl,At}` on the new `clients` doc and resolves `referralCode` to `referredBy` for the tiered referral engine. See ADR-016.
 - **Production security baseline.** `firestore.rules` is in place (default-deny, admin-claim-gated except for owner-scoped reads on `users`/`eventAccess`/`events`); `firebase.json` references it. Client SDK uses Auth only — Firestore reads all go through the server-side Admin SDK.
 - **PWA + JSON-LD.** `public/manifest.webmanifest` + `public/sw.js` (production-only registration via `ServiceWorkerRegister`); admin mobile install prompt with 7-day dismiss cookie. Public pages ship `Photographer` (root), `Service` (portfolio + each investment package), and `BreadcrumbList` JSON-LD.
-- **`lib/db/*` split complete.** Per-collection helpers in `lib/db/{activity,analytics-cache,assets,broadcasts,campaigns,clients,contracts,email-events,events,expenses,gear-log,gear-templates,inbox,invoices,journal-posts,lead-magnet-downloads,lead-magnets,locations,photos,press-submissions,projects,questionnaires,reviews,saved-views,segments,sequences,sequence-enrollments,users,vendors}.ts`. Cross-collection orchestrations in `lib/domain/` (`events.ts`, `referrals.ts`, `reviews.ts`, `ledger.ts`, `welcome-packet.ts`, `analytics.ts`, `shoot-brief.ts`, `weather-snapshots.ts`, `capacity.ts`, `journal-drafter.ts`, `lead-magnets.ts`, `press-backlinks.ts`, `referral-graph.ts`). Broadcast send orchestration in `lib/broadcasts/sender.ts`; segment predicate resolver in `lib/segments/resolver.ts`. Isomorphic editing helpers at `lib/editing-sla.ts` + `lib/editing-status.ts`. `lib/firestore.ts` long gone. See ADR-013.
+- **`lib/db/*` split complete.** Per-collection helpers in `lib/db/{activity,analytics-cache,assets,broadcasts,campaigns,clients,contracts,email-events,events,expenses,gear-log,gear-templates,inbox,invoices,journal-posts,lead-magnet-downloads,lead-magnets,locations,photos,press-submissions,products,projects,questionnaires,reviews,saved-views,segments,sequences,sequence-enrollments,style-profiles,users,vendors}.ts`. Cross-collection orchestrations in `lib/domain/` (`events.ts`, `referrals.ts`, `reviews.ts`, `ledger.ts`, `welcome-packet.ts`, `analytics.ts`, `shoot-brief.ts`, `weather-snapshots.ts`, `capacity.ts`, `journal-drafter.ts`, `lead-magnets.ts`, `press-backlinks.ts`, `referral-graph.ts`, `quiet-season.ts`). Broadcast send orchestration in `lib/broadcasts/sender.ts`; segment predicate resolver in `lib/segments/resolver.ts`. Pure admin search at `lib/admin/search.ts`; CSV export helper at `lib/csv.ts`; static city seeds at `lib/seo/cities.ts`. Isomorphic editing helpers at `lib/editing-sla.ts` + `lib/editing-status.ts`. `lib/firestore.ts` long gone. See ADR-013.
 
 ---
 
@@ -205,52 +205,35 @@ Single unified Client/Project pipeline is the canonical surface; the legacy `boo
 
 ## Missing Features (designed, not built)
 
-### Phase 1 leftovers
+### Phase 1 leftovers (external API blocked)
 - [ ] **Phase 1.5 — Two-way Gmail sync.** OAuth + Pub/Sub watch → inbound mail matched to clients via `From` header. External Google Cloud project required.
 - [ ] **Phase 1.8 — Public scheduler `/book/[packageSlug]`.** Calendar UI + Stripe Checkout deposit-on-book. Depends on Phase 3.3 Google Calendar sync.
 
-### Phase 2 — Client Experience v2
-- [ ] **Phase 2.1 — Multi-step booking inquiry** beyond the current draft persistence.
-- [ ] **Phase 2.2 — Style quiz + mood board** (`/style`).
-
-### Phase 3 — Business Operations
+### Phase 3 — Business Operations (external API blocked)
 - [ ] **Phase 3.3 — Google Calendar two-way sync.** (external Google Cloud project required)
 
-### Phase 4 — Growth Engine
+### Phase 4 — Growth Engine (external API blocked)
 - [ ] **Phase 4.10 — Pinterest auto-pin** (external API).
 - [ ] **Phase 4.11 — UGC monitor** (Instagram Graph API).
-- [ ] **Phase 4.13 — Digital products store** (optional; only if Korrin sells presets/courses).
 
-### Phase 5 — AI Assist Layer
-- [x] **Phase 5.1 + 5.2 — AI Draft Reply + Thread Summary** (shipped earlier; the rest of Phase 5 below is pending).
+### Phase 5 — AI Assist Layer (needs `ANTHROPIC_API_KEY`)
+- [x] **Phase 5.1 + 5.2 — AI Draft Reply + Thread Summary** (shipped earlier).
 - [ ] **Phase 5.3 — Sentiment scoring on inbound.**
-- [ ] **Phase 5.4 — Next-best-action chip** (Action Cards pattern already partially present in OverviewTab; needs scoring).
+- [ ] **Phase 5.4 — Next-best-action chip scoring.**
 - [ ] **Phase 5.5 — AI parallel lead score.**
-- [ ] **Phase 5.6 — AI booking-form interpreter** (entity extraction from free-text).
+- [ ] **Phase 5.6 — AI booking-form interpreter.**
 - [ ] **Phase 5.7 — Journal post first draft.**
-- [ ] **Phase 5.8 — AI mood-board generator** (depends on Phase 2.2).
-- [ ] **Phase 5.9 — Cohort story generator** (depends on Phase 3.1).
-- [ ] **Phase 5.10 — AI tax suggestion engine** (depends on Phase 3.2).
+- [ ] **Phase 5.8 — AI mood-board generator** (Wave-9 stubbed the data side via `styleProfiles`).
+- [ ] **Phase 5.9 — Cohort story generator.**
+- [ ] **Phase 5.10 — AI tax suggestion engine.**
 
-### Original ideas (Phase 13)
-- [ ] **13.4 — Booking-form post-submit calendar embed.**
-- [ ] **13.7 — Local SEO autopilot.**
-- [ ] **13.9 — Quiet Season planner.**
-- [ ] **13.10 — Gallery analytics for the client.**
-- [ ] **13.11 — Cross-vendor wedding-day room.**
-- [ ] **13.12 — "Off the record" notes** toggle.
-- [ ] **13.13 — Brand voice calibration prompt.**
-- [ ] **13.15 — First 100 Clients dashboard.**
-- [ ] **13.16 — Far-future-date risk flag.**
-- [ ] **13.17 — Commercial Brand Brief workflow.**
-- [ ] **13.18 — Ad-spend / ROAS tracking.**
-- [ ] **13.19 — Vendor reciprocity tracking** (depends on 3.8).
+### Original ideas (Phase 13) — remaining
+- [ ] **13.4 — Booking-form post-submit calendar embed.** Optional; pairs with 1.8 / 3.3.
+- [ ] **13.11 — Cross-vendor wedding-day room.** Multi-vendor read-only timeline; pairs with 2.8 + 3.8.
 
-### Other
+### Other (low priority)
 - [ ] **Custom Firebase Auth email templates.** Magic link emails use the Firebase default. Brand in the Firebase Console.
-- [ ] **Pagination** on growing admin lists (projects, events, users) — not urgent at current scale.
-- [ ] **Image category assignment on upload.** Portfolio filters by `category`; the upload zone never sets one.
-- [ ] **Photo label editing post-upload.** Labels seeded from filename; cannot be edited.
+- [ ] **Pagination on `/admin/projects` + `/admin/events`** — `/admin/users` paginated in Wave 10; the other two still single-page.
 - [ ] **Real PNG icons** for PWA manifest (currently favicon placeholder for 192 + 512).
 - [ ] **Follow-up date editor UI** on the project workspace (field exists on `ProjectDoc`, no editor).
 - [ ] **Manual multi-channel comms entry** on the project workspace (channel selection for PHONE / IN_PERSON / SMS — currently can be captured in NotesTab).
@@ -287,6 +270,43 @@ _None open._
 ---
 
 ## Recently Resolved
+
+### May 2026 — Waves 9 + 10 + 11 (commit `5dd26a3`)
+
+Fourteen parallel agents in a single integration pass — eight differentiation-polish tasks (Wave 9) plus six gap-fillers (Wave 10) plus four operational expansions (Wave 11).
+
+**Wave 9 — differentiation polish**
+- **Phase 2.1 multi-step booking wizard** — `app/booking/BookingFormSteps.tsx` rewritten as a 4-step wizard with progress bar, per-step validation hints, soft-commitment checkbox, and a final review step that exposes per-section "Edit" jumps preserving every other answer. `submitBooking` FormData contract preserved verbatim; localStorage draft + `?package=` / `?sessionType=` / `?campaign=` flow through unchanged.
+- **Phase 2.2 style quiz + mood-board stub** — public `/style` with 8 visual A/B questions (light↔moody, candid↔posed, indoor↔outdoor, documentary↔editorial, warm↔cool, vibrant↔muted, tight↔wide, film grain↔crisp). `lib/db/style-profiles.ts` keyed by lowercased email; `app/admin/projects/[id]/page.tsx` gains a server-rendered `StyleProfileCard` above the workspace client. AI mood-board half explicitly stubbed for Phase 5.8.
+- **Phase 13.10 client-gallery analytics** — `viewCount` / `downloadCount` / `lastViewedAt` on `PhotoDoc`. Bot-guarded `/api/track/photo-view` (50-id batch) + `/api/track/photo-download` reject when missing UA, missing Referer, or matching `bot|crawler|spider|preview|headless|wget|curl`. `GalleryViewer` uses `IntersectionObserver` with 2s/10-id debounce + `keepalive: true`. `/admin/events/[id]/analytics` renders Pareto + top-favorites + top-views + download-conversion sections.
+- **Phase 13.12 off-the-record notes** — `offTheRecordNotes?: string` on `ProjectDoc` with explicit "NEVER export" comment. `NotesTab` redesigned with a 2-segment pill toggle; off-the-record panel uses red `#8B2E2E` left border + lock glyph + tinted `#FAF6F3` background. Export-redaction audit confirmed no consumer (welcome-packet, shoot-brief, journal-drafter, contract-renderer, portal, AI claude) touches the new field.
+- **Phase 13.13 brand voice calibration** — `BrandVoiceSample[]` on `users/{uid}` with 50–1000 char body cap @ 10 samples max. `/admin/settings/brand-voice` CRUD form. Inbox `DetailPane` gains a `VoiceAnchorsCard` above the reply textarea with chip → expand → copy interactions (no AI integration yet).
+- **Phase 13.15 First 100 Clients dashboard** — `/admin/reports/first-100` cohort table (oldest 100 clients, capped) with BOOKED/SHOT/DELIVERED/REVIEWED pipeline pills (filled olive when achieved across any of their projects), within-cohort referral lineage, hand-rolled SVG LTV histogram (10 buckets from $0–500 → $25k+), sort by Client # / Cohort date / LTV.
+- **Phase 13.17 Commercial Brand Brief** — 15-question `questionnaireTemplate` seeded ("brand_name", "deliverables_wanted", "usage_window", "exclusivity", "budget_range", etc). `lib/project-transitions.ts > onProposalSent` auto-attaches when `sessionType === "Commercial"`, idempotent against existing project questionnaires (mirrors `sendQuestionnaireForProjectAction`'s existence check). No-op for non-Commercial; logs warning if template missing. **After deploy: run `npx tsx scripts/seed-questionnaires.ts` to seed.**
+- **Phase 13.19 vendor reciprocity tracking** — `lastReciprocatedAt` on `VendorDoc`; `logVendorReferralSent` / `logVendorReferralReceived` helpers. Vendors list gains a "Reciprocity" column ("12 sent / 4 received") with red-on-blush "Imbalanced" pill when `sent - received >= 5`. Detail page gains a `ReciprocityCard` with two big counters + log buttons + last-activity line.
+
+**Wave 10 — gap-fillers**
+- **Phase 13.7 local SEO autopilot** — `lib/seo/cities.ts` seeds 7 cities (Cary, Raleigh, Durham, Chapel Hill, Asheville, Wilmington, Charlotte) with hand-written editorial copy (real landmarks, 5 venues, best seasons, 4 golden-hour spots, 5 FAQs each). `/locations` index + `/locations/[citySlug]` SSG pages with `LocalBusiness` + `BreadcrumbList` JSON-LD. `app/sitemap.ts` includes all city URLs. Navbar gains "Locations".
+- **Phase 13.9 Quiet Season planner** — pure `lib/domain/quiet-season.ts > buildQuietSeasonAnalysis` (testable, empty-input safe). `/admin/reports/quiet-season` renders SVG month heatmap + 6-month forward forecast + re-engagement candidates table (clients delivered 9–24 months ago with no open project, sorted by LTV) + suggested campaigns.
+- **Image category + label edit** — extracted `app/portfolio/categories.ts` shared module. `UploadZone` gets batch category dropdown + label override input above the drop zone (threaded through both single-PUT and multipart pipelines). `PhotoGrid` gets a pencil-edit popover for label + category. New `lib/db/photos.ts > updatePhoto` helper + `updatePhotoMetadata` server action.
+- **`/admin/users` pagination** — `listUsersPaginated` with base64 cursor (`createdAt desc + __name__` stable order). In-memory substring search after pageSize×3 over-fetch. Forward-only Next + Back-to-start UI. `SearchBar.tsx` client form posts to `/admin/users?q=`.
+- **Admin global search** — extracted `lib/admin/search.ts` pure helper `searchAdminAll(q)` returning `{clients, projects, events, vendors, journal}` (cap 10 each, 50-newest scan + in-memory contains, 5 collections in parallel, `MIN_QUERY_LENGTH = 2`). `/admin/search` page + `/api/admin/search` route + `CommandPalette` rewired with `vendor` + `journal` kinds. Deleted dead `lib/search.ts` + `/api/search/route.ts`.
+- **Bug #1 — R2 public-URL bug** — `/api/upload/confirm/route.ts` switched from constructed `https://${BUCKET}.${ACCOUNT_ID}.r2.cloudflarestorage.com/${key}` to `generatePresignedGetUrl(key, 60)`. Works on both public and private buckets, no env coupling. Removed from PROGRESS.md Bugs table.
+
+**Wave 11 — operational expansions**
+- **Phase 4.13 digital products store** — `products` + `productPurchases` collections. Public `/shop` (SSG) + `/shop/[slug]` (SSG with `generateStaticParams`, `Product` + `BreadcrumbList` JSON-LD) + `/shop/thank-you`. `/admin/shop` CRUD with publish-time Stripe Payment Link auto-creation (`createProductPaymentLink` in `lib/stripe.ts`). Webhook routes `checkout.session.completed` by `metadata.productId` to `processProductPurchase` — idempotent on session id, generates 7-day presigned R2 GET URL, emails buyer via `enqueueTrackedMail`, marks delivered, increments `purchaseCount`.
+- **`/admin/clients` dedicated list** — `lib/db/clients.ts` extended with `notes` field, `ClientSort`, `listClientsPaginated` (cursor for `recent` sort, full slice for `ltv` / `sessions` to support in-memory aggregation), `searchClients`, `updateClientDetails`. `/admin/clients` table with sortable columns + cursor pagination + search; `/admin/clients/[id]` detail with header / stats / project history / invoice ledger / communications summary / inline edit form. LTV math sums only `status === "PAID"` invoices.
+- **`/admin/health` system status** — single-pane operational dashboard with 7 cards: cron worker GREEN/YELLOW/RED + queue depths, Stripe webhook 7-day breakdown, mail queue, env-var presence (NEVER values), inbox triage backlog by type, R2 config + collectionGroup photos count, Next/Node/git-SHA system version. Every card try/catch wrapped.
+- **`/admin/exports` CSV center** — `lib/csv.ts` RFC 4180 escape helper. `/api/exports/{clients,projects,invoices,photos-summary,sales-tax-filings}` routes. `/admin/exports` landing page with download links + year-picker for existing `/api/expenses/export`.
+
+**Cross-agent integration**
+- `components/admin/AdminSidebar.tsx` merged six new entries (Clients, Shop, First 100, Quiet Season, Health, Exports, Brand voice) without conflict; restored the "Tax" Settings entry that was lost in the brand-voice agent's overwrite.
+- `lib/db/photos.ts` merged additive: `updatePhoto` helper coexists with `incrementPhotoView` / `incrementPhotoDownload` + `viewCount` / `downloadCount` / `lastViewedAt`.
+- `lib/db/clients.ts` gained `notes` + paginated helpers without colliding with style-profile or first-100 agents.
+- `lib/db/projects.ts` gained `offTheRecordNotes` cleanly.
+- `lib/project-transitions.ts > onProposalSent` gained `maybeAttachCommercialBrief` after the existing follow-up logic.
+- `app/admin/projects/[id]/page.tsx` gained both `StyleProfileCard` (2.2) and `offTheRecordNotes` serialization (13.12) cleanly.
+- Final: `npm run build` exit 0; `npm run lint` 0 errors / 21 pre-existing warnings.
 
 ### May 2026 — Wave 8 (commit `9196160`)
 
