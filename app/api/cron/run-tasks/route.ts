@@ -1,9 +1,11 @@
 import { adminDb } from "@/lib/firebase-admin";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { runDueSequences } from "@/lib/sequences/engine";
 import { dispatchPendingReviewRequests } from "@/lib/domain/reviews";
 import { recomputeFinanceCache } from "@/lib/domain/analytics";
 import { dispatchScheduledBroadcasts } from "@/lib/broadcasts/sender";
+import { refreshWeatherSnapshotsDue } from "@/lib/domain/weather-snapshots";
+import { dispatchShootBriefEmail } from "@/lib/domain/shoot-brief";
 import { NextResponse } from "next/server";
 import { createInboxItem } from "@/lib/db/inbox";
 import { addProjectMessage } from "@/lib/db/projects";
@@ -22,6 +24,18 @@ export async function GET(request: Request) {
 
   try {
     const now = new Date();
+
+    // Phase 3.4: enqueue SHOOT_BRIEF tasks for any project whose shoot is
+    // 0–24h away and whose brief hasn't been generated yet. Idempotent — see
+    // `scheduleDueShootBriefs` below. Wrapped in try/catch so a sweep failure
+    // never blocks the rest of the cron.
+    let shootBriefsScheduled = 0;
+    try {
+      shootBriefsScheduled = await scheduleDueShootBriefs(now.getTime());
+    } catch (sweepErr) {
+      console.error("[cron] scheduleDueShootBriefs failed", sweepErr);
+    }
+
     const tasksSnap = await adminDb
       .collection("scheduledTasks")
       .where("status", "==", "PENDING")
@@ -79,6 +93,23 @@ export async function GET(request: Request) {
           await runSneakPeek(doc.id, doc.ref, task);
         } catch (err) {
           console.error("[cron] SNEAK_PEEK failed", doc.id, err);
+        }
+      }
+
+      // SHOOT_BRIEF (Phase 3.4): generate the HTML brief, upload to R2, and
+      // email Korrin a tracked download link. Side effects (R2 upload,
+      // project doc stamp, mail enqueue) are owned by
+      // `dispatchShootBriefEmail`. Errors are logged so a single bad project
+      // cannot poison the sweep.
+      if (task.type === "SHOOT_BRIEF") {
+        try {
+          if (task.projectId) {
+            await dispatchShootBriefEmail(task.projectId);
+          } else {
+            console.error("[cron] SHOOT_BRIEF task missing projectId", doc.id);
+          }
+        } catch (err) {
+          console.error("[cron] SHOOT_BRIEF failed", doc.id, err);
         }
       }
 
@@ -143,6 +174,23 @@ export async function GET(request: Request) {
       console.error("Scheduled broadcasts dispatch error:", bErr);
     }
 
+    // Phase 3.6: refresh `project.weatherSnapshot` for every BOOKED /
+    // SHOOT_READY / IN_EDITING project that falls into the 72h or 24h
+    // pre-shoot window. Best-effort: per-project errors are already caught
+    // inside `refreshWeatherSnapshotsDue` so a Tomorrow.io hiccup cannot
+    // poison the cron.
+    let weatherSnapshotsRefreshed = 0;
+    let weatherSnapshotsSkipped = 0;
+    let weatherSnapshotsErrors = 0;
+    try {
+      const wResult = await refreshWeatherSnapshotsDue();
+      weatherSnapshotsRefreshed = wResult.refreshed;
+      weatherSnapshotsSkipped = wResult.skipped;
+      weatherSnapshotsErrors = wResult.errors;
+    } catch (wErr) {
+      console.error("Weather snapshot refresh error:", wErr);
+    }
+
     return NextResponse.json({
       success: true,
       processed: processedCount,
@@ -152,6 +200,10 @@ export async function GET(request: Request) {
       financeCacheRefreshed,
       scheduledBroadcastsProcessed,
       scheduledBroadcastsSent,
+      weatherSnapshotsRefreshed,
+      weatherSnapshotsSkipped,
+      weatherSnapshotsErrors,
+      shootBriefsScheduled,
     });
   } catch (err) {
     console.error("Cron Error:", err);
@@ -509,4 +561,58 @@ async function runSneakPeek(
     // written, so we don't want to throw here and trigger a retry.
     console.error("[cron] SNEAK_PEEK message log failed", taskId, err);
   }
+}
+
+/**
+ * Phase 3.4 — daily sweep that enqueues `SHOOT_BRIEF` scheduledTasks rows
+ * for any project whose shoot is between 0h and 24h away and which has not
+ * yet had a brief generated.
+ *
+ * Idempotency: before inserting a new row we check whether a SHOOT_BRIEF
+ * task for the same projectId already exists in PENDING or COMPLETED state.
+ * Returns the number of new tasks enqueued so the outer handler can include
+ * it in the JSON response.
+ */
+async function scheduleDueShootBriefs(nowMs: number): Promise<number> {
+  const horizonMs = nowMs + 24 * 60 * 60 * 1000;
+  const horizon = Timestamp.fromMillis(horizonMs);
+  const nowTs = Timestamp.fromMillis(nowMs);
+
+  let scheduled = 0;
+
+  for (const status of ["BOOKED", "SHOOT_READY"] as const) {
+    const projSnap = await adminDb
+      .collection("projects")
+      .where("status", "==", status)
+      .where("shootDate", ">", nowTs)
+      .where("shootDate", "<=", horizon)
+      .get();
+
+    for (const p of projSnap.docs) {
+      const data = p.data();
+      if (data.shootBriefGeneratedAt) continue;
+
+      // Composite index required: scheduledTasks(type ASC, projectId ASC, status ASC).
+      const existing = await adminDb
+        .collection("scheduledTasks")
+        .where("type", "==", "SHOOT_BRIEF")
+        .where("projectId", "==", p.id)
+        .where("status", "in", ["PENDING", "COMPLETED"])
+        .limit(1)
+        .get();
+      if (!existing.empty) continue;
+
+      await adminDb.collection("scheduledTasks").add({
+        type: "SHOOT_BRIEF",
+        projectId: p.id,
+        clientId: typeof data.clientId === "string" ? data.clientId : null,
+        status: "PENDING",
+        runAt: Timestamp.fromMillis(nowMs),
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      scheduled++;
+    }
+  }
+
+  return scheduled;
 }

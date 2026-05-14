@@ -4,9 +4,19 @@ import { revalidatePath } from "next/cache";
 import { adminDb } from "@/lib/firebase-admin";
 import { requireAdmin } from "@/lib/session";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
-import { ProjectStatus, StatusHistoryEntry } from "@/lib/db/projects";
+import {
+  ProjectStatus,
+  StatusHistoryEntry,
+  EDITING_SUB_STAGES,
+  type EditingSubStage,
+} from "@/lib/db/projects";
 import { handleProjectTransition } from "@/lib/project-transitions";
 import { generateAndUploadWelcomePacket } from "@/lib/domain/welcome-packet";
+import {
+  generateAndStoreShootBrief,
+  dispatchShootBriefEmail,
+} from "@/lib/domain/shoot-brief";
+import { generatePresignedGetUrl } from "@/lib/storage/r2";
 import { logActivity } from "@/lib/db/activity";
 import {
   createSavedView,
@@ -14,6 +24,13 @@ import {
   listSavedViews,
   type SavedViewFilter,
 } from "@/lib/db/saved-views";
+import {
+  instantiateGearLogFromTemplate,
+  markGearItemPacked,
+  addAdHocGearItem,
+  removeGearItem,
+} from "@/lib/db/gear-log";
+import type { GearItemCategory } from "@/lib/db/gear-templates";
 
 export async function updateProjectStatus(
   projectId: string,
@@ -96,6 +113,48 @@ export async function regenerateWelcomePacket(
   } catch (err) {
     console.error("[regenerateWelcomePacket] failed", { projectId, err });
     return { success: false, error: "Failed to regenerate welcome packet." };
+  }
+}
+
+/**
+ * Phase 3.4 — manually regenerate the shoot brief HTML packet, upload to R2,
+ * and email Korrin a tracked download link. Used by the "Generate now" /
+ * "Regenerate" buttons in the project workspace OverviewTab.
+ */
+export async function regenerateShootBrief(
+  projectId: string
+): Promise<{ success: boolean; error?: string }> {
+  await requireAdmin();
+  try {
+    await generateAndStoreShootBrief(projectId);
+    await dispatchShootBriefEmail(projectId);
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true };
+  } catch (err) {
+    console.error("[regenerateShootBrief] failed", { projectId, err });
+    return { success: false, error: "Failed to regenerate shoot brief." };
+  }
+}
+
+/**
+ * Phase 3.4 — mint a fresh 1h presigned GET URL for the most recently stored
+ * shoot brief. Returns the URL so the workspace can open it in a new tab.
+ */
+export async function getShootBriefDownloadUrl(
+  projectId: string
+): Promise<{ success: boolean; url?: string; error?: string }> {
+  await requireAdmin();
+  try {
+    const snap = await adminDb.collection("projects").doc(projectId).get();
+    if (!snap.exists) return { success: false, error: "Project not found." };
+    const data = snap.data()!;
+    const key: string | undefined = data.shootBriefR2Key;
+    if (!key) return { success: false, error: "No shoot brief on file." };
+    const url = await generatePresignedGetUrl(key, 60 * 60); // 1h
+    return { success: true, url };
+  } catch (err) {
+    console.error("[getShootBriefDownloadUrl] failed", { projectId, err });
+    return { success: false, error: "Failed to build download link." };
   }
 }
 
@@ -191,6 +250,36 @@ export async function archiveProject(
   }
 }
 
+/**
+ * Phase 3.6 — admin override for the weather-snapshot cron.
+ *
+ * Toggled from the project workspace's WeatherCard. When `indoor === true`,
+ * `lib/domain/weather-snapshots.ts > refreshWeatherSnapshotsDue` skips this
+ * project entirely (no Tomorrow.io fetch, no sun-times write).
+ *
+ * Does not clear an existing `weatherSnapshot` — admins occasionally toggle
+ * indoor mid-prep, and stale data is still better signal than no data.
+ */
+export async function setProjectIndoorOverride(
+  projectId: string,
+  indoor: boolean
+): Promise<{ success: boolean; error?: string }> {
+  await requireAdmin();
+  if (!projectId) return { success: false, error: "Missing project id." };
+  try {
+    await adminDb.collection("projects").doc(projectId).update({
+      weatherSnapshotIndoor: indoor,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    revalidatePath("/admin/projects");
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true };
+  } catch (err) {
+    console.error("setProjectIndoorOverride error:", err);
+    return { success: false, error: "Failed to update indoor override." };
+  }
+}
+
 /* ─────────────────────────  Saved Views (per-admin)  ───────────────────── */
 
 /** Plain-serialisable shape returned to client components. */
@@ -245,5 +334,193 @@ export async function deleteMySavedView(
   } catch (err) {
     console.error("deleteMySavedView error:", err);
     return { success: false, error: "Failed to delete view." };
+  }
+}
+
+/* ─────────────────────  Editing sub-stage (Phase 3.13)  ───────────────────── */
+
+/**
+ * Advance / set the in-editing sub-stage for a project. Five-step stepper:
+ *   INGESTION → CULLED → EDITED → EXPORTED → DELIVERED
+ *
+ * Writes:
+ *   - `editingSubStage` = `stage`
+ *   - appends `{ stage, at, byUid }` to `editingSubStageHistory`
+ *
+ * If `stage === "DELIVERED"`, this is also the canonical signal that the
+ * gallery is out the door. We:
+ *   - stamp `deliveredAt` (if not already set)
+ *   - delegate to `updateProjectStatus(projectId, "GALLERY_DELIVERED")` so the
+ *     existing `handleProjectTransition` hook fires (referral task, etc.)
+ *
+ * Idempotent — calling with the current stage is a no-op (returns success).
+ */
+export async function setEditingSubStage(
+  projectId: string,
+  stage: EditingSubStage
+): Promise<{ success: boolean; error?: string }> {
+  const session = await requireAdmin();
+
+  if (!projectId) return { success: false, error: "Missing project id." };
+  if (!EDITING_SUB_STAGES.includes(stage)) {
+    return { success: false, error: "Invalid sub-stage." };
+  }
+
+  try {
+    const ref = adminDb.collection("projects").doc(projectId);
+    const snap = await ref.get();
+    if (!snap.exists) return { success: false, error: "Project not found." };
+
+    const data = snap.data()!;
+    const current = data.editingSubStage as EditingSubStage | undefined;
+
+    // No-op when the stage is already set to the requested value AND the
+    // status transition (if any) is also already done.
+    if (current === stage && stage !== "DELIVERED") {
+      return { success: true };
+    }
+
+    const historyEntry: {
+      stage: EditingSubStage;
+      at: Timestamp;
+      byUid?: string;
+    } = {
+      stage,
+      at: Timestamp.now(),
+      ...(session.uid ? { byUid: session.uid } : {}),
+    };
+
+    const update: Record<string, unknown> = {
+      editingSubStage: stage,
+      editingSubStageHistory: FieldValue.arrayUnion(historyEntry),
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+
+    if (stage === "DELIVERED" && !data.deliveredAt) {
+      update.deliveredAt = Timestamp.now();
+    }
+
+    await ref.update(update);
+
+    await logActivity(
+      "STATUS_CHANGED",
+      `Project "${data.title ?? projectId}" editing → ${stage.toLowerCase()}`,
+      { projectId, editingSubStage: stage }
+    ).catch(() => {});
+
+    // When the sub-stage hits DELIVERED, also flip the canonical project
+    // status to GALLERY_DELIVERED so the lifecycle hook (referral task, etc.)
+    // runs. `updateProjectStatus` already revalidates the same paths.
+    if (stage === "DELIVERED" && data.status !== "GALLERY_DELIVERED") {
+      const res = await updateProjectStatus(projectId, "GALLERY_DELIVERED");
+      if (!res.success) return res;
+    } else {
+      revalidatePath("/admin/projects");
+      revalidatePath(`/admin/projects/${projectId}`);
+    }
+
+    return { success: true };
+  } catch (err) {
+    console.error("setEditingSubStage error:", err);
+    return { success: false, error: "Failed to update editing sub-stage." };
+  }
+}
+
+/* ─────────────────────  Gear log (Phase 3.7)  ───────────────────── */
+
+/**
+ * Seed the per-project gear log from a named template. Idempotent: if the
+ * project's gearLog subcollection already has entries, this returns success
+ * with `created: 0` and does NOT touch existing rows. Re-seeding requires
+ * deleting the existing entries first.
+ */
+export async function initializeGearLog(
+  projectId: string,
+  templateId: string
+): Promise<{ success: boolean; created?: number; error?: string }> {
+  await requireAdmin();
+  if (!projectId) return { success: false, error: "Missing project id." };
+  if (!templateId) return { success: false, error: "Missing template id." };
+
+  try {
+    const result = await instantiateGearLogFromTemplate(projectId, templateId);
+
+    await logActivity(
+      "NOTE_ADDED",
+      `Gear log initialised from template (${result.created} items)`,
+      { projectId, templateId, ...result }
+    ).catch(() => {});
+
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true, created: result.created };
+  } catch (err) {
+    console.error("initializeGearLog error:", err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to initialise gear log.",
+    };
+  }
+}
+
+export async function toggleGearItemPacked(
+  projectId: string,
+  entryId: string,
+  packed: boolean
+): Promise<{ success: boolean; error?: string }> {
+  const session = await requireAdmin();
+  if (!projectId || !entryId) {
+    return { success: false, error: "Missing identifiers." };
+  }
+  try {
+    await markGearItemPacked(projectId, entryId, packed, session.uid);
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true };
+  } catch (err) {
+    console.error("toggleGearItemPacked error:", err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to update gear item.",
+    };
+  }
+}
+
+export async function addAdHocGearItemAction(
+  projectId: string,
+  input: { name: string; category: GearItemCategory; required?: boolean; notes?: string }
+): Promise<{ success: boolean; entryId?: string; error?: string }> {
+  await requireAdmin();
+  if (!projectId) return { success: false, error: "Missing project id." };
+  if (!input?.name?.trim()) return { success: false, error: "Name is required." };
+  try {
+    const entry = await addAdHocGearItem(projectId, input);
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true, entryId: entry.id };
+  } catch (err) {
+    console.error("addAdHocGearItemAction error:", err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to add gear item.",
+    };
+  }
+}
+
+export async function removeGearItemAction(
+  projectId: string,
+  entryId: string
+): Promise<{ success: boolean; error?: string }> {
+  await requireAdmin();
+  if (!projectId || !entryId) {
+    return { success: false, error: "Missing identifiers." };
+  }
+  try {
+    await removeGearItem(projectId, entryId);
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true };
+  } catch (err) {
+    console.error("removeGearItemAction error:", err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to remove gear item.",
+    };
   }
 }

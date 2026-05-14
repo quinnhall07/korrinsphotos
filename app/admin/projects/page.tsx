@@ -42,6 +42,12 @@ async function getProjects() {
     const lastContacted = toDate(data.lastContactedAt);
     const lastContactedIso = lastContacted ? lastContacted.toISOString() : null;
 
+    // Phase 3.13 — editing tracker fields
+    const deliveredAt = toDate(data.deliveredAt);
+    const deliveredAtIso = deliveredAt ? deliveredAt.toISOString() : null;
+    const editingSubStage =
+      typeof data.editingSubStage === "string" ? data.editingSubStage : null;
+
     return {
       id: doc.id,
       clientId: data.clientId,
@@ -57,6 +63,8 @@ async function getProjects() {
       lastStatusChangeIso,
       shootDateIso,
       lastContactedIso,
+      deliveredAtIso,
+      editingSubStage,
     };
   });
 }

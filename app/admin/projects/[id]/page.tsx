@@ -6,6 +6,12 @@ import type { ProjectStatus } from "@/lib/db/projects";
 import { listQuestionnairesForProject } from "@/lib/db/questionnaires";
 import { listReviewRequestsForProject } from "@/lib/db/reviews";
 import { listEmailEventsForProject } from "@/lib/db/email-events";
+import { listProjectGearLog } from "@/lib/db/gear-log";
+import {
+  getDefaultGearTemplateForSessionType,
+  listGearTemplatesForSessionType,
+  type GearItemCategory,
+} from "@/lib/db/gear-templates";
 import { ProjectWorkspaceClient } from "./ProjectWorkspaceClient";
 
 export const metadata: Metadata = { title: "Project Detail | Admin" };
@@ -86,6 +92,41 @@ export type SerialProject = {
   statusHistory: { status: string; at: string; byUid?: string | null }[];
   clientNps: 1 | 2 | 3 | 4 | 5 | null;
   clientNpsAt: string | null;
+  /** Phase 3.4 — set when the shoot brief HTML has been uploaded to R2. */
+  shootBriefGeneratedAt: string | null;
+  /** Phase 3.6 — admin override that suppresses the daily weather cron. */
+  weatherSnapshotIndoor: boolean;
+  /** Phase 3.6 — populated by `lib/domain/weather-snapshots.ts`. ISO strings. */
+  weatherSnapshot: SerialWeatherSnapshot | null;
+  /** Phase 3.13 — editing-workflow sub-stage. */
+  editingSubStage: string | null;
+};
+
+export type SerialSunTimes = {
+  sunrise: string | null;
+  sunset: string | null;
+  goldenHourMorningStart: string | null;
+  goldenHourMorningEnd: string | null;
+  goldenHourEveningStart: string | null;
+  goldenHourEveningEnd: string | null;
+  blueHourMorning: string | null;
+  blueHourEvening: string | null;
+  solarNoon: string | null;
+};
+
+export type SerialWeatherSnapshot = {
+  temp: number;
+  feelsLike: number | null;
+  low: number | null;
+  high: number | null;
+  conditions: string;
+  precipChance: number | null;
+  windMph: number | null;
+  humidityPct: number | null;
+  isOutdoorFriendly: boolean | null;
+  fetchedAt: string | null;
+  forecastForHorizonHours: 72 | 24 | null;
+  sunTimes: SerialSunTimes | null;
 };
 
 export type SerialClient = {
@@ -148,6 +189,25 @@ export type SerialReviewRequest = {
   submittedAt: string | null;
 };
 
+export type SerialGearLogEntry = {
+  id: string;
+  gearItemId: string;
+  name: string;
+  category: GearItemCategory;
+  required: boolean;
+  packed: boolean;
+  packedAt: string | null;
+  packedByUid: string | null;
+  notes: string | null;
+};
+
+export type SerialGearTemplateOption = {
+  id: string;
+  name: string;
+  itemCount: number;
+  isDefault: boolean;
+};
+
 export type SerialInvoice = {
   id: string;
   projectId: string;
@@ -186,6 +246,59 @@ function ts(value: any): string | null {
     }
   }
   return null;
+}
+
+function numOrNull(value: unknown): number | null {
+  return typeof value === "number" && !Number.isNaN(value) ? value : null;
+}
+
+function boolOrNull(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+function isoOrNull(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function serialiseWeatherSnapshot(raw: any): SerialWeatherSnapshot | null {
+  if (!raw || typeof raw !== "object") return null;
+  if (typeof raw.temp !== "number" || typeof raw.conditions !== "string") return null;
+
+  const horizon =
+    raw.forecastForHorizonHours === 72 || raw.forecastForHorizonHours === 24
+      ? (raw.forecastForHorizonHours as 72 | 24)
+      : null;
+
+  const sunRaw = raw.sunTimes;
+  const sunTimes: SerialSunTimes | null =
+    sunRaw && typeof sunRaw === "object"
+      ? {
+          sunrise: isoOrNull(sunRaw.sunrise),
+          sunset: isoOrNull(sunRaw.sunset),
+          goldenHourMorningStart: isoOrNull(sunRaw.goldenHourMorningStart),
+          goldenHourMorningEnd: isoOrNull(sunRaw.goldenHourMorningEnd),
+          goldenHourEveningStart: isoOrNull(sunRaw.goldenHourEveningStart),
+          goldenHourEveningEnd: isoOrNull(sunRaw.goldenHourEveningEnd),
+          blueHourMorning: isoOrNull(sunRaw.blueHourMorning),
+          blueHourEvening: isoOrNull(sunRaw.blueHourEvening),
+          solarNoon: isoOrNull(sunRaw.solarNoon),
+        }
+      : null;
+
+  return {
+    temp: raw.temp,
+    feelsLike: numOrNull(raw.feelsLike),
+    low: numOrNull(raw.low),
+    high: numOrNull(raw.high),
+    conditions: raw.conditions,
+    precipChance: numOrNull(raw.precipChance),
+    windMph: numOrNull(raw.windMph),
+    humidityPct: numOrNull(raw.humidityPct),
+    isOutdoorFriendly: boolOrNull(raw.isOutdoorFriendly),
+    fetchedAt: ts(raw.fetchedAt),
+    forecastForHorizonHours: horizon,
+    sunTimes,
+  };
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -268,6 +381,13 @@ export default async function ProjectDetailPage({ params }: Props) {
         ? (projectData.clientNps as 1 | 2 | 3 | 4 | 5)
         : null,
     clientNpsAt: ts(projectData.clientNpsAt),
+    shootBriefGeneratedAt: ts(projectData.shootBriefGeneratedAt),
+    weatherSnapshotIndoor: !!projectData.weatherSnapshotIndoor,
+    weatherSnapshot: serialiseWeatherSnapshot(projectData.weatherSnapshot),
+    editingSubStage:
+      typeof projectData.editingSubStage === "string"
+        ? projectData.editingSubStage
+        : null,
   };
 
   const client: SerialClient = {
@@ -406,6 +526,58 @@ export default async function ProjectDetailPage({ params }: Props) {
     console.error("[ProjectDetailPage] Failed to load review requests", err);
   }
 
+  // Phase 3.7: pull the project's gear log (per-shoot pack-check) plus all
+  // candidate templates for the project's sessionType so the Gear tab can
+  // render either an empty-state "Initialize from template" CTA or the live
+  // check-off list.
+  let gearLog: SerialGearLogEntry[] = [];
+  try {
+    const entries = await listProjectGearLog(id);
+    gearLog = entries.map((e) => ({
+      id: e.id,
+      gearItemId: e.gearItemId,
+      name: e.name,
+      category: e.category,
+      required: !!e.required,
+      packed: !!e.packed,
+      packedAt: ts(e.packedAt),
+      packedByUid: e.packedByUid ?? null,
+      notes: e.notes ?? null,
+    }));
+  } catch (err) {
+    console.error("[ProjectDetailPage] Failed to load gear log", err);
+  }
+
+  let gearTemplateOptions: SerialGearTemplateOption[] = [];
+  let defaultGearTemplateId: string | null = null;
+  let defaultGearTemplateName: string | null = null;
+  try {
+    const sessionType = projectData.sessionType as string | undefined;
+    if (sessionType) {
+      const [candidates, def] = await Promise.all([
+        listGearTemplatesForSessionType(sessionType),
+        getDefaultGearTemplateForSessionType(sessionType),
+      ]);
+      gearTemplateOptions = candidates.map((t) => ({
+        id: t.id,
+        name: t.name,
+        itemCount: Array.isArray(t.items) ? t.items.length : 0,
+        isDefault: !!t.isDefault,
+      }));
+      if (def) {
+        defaultGearTemplateId = def.id;
+        defaultGearTemplateName = def.name;
+      } else if (candidates.length > 0) {
+        // No flagged default — fall back to the first candidate so the Gear
+        // tab still has something to offer in its empty state.
+        defaultGearTemplateId = candidates[0].id;
+        defaultGearTemplateName = candidates[0].name;
+      }
+    }
+  } catch (err) {
+    console.error("[ProjectDetailPage] Failed to load gear templates", err);
+  }
+
   return (
     <ProjectWorkspaceClient
       project={project}
@@ -417,6 +589,10 @@ export default async function ProjectDetailPage({ params }: Props) {
       questionnaires={questionnaires}
       reviewRequests={reviewRequests}
       nextBestAction={getNextBestAction(project.status)}
+      gearLog={gearLog}
+      gearTemplateOptions={gearTemplateOptions}
+      defaultGearTemplateId={defaultGearTemplateId}
+      defaultGearTemplateName={defaultGearTemplateName}
     />
   );
 }

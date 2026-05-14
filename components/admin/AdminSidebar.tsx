@@ -42,6 +42,18 @@ const NAV = [
           </svg>
         ),
       },
+      {
+        label: "Capacity",
+        href: "/admin/calendar",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <rect x="1" y="4" width="14" height="11" rx="0.5" />
+            <path d="M5 1v4M11 1v4M1 8h14" />
+            <rect x="4" y="10" width="2" height="2" rx="0.3" />
+            <rect x="10" y="10" width="2" height="2" rx="0.3" />
+          </svg>
+        ),
+      },
     ],
   },
   {
@@ -176,6 +188,17 @@ const NAV = [
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <circle cx="8" cy="8" r="2.5" />
             <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.5 1.5M11.5 11.5L13 13M3 13l1.5-1.5M11.5 4.5L13 3" />
+          </svg>
+        ),
+      },
+      {
+        label: "Gear Templates",
+        href: "/admin/settings/gear-templates",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <rect x="2" y="5" width="12" height="9" rx="0.5" />
+            <path d="M6 5V3h4v2" />
+            <path d="M5 9h6M5 11h4" />
           </svg>
         ),
       },

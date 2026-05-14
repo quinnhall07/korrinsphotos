@@ -9,7 +9,12 @@ import {
   updateProjectDetails,
   archiveProject,
   regenerateWelcomePacket,
+  regenerateShootBrief,
+  getShootBriefDownloadUrl,
+  setEditingSubStage,
 } from "../actions";
+import { EDITING_SUB_STAGES, type EditingSubStage } from "@/lib/editing-sla";
+import { computeEditingStatus, editingStatusColor } from "@/lib/editing-status";
 import { createDraftContract, sendContract } from "../contract-actions";
 import { sendInvoice, markInvoicePaidManually } from "../invoice-actions";
 import { sendProjectMessage } from "../message-actions";
@@ -19,6 +24,7 @@ import { sendQuestionnaireForProjectAction } from "@/app/admin/questionnaires/te
 // TODO(agent-5): confirm export paths once Agent 5 lands.
 import { AIDraftReplyButton } from "@/components/admin/AIDraftReplyButton";
 import { ThreadSummary } from "@/components/admin/ThreadSummary";
+import { WeatherCard } from "./WeatherCard";
 import type {
   SerialProject,
   SerialClient,
@@ -27,7 +33,28 @@ import type {
   SerialContract,
   SerialQuestionnaire,
   SerialReviewRequest,
+  SerialGearLogEntry,
+  SerialGearTemplateOption,
 } from "./page";
+import {
+  initializeGearLog,
+  toggleGearItemPacked,
+  addAdHocGearItemAction,
+  removeGearItemAction,
+} from "../actions";
+// Local literal copy of GearItemCategory so this client file doesn't import
+// from `lib/db/gear-templates` (which is server-only via `adminDb`).
+const GEAR_CATEGORIES = [
+  "CAMERA",
+  "LENS",
+  "LIGHTING",
+  "AUDIO",
+  "STORAGE",
+  "ACCESSORY",
+  "BACKUP",
+  "OTHER",
+] as const;
+type GearCategoryLiteral = (typeof GEAR_CATEGORIES)[number];
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -57,6 +84,7 @@ type TabId =
   | "gallery"
   | "timeline"
   | "files"
+  | "gear"
   | "notes";
 
 const TABS: { id: TabId; label: string }[] = [
@@ -67,6 +95,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "gallery", label: "Gallery" },
   { id: "timeline", label: "Timeline" },
   { id: "files", label: "Files" },
+  { id: "gear", label: "Gear" },
   { id: "notes", label: "Notes" },
 ];
 
@@ -205,6 +234,10 @@ interface Props {
   questionnaires: SerialQuestionnaire[];
   reviewRequests: SerialReviewRequest[];
   nextBestAction: string;
+  gearLog: SerialGearLogEntry[];
+  gearTemplateOptions: SerialGearTemplateOption[];
+  defaultGearTemplateId: string | null;
+  defaultGearTemplateName: string | null;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -219,6 +252,10 @@ export function ProjectWorkspaceClient({
   questionnaires,
   reviewRequests,
   nextBestAction,
+  gearLog,
+  gearTemplateOptions,
+  defaultGearTemplateId,
+  defaultGearTemplateName,
 }: Props) {
   const [tab, setTab] = useState<TabId>("overview");
   const [statusModalOpen, setStatusModalOpen] = useState(false);
@@ -369,6 +406,15 @@ export function ProjectWorkspaceClient({
             />
           )}
           {tab === "files" && <FilesTab projectId={project.id} />}
+          {tab === "gear" && (
+            <GearTab
+              projectId={project.id}
+              gearLog={gearLog}
+              templateOptions={gearTemplateOptions}
+              defaultTemplateId={defaultGearTemplateId}
+              defaultTemplateName={defaultGearTemplateName}
+            />
+          )}
           {tab === "notes" && <NotesTab projectId={project.id} initialNotes={project.notes} />}
         </main>
       </div>
@@ -612,6 +658,17 @@ function OverviewTab({
         </div>
       </div>
 
+      {/* Phase 3.6 — weather + golden-hour snapshot. Renders when the
+          project has a shoot date (so admins can pre-flag indoor), when a
+          forecast has been persisted, or when the project is flagged indoor. */}
+      {(project.shootDate || project.weatherSnapshot || project.weatherSnapshotIndoor) && (
+        <WeatherCard
+          projectId={project.id}
+          snapshot={project.weatherSnapshot}
+          indoor={project.weatherSnapshotIndoor}
+        />
+      )}
+
       <div style={{ marginBottom: "1.5rem" }}>
         <p style={{ ...EYEBROW, margin: "0 0 0.5rem 0" }}>Tags</p>
         {project.tags.length === 0 ? (
@@ -643,9 +700,17 @@ function OverviewTab({
         </p>
       </div>
 
+      <EditingWorkflowBlock project={project} />
+
       <QuestionnaireBlock projectId={project.id} questionnaires={questionnaires} />
 
       <WelcomePacketBlock projectId={project.id} />
+
+      <ShootBriefBlock
+        projectId={project.id}
+        shootDate={project.shootDate}
+        shootBriefGeneratedAt={project.shootBriefGeneratedAt}
+      />
 
       <div style={{ display: "flex", gap: "1.5rem", fontSize: "0.8rem", color: "var(--charcoal-muted)", flexWrap: "wrap" }}>
         <span>Status changes: <strong style={{ color: "var(--charcoal)" }}>{project.statusHistory.length}</strong></span>
@@ -801,6 +866,126 @@ function WelcomePacketBlock({ projectId }: { projectId: string }) {
         >
           {isPending ? "Generating…" : "Regenerate"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Shoot brief block (rendered inside Overview tab) ────────────────────────
+
+function ShootBriefBlock({
+  projectId,
+  shootDate,
+  shootBriefGeneratedAt,
+}: {
+  projectId: string;
+  shootDate: string | null;
+  shootBriefGeneratedAt: string | null;
+}) {
+  const [isPending, startTransition] = useTransition();
+  const router = useRouter();
+
+  const handleGenerate = () => {
+    startTransition(async () => {
+      const res = await regenerateShootBrief(projectId);
+      if (res.success) {
+        toast("Shoot brief sent to your inbox");
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to generate brief");
+      }
+    });
+  };
+
+  const handleView = () => {
+    startTransition(async () => {
+      const res = await getShootBriefDownloadUrl(projectId);
+      if (res.success && res.url) {
+        // Open in a new tab — the presigned URL is short-lived.
+        if (typeof window !== "undefined") window.open(res.url, "_blank", "noopener");
+      } else {
+        toast(res.error ?? "No brief on file yet");
+      }
+    });
+  };
+
+  // Time-to-shoot bucket: drives which CTA the block surfaces.
+  let hoursUntilShoot: number | null = null;
+  if (shootDate) {
+    const t = new Date(shootDate).getTime();
+    if (Number.isFinite(t)) {
+      hoursUntilShoot = (t - Date.now()) / (60 * 60 * 1000);
+    }
+  }
+  const withinSevenDays =
+    hoursUntilShoot !== null && hoursUntilShoot >= 0 && hoursUntilShoot <= 7 * 24;
+
+  let bodyLine: React.ReactNode;
+  let cta: React.ReactNode = null;
+
+  if (shootBriefGeneratedAt) {
+    bodyLine = (
+      <span style={{ color: "var(--olive)" }}>
+        Generated {fmtDate(shootBriefGeneratedAt)}
+      </span>
+    );
+    cta = (
+      <div style={{ display: "flex", gap: "0.5rem" }}>
+        <button type="button" style={BTN_GHOST} onClick={handleView} disabled={isPending}>
+          {isPending ? "Loading…" : "View brief"}
+        </button>
+        <button type="button" style={BTN_GHOST} onClick={handleGenerate} disabled={isPending}>
+          {isPending ? "Generating…" : "Regenerate"}
+        </button>
+      </div>
+    );
+  } else if (withinSevenDays) {
+    bodyLine = (
+      <span style={{ color: "var(--charcoal-light)" }}>
+        Not generated yet — shoot is within 7 days.
+      </span>
+    );
+    cta = (
+      <button type="button" style={BTN_GHOST} onClick={handleGenerate} disabled={isPending}>
+        {isPending ? "Generating…" : "Generate now"}
+      </button>
+    );
+  } else if (shootDate) {
+    bodyLine = (
+      <span style={{ color: "var(--charcoal-muted)" }}>
+        Scheduled to auto-generate 24h before shoot.
+      </span>
+    );
+  } else {
+    bodyLine = (
+      <span style={{ color: "var(--charcoal-muted)" }}>
+        No shoot date set — brief will queue once a date is confirmed.
+      </span>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        marginBottom: "1.5rem",
+        border: "0.5px solid var(--border)",
+        padding: "1rem 1.1rem",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: "0.75rem",
+          flexWrap: "wrap",
+        }}
+      >
+        <div>
+          <p style={{ ...EYEBROW, margin: "0 0 0.3rem 0" }}>Shoot brief</p>
+          <p style={{ margin: 0, fontSize: "0.88rem" }}>{bodyLine}</p>
+        </div>
+        {cta}
       </div>
     </div>
   );
@@ -1732,6 +1917,660 @@ function FilesTab({ projectId }: { projectId: string }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Editing workflow block (Phase 3.13) ─────────────────────────────────────
+
+/**
+ * 5-step stepper for the in-editing sub-stage.
+ *
+ * Visible only while `project.status === "IN_EDITING"`. Each step is clickable;
+ * clicking advances (or sets) the sub-stage via `setEditingSubStage`. The
+ * DELIVERED step also transitions the project status to GALLERY_DELIVERED via
+ * the server action, so we route through `router.refresh()` afterwards to pick
+ * up the fresh state.
+ */
+function EditingWorkflowBlock({ project }: { project: SerialProject }) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+
+  if (project.status !== "IN_EDITING") return null;
+
+  const currentStage =
+    (project.editingSubStage as EditingSubStage | null) ?? null;
+  const currentIndex = currentStage
+    ? EDITING_SUB_STAGES.indexOf(currentStage)
+    : -1;
+
+  const info = computeEditingStatus({
+    shootDate: project.shootDate ? new Date(project.shootDate) : null,
+    deliveredAt: project.deliveredAt ? new Date(project.deliveredAt) : null,
+    sessionType: project.sessionType,
+    editingSubStage: currentStage,
+  });
+
+  const handleAdvance = (stage: EditingSubStage) => {
+    if (isPending) return;
+    startTransition(async () => {
+      const res = await setEditingSubStage(project.id, stage);
+      if (res.success) {
+        toast(`Editing → ${stage.toLowerCase()}`);
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to update editing stage");
+      }
+    });
+  };
+
+  const dotColor = info ? editingStatusColor(info.status) : "var(--olive)";
+
+  return (
+    <div
+      style={{
+        marginBottom: "1.5rem",
+        border: "0.5px solid var(--border)",
+        padding: "1rem 1.1rem",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: "0.75rem",
+          flexWrap: "wrap",
+          marginBottom: "0.85rem",
+        }}
+      >
+        <div>
+          <p style={{ ...EYEBROW, margin: "0 0 0.3rem 0" }}>Editing workflow</p>
+          <p
+            style={{
+              margin: 0,
+              fontSize: "0.82rem",
+              color: "var(--charcoal-muted)",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.45rem",
+            }}
+          >
+            <span
+              style={{
+                display: "inline-block",
+                width: "8px",
+                height: "8px",
+                borderRadius: "50%",
+                background: dotColor,
+              }}
+            />
+            {info ? info.pillLabel : "No shoot date set"}
+          </p>
+        </div>
+      </div>
+
+      {/* 5-step horizontal stepper */}
+      <ol
+        style={{
+          listStyle: "none",
+          padding: 0,
+          margin: 0,
+          display: "grid",
+          gridTemplateColumns: `repeat(${EDITING_SUB_STAGES.length}, 1fr)`,
+          gap: "0.5rem",
+        }}
+      >
+        {EDITING_SUB_STAGES.map((stage, i) => {
+          const isComplete = currentIndex > -1 && i <= currentIndex;
+          const isCurrent = i === currentIndex;
+          return (
+            <li key={stage} style={{ position: "relative" }}>
+              <button
+                type="button"
+                onClick={() => handleAdvance(stage)}
+                disabled={isPending}
+                title={
+                  isCurrent
+                    ? `Current — ${stage.toLowerCase()}`
+                    : `Set to ${stage.toLowerCase()}`
+                }
+                style={{
+                  width: "100%",
+                  padding: "0.55rem 0.4rem",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: "0.4rem",
+                  fontFamily: "'Jost', sans-serif",
+                  fontSize: "0.65rem",
+                  letterSpacing: "0.12em",
+                  textTransform: "uppercase",
+                  color: isComplete ? "var(--olive)" : "var(--charcoal-muted)",
+                  background: isCurrent ? "var(--olive-dim)" : "transparent",
+                  border: "0.5px solid",
+                  borderColor: isComplete
+                    ? "var(--olive)"
+                    : "var(--border-strong)",
+                  cursor: isPending ? "wait" : "pointer",
+                  opacity: isPending ? 0.6 : 1,
+                  textAlign: "center",
+                  lineHeight: 1.2,
+                }}
+              >
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: "20px",
+                    height: "20px",
+                    borderRadius: "50%",
+                    border: "0.5px solid",
+                    borderColor: isComplete
+                      ? "var(--olive)"
+                      : "var(--border-strong)",
+                    background: isComplete ? "var(--olive)" : "transparent",
+                    color: isComplete ? "var(--white)" : "var(--charcoal-muted)",
+                    fontSize: "0.7rem",
+                  }}
+                >
+                  {i + 1}
+                </span>
+                <span>{stage}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+// ─── Gear tab (Phase 3.7) ────────────────────────────────────────────────────
+
+function GearTab({
+  projectId,
+  gearLog,
+  templateOptions,
+  defaultTemplateId,
+  defaultTemplateName,
+}: {
+  projectId: string;
+  gearLog: SerialGearLogEntry[];
+  templateOptions: SerialGearTemplateOption[];
+  defaultTemplateId: string | null;
+  defaultTemplateName: string | null;
+}) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [busyEntryId, setBusyEntryId] = useState<string | null>(null);
+  const [pickedTemplateId, setPickedTemplateId] = useState<string>(
+    defaultTemplateId ?? templateOptions[0]?.id ?? ""
+  );
+
+  // Ad-hoc form state
+  const [adHocName, setAdHocName] = useState("");
+  const [adHocCategory, setAdHocCategory] =
+    useState<GearCategoryLiteral>("ACCESSORY");
+  const [adHocRequired, setAdHocRequired] = useState(false);
+
+  const packedCount = gearLog.filter((e) => e.packed).length;
+  const total = gearLog.length;
+  const requiredOutstanding = gearLog.filter(
+    (e) => e.required && !e.packed
+  ).length;
+
+  // Group by category for display.
+  const grouped = gearLog.reduce<Record<GearCategoryLiteral, SerialGearLogEntry[]>>(
+    (acc, e) => {
+      const key = (GEAR_CATEGORIES as readonly string[]).includes(e.category)
+        ? (e.category as GearCategoryLiteral)
+        : "OTHER";
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(e);
+      return acc;
+    },
+    {} as Record<GearCategoryLiteral, SerialGearLogEntry[]>
+  );
+
+  const handleInit = (templateId: string) => {
+    if (!templateId) {
+      toast("Pick a template first");
+      return;
+    }
+    startTransition(async () => {
+      const res = await initializeGearLog(projectId, templateId);
+      if (res.success) {
+        toast(`Loaded ${res.created ?? 0} items`);
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to initialise gear log");
+      }
+    });
+  };
+
+  const handleToggle = (entryId: string, next: boolean) => {
+    setBusyEntryId(entryId);
+    startTransition(async () => {
+      const res = await toggleGearItemPacked(projectId, entryId, next);
+      setBusyEntryId(null);
+      if (res.success) {
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to update item");
+      }
+    });
+  };
+
+  const handleAdHoc = () => {
+    if (!adHocName.trim()) {
+      toast("Name is required");
+      return;
+    }
+    startTransition(async () => {
+      const res = await addAdHocGearItemAction(projectId, {
+        name: adHocName,
+        category: adHocCategory,
+        required: adHocRequired,
+      });
+      if (res.success) {
+        toast("Item added");
+        setAdHocName("");
+        setAdHocRequired(false);
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to add item");
+      }
+    });
+  };
+
+  const handleRemove = (entryId: string, name: string) => {
+    if (!confirm(`Remove "${name}" from the gear list?`)) return;
+    setBusyEntryId(entryId);
+    startTransition(async () => {
+      const res = await removeGearItemAction(projectId, entryId);
+      setBusyEntryId(null);
+      if (res.success) {
+        toast("Item removed");
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to remove item");
+      }
+    });
+  };
+
+  // ─── Empty state ───────────────────────────────────────────────────────────
+  if (gearLog.length === 0) {
+    return (
+      <div>
+        <h2 style={SECTION_HEAD}>Gear</h2>
+
+        {templateOptions.length === 0 ? (
+          <div
+            style={{
+              padding: "2rem 1.5rem",
+              border: "0.5px dashed var(--border-strong)",
+              background: "var(--white)",
+            }}
+          >
+            <p style={{ ...EYEBROW, marginBottom: "0.5rem" }}>No kits yet</p>
+            <p
+              style={{
+                fontSize: "0.9rem",
+                color: "var(--charcoal-light)",
+                lineHeight: 1.55,
+                margin: 0,
+              }}
+            >
+              No gear templates exist for this session type yet. Build one in{" "}
+              <Link
+                href="/admin/settings/gear-templates"
+                style={{ color: "var(--olive)", textDecoration: "underline" }}
+              >
+                Settings → Gear Templates
+              </Link>
+              .
+            </p>
+          </div>
+        ) : (
+          <div
+            style={{
+              padding: "1.5rem",
+              border: "0.5px solid var(--border)",
+              background: "var(--white)",
+            }}
+          >
+            <p style={{ ...EYEBROW, marginBottom: "0.5rem" }}>
+              No gear log yet
+            </p>
+            <p
+              style={{
+                fontSize: "0.9rem",
+                color: "var(--charcoal-light)",
+                lineHeight: 1.55,
+                margin: "0 0 1rem 0",
+              }}
+            >
+              Pick a kit to copy into this project&apos;s day-of pack-check list.
+            </p>
+
+            <div
+              style={{
+                display: "flex",
+                gap: "0.5rem",
+                alignItems: "center",
+                flexWrap: "wrap",
+              }}
+            >
+              <select
+                value={pickedTemplateId}
+                onChange={(e) => setPickedTemplateId(e.target.value)}
+                style={{
+                  padding: "0.5rem 0.7rem",
+                  border: "0.5px solid var(--border-strong)",
+                  fontFamily: "'Jost', sans-serif",
+                  fontSize: "0.85rem",
+                  background: "var(--white)",
+                  borderRadius: 0,
+                  minWidth: "220px",
+                }}
+              >
+                {templateOptions.map((opt) => (
+                  <option key={opt.id} value={opt.id}>
+                    {opt.name}
+                    {opt.isDefault ? " (default)" : ""} · {opt.itemCount} items
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                style={BTN_PRIMARY}
+                onClick={() => handleInit(pickedTemplateId)}
+                disabled={isPending || !pickedTemplateId}
+              >
+                {isPending
+                  ? "Loading…"
+                  : `Initialize from ${
+                      templateOptions.find((t) => t.id === pickedTemplateId)
+                        ?.name ?? defaultTemplateName ?? "template"
+                    }`}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ─── Active log ────────────────────────────────────────────────────────────
+  return (
+    <div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          marginBottom: "1.25rem",
+          gap: "1rem",
+          flexWrap: "wrap",
+        }}
+      >
+        <h2 style={{ ...SECTION_HEAD, margin: 0 }}>Gear</h2>
+        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+          <span
+            style={{
+              ...PILL,
+              background:
+                packedCount === total ? "var(--olive)" : "var(--olive-dim)",
+              color: packedCount === total ? "var(--white)" : "var(--olive)",
+            }}
+          >
+            {packedCount} / {total} packed
+          </span>
+          {requiredOutstanding > 0 && (
+            <span
+              style={{
+                fontSize: "0.65rem",
+                letterSpacing: "0.15em",
+                textTransform: "uppercase",
+                padding: "0.25rem 0.7rem",
+                border: "0.5px solid rgba(176, 50, 50, 0.6)",
+                color: "#b03232",
+                background: "rgba(176, 50, 50, 0.06)",
+              }}
+            >
+              {requiredOutstanding} required outstanding
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Grouped check-off list */}
+      <div
+        style={{
+          border: "0.5px solid var(--border)",
+          background: "var(--white)",
+          marginBottom: "1.5rem",
+        }}
+      >
+        {GEAR_CATEGORIES.filter((c) => (grouped[c]?.length ?? 0) > 0).map(
+          (cat, ci) => (
+            <div
+              key={cat}
+              style={{
+                borderTop: ci === 0 ? "none" : "0.5px solid var(--border)",
+              }}
+            >
+              <div
+                style={{
+                  padding: "0.7rem 1.1rem",
+                  background: "rgba(42,42,40,0.03)",
+                  ...EYEBROW,
+                  fontSize: "0.6rem",
+                }}
+              >
+                {cat}
+              </div>
+              {grouped[cat].map((entry) => (
+                <GearRow
+                  key={entry.id}
+                  entry={entry}
+                  busy={busyEntryId === entry.id}
+                  onToggle={(next) => handleToggle(entry.id, next)}
+                  onRemove={() => handleRemove(entry.id, entry.name)}
+                />
+              ))}
+            </div>
+          )
+        )}
+      </div>
+
+      {/* Ad-hoc add */}
+      <div
+        style={{
+          border: "0.5px solid var(--border-strong)",
+          padding: "1rem",
+          background: "var(--white)",
+        }}
+      >
+        <p style={{ ...EYEBROW, margin: "0 0 0.6rem 0" }}>Add ad-hoc item</p>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1.5fr 1fr auto auto",
+            gap: "0.5rem",
+            alignItems: "center",
+          }}
+        >
+          <input
+            value={adHocName}
+            onChange={(e) => setAdHocName(e.target.value)}
+            placeholder="e.g. Backup tripod"
+            style={{
+              padding: "0.5rem 0.7rem",
+              border: "0.5px solid var(--border-strong)",
+              fontFamily: "'Jost', sans-serif",
+              fontSize: "0.85rem",
+              borderRadius: 0,
+              background: "var(--white)",
+              color: "var(--charcoal)",
+            }}
+          />
+          <select
+            value={adHocCategory}
+            onChange={(e) =>
+              setAdHocCategory(e.target.value as GearCategoryLiteral)
+            }
+            style={{
+              padding: "0.5rem 0.7rem",
+              border: "0.5px solid var(--border-strong)",
+              fontFamily: "'Jost', sans-serif",
+              fontSize: "0.85rem",
+              background: "var(--white)",
+              borderRadius: 0,
+            }}
+          >
+            {GEAR_CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.4rem",
+              fontSize: "0.78rem",
+              color: "var(--charcoal-light)",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={adHocRequired}
+              onChange={(e) => setAdHocRequired(e.target.checked)}
+            />
+            Required
+          </label>
+          <button
+            type="button"
+            style={BTN_PRIMARY}
+            onClick={handleAdHoc}
+            disabled={isPending || !adHocName.trim()}
+          >
+            {isPending ? "Adding…" : "Add"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GearRow({
+  entry,
+  busy,
+  onToggle,
+  onRemove,
+}: {
+  entry: SerialGearLogEntry;
+  busy: boolean;
+  onToggle: (next: boolean) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "auto 1fr auto auto",
+        gap: "0.85rem",
+        alignItems: "center",
+        padding: "0.75rem 1.1rem",
+        borderTop: "0.5px solid var(--border)",
+        opacity: busy ? 0.5 : 1,
+      }}
+    >
+      <input
+        type="checkbox"
+        checked={entry.packed}
+        onChange={(e) => onToggle(e.target.checked)}
+        disabled={busy}
+        aria-label={`Mark ${entry.name} packed`}
+        style={{ width: "1rem", height: "1rem", cursor: "pointer" }}
+      />
+      <div style={{ minWidth: 0 }}>
+        <p
+          style={{
+            margin: 0,
+            fontSize: "0.9rem",
+            color: "var(--charcoal)",
+            textDecoration: entry.packed ? "line-through" : "none",
+            textDecorationColor: "var(--charcoal-muted)",
+          }}
+        >
+          {entry.name}
+          {entry.required && (
+            <span
+              style={{
+                marginLeft: "0.5rem",
+                fontSize: "0.6rem",
+                letterSpacing: "0.12em",
+                textTransform: "uppercase",
+                color: "var(--olive)",
+                fontWeight: 500,
+              }}
+            >
+              Required
+            </span>
+          )}
+        </p>
+        {entry.notes && (
+          <p
+            style={{
+              margin: "0.2rem 0 0 0",
+              fontSize: "0.75rem",
+              color: "var(--charcoal-muted)",
+              lineHeight: 1.4,
+            }}
+          >
+            {entry.notes}
+          </p>
+        )}
+      </div>
+      <span
+        style={{
+          fontSize: "0.65rem",
+          letterSpacing: "0.12em",
+          textTransform: "uppercase",
+          color: "var(--charcoal-muted)",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {entry.packedAt
+          ? new Date(entry.packedAt).toLocaleTimeString([], {
+              hour: "numeric",
+              minute: "2-digit",
+            })
+          : "—"}
+      </span>
+      <button
+        type="button"
+        onClick={onRemove}
+        disabled={busy}
+        title="Remove from list"
+        style={{
+          background: "transparent",
+          border: "0.5px solid var(--border-strong)",
+          color: "var(--charcoal-light)",
+          padding: "0.3rem 0.55rem",
+          fontSize: "0.7rem",
+          fontFamily: "'Jost', sans-serif",
+          cursor: "pointer",
+          borderRadius: 0,
+        }}
+      >
+        ×
+      </button>
     </div>
   );
 }

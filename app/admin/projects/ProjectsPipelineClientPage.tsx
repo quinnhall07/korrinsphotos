@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ProjectStatus } from "@/lib/db/projects";
+import type { EditingSubStage } from "@/lib/editing-sla";
+import { computeEditingStatus, editingStatusColor } from "@/lib/editing-status";
 import { toast } from "@/components/ui/Toaster";
 import {
   bulkArchiveProjects,
@@ -31,6 +33,10 @@ type PipelineProject = {
   shootDateIso: string | null;
   /** ISO last-contacted timestamp. */
   lastContactedIso: string | null;
+  /** Phase 3.13 — ISO delivered-at timestamp (or null). */
+  deliveredAtIso: string | null;
+  /** Phase 3.13 — current editing sub-stage (or null). */
+  editingSubStage: string | null;
 };
 
 interface Props {
@@ -1047,6 +1053,7 @@ function TableView({
                 onToggle={onToggleSort}
                 align="right"
               />
+              <th style={thStyle()}>Editing</th>
               <SortableTh
                 label="Last Contacted"
                 colKey="lastContacted"
@@ -1060,7 +1067,7 @@ function TableView({
             {projects.length === 0 && (
               <tr>
                 <td
-                  colSpan={8}
+                  colSpan={9}
                   style={{
                     padding: "2.5rem 1rem",
                     textAlign: "center",
@@ -1175,6 +1182,9 @@ function TableView({
                   >
                     {days}d
                   </td>
+                  <td style={tdStyle()}>
+                    <EditingPill project={p} now={now} />
+                  </td>
                   <td style={tdStyle()}>{lastContactedLabel}</td>
                 </tr>
               );
@@ -1252,4 +1262,51 @@ function statusBg(status: string): string {
   if (status === "REFERRAL_SENT") return "#F3E8FF";
   if (status === "SITE_VISIT") return "#FEF3C7";
   return "#F1F5F9";
+}
+
+/**
+ * Phase 3.13 — editing-workflow pill. Renders only for IN_EDITING projects
+ * that have a shootDate and aren't yet delivered; otherwise emits an em-dash.
+ *
+ * Color dot is sourced from `editingStatusColor()` so this and the workspace
+ * stepper stay in sync.
+ */
+function EditingPill({ project, now }: { project: PipelineProject; now: number }) {
+  if (project.status !== "IN_EDITING") {
+    return <span style={{ color: "var(--charcoal-muted)" }}>—</span>;
+  }
+  const info = computeEditingStatus({
+    shootDate: project.shootDateIso ? new Date(project.shootDateIso) : null,
+    deliveredAt: project.deliveredAtIso ? new Date(project.deliveredAtIso) : null,
+    sessionType: project.sessionType,
+    editingSubStage: (project.editingSubStage as EditingSubStage | null) ?? null,
+    now: new Date(now),
+  });
+  if (!info) {
+    return <span style={{ color: "var(--charcoal-muted)" }}>—</span>;
+  }
+  return (
+    <span
+      title={`SLA ${info.slaDays}d · ${info.status.toLowerCase().replace("_", " ")}`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "0.4rem",
+        fontSize: "0.78rem",
+        color: "var(--charcoal)",
+      }}
+    >
+      <span
+        style={{
+          display: "inline-block",
+          width: "8px",
+          height: "8px",
+          borderRadius: "50%",
+          background: editingStatusColor(info.status),
+          flexShrink: 0,
+        }}
+      />
+      {info.pillLabel}
+    </span>
+  );
 }
