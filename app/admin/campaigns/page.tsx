@@ -13,6 +13,37 @@ import {
 export const metadata: Metadata = { title: "Campaigns | Admin" };
 export const dynamic = "force-dynamic";
 
+/**
+ * Best-effort: compute a lifetime ROAS map keyed by `campaignId` so each row
+ * can render a small chip. Pulls a single snapshot covering the entire
+ * window from the earliest campaign's `createdAt` through `now`. If the
+ * Phase 13.18 ROAS module is unavailable or throws for any reason, we
+ * swallow and return an empty map — the chips simply don't render.
+ */
+async function buildLifetimeRoasMap(
+  earliest: Date | null
+): Promise<Map<string, number | null>> {
+  if (!earliest) return new Map();
+  try {
+    // Dynamic import keeps this additive: if `lib/domain/roas` is missing or
+    // throws at import time we still render the page.
+    const mod = await import("@/lib/domain/roas").catch(() => null);
+    if (!mod) return new Map();
+    const snapshot = await mod.computeRoasSnapshot({
+      periodStart: earliest,
+      periodEnd: new Date(),
+    });
+    const map = new Map<string, number | null>();
+    for (const row of snapshot.byCampaign) {
+      if (row.campaignId) map.set(row.campaignId, row.roas);
+    }
+    return map;
+  } catch (err) {
+    console.error("[campaigns] lifetime ROAS lookup failed (non-fatal):", err);
+    return new Map();
+  }
+}
+
 export default async function AdminCampaignsPage() {
   await requireAdmin();
 
@@ -21,6 +52,15 @@ export default async function AdminCampaignsPage() {
 
   try {
     const docs = await listCampaigns();
+
+    // Earliest campaign createdAt → period start for the lifetime ROAS roll-up.
+    let earliest: Date | null = null;
+    for (const c of docs) {
+      const d = c.createdAt.toDate();
+      if (!earliest || d.getTime() < earliest.getTime()) earliest = d;
+    }
+    const lifetimeRoas = await buildLifetimeRoasMap(earliest);
+
     rows = docs.map((c) => ({
       id: c.id,
       slug: c.slug,
@@ -31,6 +71,7 @@ export default async function AdminCampaignsPage() {
       defaultUtm: c.defaultUtm,
       createdAt: c.createdAt.toDate().toISOString(),
       updatedAt: c.updatedAt.toDate().toISOString(),
+      lifetimeRoas: lifetimeRoas.has(c.id) ? lifetimeRoas.get(c.id) ?? null : null,
     }));
   } catch (err) {
     console.error("Failed to list campaigns:", err);

@@ -6,7 +6,10 @@ import { recomputeFinanceCache } from "@/lib/domain/analytics";
 import { dispatchScheduledBroadcasts } from "@/lib/broadcasts/sender";
 import { refreshWeatherSnapshotsDue } from "@/lib/domain/weather-snapshots";
 import { checkPressBacklinks } from "@/lib/domain/press-backlinks";
+import { sweepFarFutureRiskInboxItems } from "@/lib/domain/far-future-risk-sweep";
+import { sweepRecurringClientPrompts } from "@/lib/domain/recurring-revenue";
 import { dispatchShootBriefEmail } from "@/lib/domain/shoot-brief";
+import { regenerateUpcomingFilings } from "@/lib/domain/sales-tax-reports";
 import { NextResponse } from "next/server";
 import { createInboxItem } from "@/lib/db/inbox";
 import { addProjectMessage } from "@/lib/db/projects";
@@ -209,6 +212,56 @@ export async function GET(request: Request) {
       console.error("Press backlinks check error:", pErr);
     }
 
+    // Phase 13.16: far-future-date risk sweep. Walks every active project
+    // with a shootDate, computes the risk via `assessFarFutureRisk`, and
+    // enqueues a single OPEN inbox row for any project that lands in FLAG
+    // or STALE. Idempotent — re-runs skip rows that already have an open
+    // FAR_FUTURE_RISK item.
+    let farFutureRisk: {
+      scanned: number;
+      watch: number;
+      flag: number;
+      stale: number;
+      inboxItemsQueued: number;
+    } = { scanned: 0, watch: 0, flag: 0, stale: 0, inboxItemsQueued: 0 };
+    try {
+      farFutureRisk = await sweepFarFutureRiskInboxItems(now);
+    } catch (ffErr) {
+      console.error("Far-future risk sweep error:", ffErr);
+    }
+
+    // Phase 13.6: recurring revenue layer. Walk every client whose
+    // `recurringCadence` is ANNUAL or SEMI_ANNUAL and whose
+    // `recurringNextPromptAt <= now`, and queue a RE_ENGAGEMENT_DUE inbox
+    // item for each. Idempotent — the sweep skips clients that were
+    // prompted in the past 30 days. Per-client errors are caught inside
+    // the sweep so one bad row cannot poison the cron.
+    let recurringRevenue: {
+      swept: number;
+      queued: number;
+      skipped: number;
+    } = { swept: 0, queued: 0, skipped: 0 };
+    try {
+      recurringRevenue = await sweepRecurringClientPrompts(now);
+    } catch (rrErr) {
+      console.error("Recurring revenue sweep error:", rrErr);
+    }
+
+    // Phase 3.11: ensure a `salesTaxFilings` row exists for the most-recent
+    // closed period of every taxable state Korrin actually collected for.
+    // Flips DUE_SOON → OVERDUE when `dueBy < now` and enqueues a single
+    // SALES_TAX_OVERDUE inbox item per transition. Idempotent — re-runs
+    // skip already-recorded filings. Errors caught inside the sweep.
+    let salesTaxFilings: { created: number; skipped: number } = {
+      created: 0,
+      skipped: 0,
+    };
+    try {
+      salesTaxFilings = await regenerateUpcomingFilings(now);
+    } catch (stErr) {
+      console.error("Sales tax filings regeneration error:", stErr);
+    }
+
     return NextResponse.json({
       success: true,
       processed: processedCount,
@@ -223,6 +276,9 @@ export async function GET(request: Request) {
       weatherSnapshotsErrors,
       shootBriefsScheduled,
       pressBacklinks,
+      farFutureRisk,
+      recurringRevenue,
+      salesTaxFilings,
     });
   } catch (err) {
     console.error("Cron Error:", err);

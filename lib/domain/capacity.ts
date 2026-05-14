@@ -38,6 +38,10 @@ export interface BucketProject {
   clientName: string;
   /** Pipeline status — useful so the side panel can show booked vs proposal. */
   status: string;
+  /** Phase 13.16 — far-future-risk inputs surfaced for the client renderer. */
+  depositPaidAt: string | null;
+  lastContactedAt: string | null;
+  lastRespondedAt: string | null;
 }
 
 export interface WeekBucket {
@@ -129,6 +133,9 @@ export async function buildCapacityHeatmap(now: Date = new Date()): Promise<Week
     clientId: string;
     status: string;
     shootDate: Date;
+    depositPaidAt: Date | null;
+    lastContactedAt: Date | null;
+    lastRespondedAt: Date | null;
   }> = [];
   const clientIds = new Set<string>();
   for (const doc of snap.docs) {
@@ -138,6 +145,9 @@ export async function buildCapacityHeatmap(now: Date = new Date()): Promise<Week
     const ts = data.shootDate as Timestamp | undefined;
     if (!ts) continue;
     const d = ts.toDate();
+    const dp = data.depositPaidAt as Timestamp | undefined;
+    const lc = data.lastContactedAt as Timestamp | undefined;
+    const lr = data.lastRespondedAt as Timestamp | undefined;
     rows.push({
       id: doc.id,
       title: String(data.title ?? "Untitled"),
@@ -145,6 +155,9 @@ export async function buildCapacityHeatmap(now: Date = new Date()): Promise<Week
       clientId: String(data.clientId ?? ""),
       status,
       shootDate: d,
+      depositPaidAt: dp ? dp.toDate() : null,
+      lastContactedAt: lc ? lc.toDate() : null,
+      lastRespondedAt: lr ? lr.toDate() : null,
     });
     if (data.clientId) clientIds.add(String(data.clientId));
   }
@@ -174,6 +187,9 @@ export async function buildCapacityHeatmap(now: Date = new Date()): Promise<Week
       shootDate: r.shootDate.toISOString(),
       clientName: clientNames.get(r.clientId) ?? "",
       status: r.status,
+      depositPaidAt: r.depositPaidAt ? r.depositPaidAt.toISOString() : null,
+      lastContactedAt: r.lastContactedAt ? r.lastContactedAt.toISOString() : null,
+      lastRespondedAt: r.lastRespondedAt ? r.lastRespondedAt.toISOString() : null,
     });
   }
 

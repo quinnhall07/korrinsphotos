@@ -25,6 +25,12 @@ export interface SerializedCampaignRow {
   defaultUtm: CampaignDefaultUtm;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Phase 13.18 — lifetime ROAS chip. `null` when no ad-spend has been
+   * logged for this campaign. Optional so page renders fail-soft when the
+   * ROAS module is unavailable.
+   */
+  lifetimeRoas?: number | null;
 }
 
 // ─── Style primitives ──────────────────────────────────────────────────────
@@ -196,6 +202,36 @@ export function CampaignsListClientPage({ rows }: { rows: SerializedCampaignRow[
 
 // ─── Row ───────────────────────────────────────────────────────────────────
 
+function roasChipTone(roas: number): { bg: string; fg: string } {
+  if (roas >= 3) return { bg: "rgba(34,134,58,0.10)", fg: "#22863A" };
+  if (roas >= 1.5) return { bg: "rgba(107,120,69,0.12)", fg: "var(--olive)" };
+  if (roas >= 0.5) return { bg: "rgba(180,83,9,0.10)", fg: "#B45309" };
+  return { bg: "rgba(220,38,38,0.10)", fg: "#DC2626" };
+}
+
+function RoasChip({ roas }: { roas: number | null | undefined }) {
+  if (roas === null || roas === undefined || !Number.isFinite(roas)) return null;
+  const tone = roasChipTone(roas);
+  return (
+    <span
+      title="Lifetime ROAS — revenue ÷ ad spend (Phase 13.18)"
+      style={{
+        display: "inline-block",
+        padding: "0.12rem 0.45rem",
+        background: tone.bg,
+        color: tone.fg,
+        fontSize: "0.6rem",
+        letterSpacing: "0.14em",
+        textTransform: "uppercase",
+        marginLeft: "0.5rem",
+        verticalAlign: "middle",
+      }}
+    >
+      ROAS {roas.toFixed(2)}×
+    </span>
+  );
+}
+
 function CampaignRow({ row }: { row: SerializedCampaignRow }) {
   const conv = formatConversionRate(row.visitCount, row.inquiryCount);
   return (
@@ -224,6 +260,7 @@ function CampaignRow({ row }: { row: SerializedCampaignRow }) {
           }}
         >
           {row.title}
+          <RoasChip roas={row.lifetimeRoas} />
         </div>
         <div
           style={{

@@ -10,10 +10,16 @@ export type InboxItemType =
   | "PAYMENT_DISPUTE_CLOSED"
   | "CONTRACT_SIGNED"
   | "MESSAGE_RECEIVED"
+  | "CLIENT_MESSAGE"
   | "GALLERY_REQUESTED"
   | "UNMATCHED_INBOUND"
   | "TASK_FIRED"
-  | "PRESS_LINK_DOWN";
+  | "PRESS_LINK_DOWN"
+  | "RE_ENGAGEMENT_DUE"
+  | "FAR_FUTURE_RISK"
+  | "COI_REQUESTED"
+  | "COI_RECEIVED"
+  | "SALES_TAX_OVERDUE";
 
 export interface InboxItemDoc {
   id: string;

@@ -12,6 +12,7 @@ import {
   deleteFromR2,
 } from "@/lib/cloudflare";
 import type { EventStatus } from "@/lib/db/events";
+import { setDownloadPin } from "@/lib/db/events";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 
 // ─── Delete Photo ─────────────────────────────────────────────────────────────
@@ -168,4 +169,39 @@ export async function updateShootDates(
 
   revalidatePath(`/admin/events/${eventId}`);
   revalidatePath("/admin/events");
+}
+
+// ─── Phase 2.6 — Download PIN gate ─────────────────────────────────────────────
+//
+// `setEventDownloadPin` writes or clears a per-event numeric PIN. When set,
+// the public + favorites zip endpoints require `?pin=...` to match. The
+// comparison is constant-time (see `verifyDownloadPin` in lib/db/events).
+//
+// Validation rules (mirrored on the admin UI):
+//   - `pin === null` → clear.
+//   - non-null → 4–6 digits, numeric only.
+
+export async function setEventDownloadPin(
+  eventId: string,
+  pin: string | null,
+): Promise<{ success: boolean; error?: string }> {
+  await requireAdmin();
+
+  if (pin !== null) {
+    const trimmed = pin.trim();
+    if (!/^\d{4,6}$/.test(trimmed)) {
+      return { success: false, error: "PIN must be 4–6 digits." };
+    }
+    pin = trimmed;
+  }
+
+  try {
+    await setDownloadPin(eventId, pin);
+  } catch (err) {
+    console.error("[setEventDownloadPin] failed", { eventId, err });
+    return { success: false, error: "Failed to save PIN." };
+  }
+
+  revalidatePath(`/admin/events/${eventId}`);
+  return { success: true };
 }

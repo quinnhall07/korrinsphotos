@@ -274,6 +274,55 @@ async function renderVendorSection(projectId: string): Promise<string> {
   }
 }
 
+// Phase 2.8 — Day-of timeline section. Reads the subcollection directly by
+// path so this works even before `lib/db/day-of-timeline.ts` is fully deployed
+// in a sibling agent's environment. Defensive: empty / failed reads render a
+// graceful fallback line instead of crashing the brief.
+async function renderDayOfScheduleSection(projectId: string): Promise<string> {
+  try {
+    const snap = await adminDb
+      .collection("projects")
+      .doc(projectId)
+      .collection("dayOfTimeline")
+      .orderBy("order")
+      .get();
+    if (snap.empty) {
+      return `<p style="color:var(--charcoal-muted);font-style:italic;">No day-of timeline set.</p>`;
+    }
+    const items = snap.docs.map((d) => {
+      const data = d.data() as {
+        title?: string;
+        startTime?: string;
+        durationMinutes?: number;
+        location?: string;
+        blockType?: string;
+        notes?: string;
+      };
+      const start = (data.startTime ?? "").trim() || "—";
+      const title = (data.title ?? "").trim() || "Untitled block";
+      const dur =
+        typeof data.durationMinutes === "number" && data.durationMinutes > 0
+          ? `${data.durationMinutes}m`
+          : "—";
+      const loc = (data.location ?? "").trim();
+      const type = (data.blockType ?? "").trim();
+      const notes = (data.notes ?? "").trim();
+      const meta = [type, dur, loc].filter(Boolean).join(" · ");
+      return `
+        <li>
+          <span class="t-time">${escapeHtml(start)}</span>
+          <span class="t-title">${escapeHtml(title)}</span>
+          <span class="t-meta">${escapeHtml(meta)}</span>
+          ${notes ? `<span class="t-notes">${escapeHtml(notes)}</span>` : ""}
+        </li>`;
+    });
+    return `<ul class="t-list">${items.join("")}</ul>`;
+  } catch (err) {
+    console.error("[shoot-brief] day-of timeline load failed", err);
+    return `<p style="color:var(--charcoal-muted);font-style:italic;">Day-of timeline unavailable</p>`;
+  }
+}
+
 async function renderGearSection(projectId: string): Promise<string> {
   try {
     // Subcollection access is path-only; we DELIBERATELY do not import from
@@ -322,6 +371,7 @@ interface BriefSections {
   location: string;
   weather: string;
   goldenHour: string;
+  dayOfSchedule: string;
   questionnaire: string;
   vendors: string;
   gear: string;
@@ -451,11 +501,41 @@ function buildHtmlDocument(title: string, generatedAt: string, sections: BriefSe
       text-transform: uppercase;
     }
     .g-notes { color: var(--charcoal-muted); }
+    .t-list { list-style: none; padding: 0; margin: 0; }
+    .t-list li {
+      padding: 0.55rem 0;
+      border-top: 0.5px solid var(--border);
+      display: grid;
+      grid-template-columns: 70px 1.6fr 1.4fr;
+      gap: 0.75rem;
+      font-size: 0.92rem;
+      align-items: baseline;
+    }
+    .t-list li:first-child { border-top: none; }
+    .t-time {
+      font-family: "Cormorant Garamond", Georgia, serif;
+      color: var(--olive);
+      font-size: 1.05rem;
+    }
+    .t-title { color: var(--charcoal); }
+    .t-meta {
+      color: var(--charcoal-muted);
+      font-size: 0.78rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .t-notes {
+      grid-column: 1 / -1;
+      color: var(--charcoal-muted);
+      font-size: 0.82rem;
+      padding-top: 0.25rem;
+    }
     @media (max-width: 540px) {
       .wrap { padding: 2rem 1.25rem; }
       .grid { grid-template-columns: 1fr; }
       .v-list li { grid-template-columns: 1fr; gap: 0.2rem; }
       .g-list li { grid-template-columns: 1fr; gap: 0.2rem; }
+      .t-list li { grid-template-columns: 1fr; gap: 0.2rem; }
     }
   </style>
 </head>
@@ -495,6 +575,12 @@ function buildHtmlDocument(title: string, generatedAt: string, sections: BriefSe
       <p class="eyebrow">Light</p>
       <h2>Golden &amp; blue hour</h2>
       ${sections.goldenHour}
+    </section>
+
+    <section>
+      <p class="eyebrow">Schedule</p>
+      <h2>Day-of schedule</h2>
+      ${sections.dayOfSchedule}
     </section>
 
     <section>
@@ -550,11 +636,13 @@ export async function generateShootBriefHtml(projectId: string): Promise<{
     console.error("[generateShootBriefHtml] client lookup failed", { projectId, err });
   }
 
-  const [questionnaireHtml, vendorsHtml, gearHtml] = await Promise.all([
-    renderQuestionnaireSection(projectId),
-    renderVendorSection(projectId),
-    renderGearSection(projectId),
-  ]);
+  const [questionnaireHtml, vendorsHtml, gearHtml, dayOfScheduleHtml] =
+    await Promise.all([
+      renderQuestionnaireSection(projectId),
+      renderVendorSection(projectId),
+      renderGearSection(projectId),
+      renderDayOfScheduleSection(projectId),
+    ]);
 
   const sections: BriefSections = {
     client: renderClientSection(client),
@@ -562,6 +650,7 @@ export async function generateShootBriefHtml(projectId: string): Promise<{
     location: renderLocationSection(project),
     weather: renderWeatherSection(project.weatherSnapshot),
     goldenHour: renderGoldenHourSection(project),
+    dayOfSchedule: dayOfScheduleHtml,
     questionnaire: questionnaireHtml,
     vendors: vendorsHtml,
     gear: gearHtml,

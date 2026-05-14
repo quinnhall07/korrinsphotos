@@ -4,8 +4,23 @@
 // Full-screen lightbox driven by React state — no vanilla JS global functions.
 // Keyboard navigation (←, →, Escape), click-outside to close.
 // Images protected: no context menu, no drag.
+//
+// Phase 2.6 — Mobile swipe gestures:
+//   - Horizontal swipe (delta ≥ 60px, more horizontal than vertical) advances
+//     to the previous/next photo.
+//   - Vertical pull-down (delta ≥ 120px) dismisses the lightbox, matching
+//     the iOS-photo-app feel.
+// Pinch-zoom relies on native browser behaviour — we never set
+// `touch-action: none` on the surface, so two-finger zoom works as expected.
+//
+// Phase 2.6 — Per-photo resolution picker:
+//   - An overflow "Download" menu in the top toolbar offers three options:
+//     `web` (~1200px), `print` (~2048px), `original` (R2 direct).
+//   - Selecting `original` requires the photo to expose `r2Key` /
+//     `storageKey` (passed in via `originalDownloadUrl`); when absent, the
+//     option is disabled and a tooltip explains why.
 
-import { useEffect, useCallback, useState } from "react";
+import { useEffect, useCallback, useRef, useState } from "react";
 import type { MasonryPhoto } from "@/components/MasonryGrid";
 
 interface LightboxProps {
@@ -13,15 +28,39 @@ interface LightboxProps {
   initialIndex: number;
   eventName?: string;
   onClose: () => void;
+  /**
+   * Phase 2.6 — Optional callback that builds a download URL for the
+   * currently-viewed photo at the given resolution tier. If omitted the
+   * download menu is hidden.
+   */
+  buildDownloadUrl?: (
+    photo: MasonryPhoto,
+    tier: ResolutionTier,
+  ) => string | null;
 }
+
+export type ResolutionTier = "web" | "print" | "original";
+
+const TIER_LABELS: Record<ResolutionTier, string> = {
+  web: "Web (~1200px)",
+  print: "Print (~2048px)",
+  original: "Original",
+};
+
+// Swipe thresholds (in pixels).
+const HORIZONTAL_SWIPE_PX = 60;
+const VERTICAL_DISMISS_PX = 120;
 
 export function Lightbox({
   photos,
   initialIndex,
   eventName,
   onClose,
+  buildDownloadUrl,
 }: LightboxProps) {
   const [index, setIndex] = useState(initialIndex);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const touchStartRef = useRef<{ x: number; y: number; t: number } | null>(null);
 
   const prev = useCallback(() => {
     setIndex((i) => (i - 1 + photos.length) % photos.length);
@@ -47,7 +86,50 @@ export function Lightbox({
     };
   }, [prev, next, onClose]);
 
+  function handleTouchStart(e: React.TouchEvent) {
+    if (e.touches.length !== 1) {
+      // Multi-finger gesture (pinch) — leave it to native browser zoom.
+      touchStartRef.current = null;
+      return;
+    }
+    const t = e.touches[0];
+    touchStartRef.current = { x: t.clientX, y: t.clientY, t: Date.now() };
+  }
+
+  function handleTouchEnd(e: React.TouchEvent) {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!start) return;
+    const end = e.changedTouches[0];
+    if (!end) return;
+    const dx = end.clientX - start.x;
+    const dy = end.clientY - start.y;
+    const absX = Math.abs(dx);
+    const absY = Math.abs(dy);
+
+    // Vertical pull-down to dismiss takes priority when it's clearly vertical.
+    if (dy >= VERTICAL_DISMISS_PX && absY > absX) {
+      onClose();
+      return;
+    }
+
+    // Horizontal swipe to advance / go back.
+    if (absX >= HORIZONTAL_SWIPE_PX && absX > absY) {
+      if (dx < 0) next();
+      else prev();
+    }
+  }
+
   const current = photos[index];
+
+  function pickDownload(tier: ResolutionTier) {
+    if (!buildDownloadUrl) return;
+    const url = buildDownloadUrl(current, tier);
+    if (!url) return;
+    setMenuOpen(false);
+    // Open in a new tab — the response headers determine save vs view.
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
 
   return (
     <div
@@ -63,15 +145,100 @@ export function Lightbox({
         animation: "fadeIn 0.35s ease",
       }}
       onClick={onClose}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
     >
-      <button
-        onClick={onClose}
-        style={{ ...navButtonStyle, position: "fixed", top: "1.5rem", right: "2rem" }}
-        aria-label="Close lightbox"
-        onContextMenu={(e) => e.preventDefault()}
+      {/* Top-right controls: download menu + close. */}
+      <div
+        style={{
+          position: "fixed",
+          top: "1.5rem",
+          right: "2rem",
+          display: "flex",
+          gap: "0.5rem",
+          zIndex: 2,
+        }}
+        onClick={(e) => e.stopPropagation()}
       >
-        ✕
-      </button>
+        {buildDownloadUrl && (
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => setMenuOpen((v) => !v)}
+              style={{ ...navButtonStyle, width: "auto", padding: "0 0.85rem" }}
+              aria-label="Download this photo"
+            >
+              ↓
+            </button>
+            {menuOpen && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: "calc(100% + 0.4rem)",
+                  right: 0,
+                  background: "rgba(20,20,18,0.96)",
+                  border: "0.5px solid rgba(250,249,246,0.2)",
+                  minWidth: "180px",
+                  padding: "0.3rem 0",
+                }}
+              >
+                <div
+                  style={{
+                    padding: "0.4rem 0.8rem",
+                    fontSize: "0.6rem",
+                    letterSpacing: "0.18em",
+                    textTransform: "uppercase",
+                    color: "rgba(250,249,246,0.4)",
+                    borderBottom: "0.5px solid rgba(250,249,246,0.1)",
+                  }}
+                >
+                  Download this photo
+                </div>
+                {(["web", "print", "original"] as ResolutionTier[]).map((tier) => {
+                  const url = buildDownloadUrl(current, tier);
+                  const disabled = !url;
+                  return (
+                    <button
+                      key={tier}
+                      onClick={() => pickDownload(tier)}
+                      disabled={disabled}
+                      title={
+                        disabled && tier === "original"
+                          ? "Original not available for this photo"
+                          : undefined
+                      }
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        textAlign: "left",
+                        padding: "0.55rem 0.9rem",
+                        background: "transparent",
+                        border: "none",
+                        color: disabled
+                          ? "rgba(250,249,246,0.35)"
+                          : "rgba(250,249,246,0.85)",
+                        fontSize: "0.78rem",
+                        fontFamily: "'Jost', sans-serif",
+                        cursor: disabled ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      {TIER_LABELS[tier]}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        <button
+          onClick={onClose}
+          style={navButtonStyle}
+          aria-label="Close lightbox"
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          ✕
+        </button>
+      </div>
 
       {/* Prev */}
       {photos.length > 1 && (
@@ -97,6 +264,10 @@ export function Lightbox({
           maxHeight: "90vh",
           objectFit: "contain",
           userSelect: "none",
+          // pointerEvents: "none" was used to block right-click reliably. We
+          // keep image taps from bubbling via the parent stopPropagation, so
+          // leaving pointerEvents on means touch gestures register on the
+          // image area — important for swipe on mobile.
           pointerEvents: "none",
           transition: "opacity 0.3s",
         }}

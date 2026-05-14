@@ -31,6 +31,11 @@ import {
   removeGearItem,
 } from "@/lib/db/gear-log";
 import type { GearItemCategory } from "@/lib/db/gear-templates";
+import {
+  setClientRecurringCadence,
+  bumpRecurringNextPromptAt,
+  type RecurringCadence,
+} from "@/lib/db/clients";
 
 export async function updateProjectStatus(
   projectId: string,
@@ -522,5 +527,60 @@ export async function removeGearItemAction(
       success: false,
       error: err instanceof Error ? err.message : "Failed to remove gear item.",
     };
+  }
+}
+
+/* ─────────────────  Recurring revenue (Phase 13.6)  ───────────────────── */
+
+const VALID_CADENCES: RecurringCadence[] = ["ANNUAL", "SEMI_ANNUAL", "NONE"];
+
+/**
+ * Set the client's recurring re-engagement cadence. Resolves clientId
+ * from projectId so the admin UI can call this with the projectId it
+ * already has on the workspace page.
+ */
+export async function setRecurringCadenceAction(
+  projectId: string,
+  cadence: RecurringCadence
+): Promise<{ success: boolean; error?: string }> {
+  await requireAdmin();
+  if (!projectId) return { success: false, error: "Missing project id." };
+  if (!VALID_CADENCES.includes(cadence)) {
+    return { success: false, error: "Invalid cadence." };
+  }
+  try {
+    const snap = await adminDb.collection("projects").doc(projectId).get();
+    if (!snap.exists) return { success: false, error: "Project not found." };
+    const clientId: string | undefined = snap.data()?.clientId;
+    if (!clientId) return { success: false, error: "Project has no client." };
+
+    await setClientRecurringCadence(clientId, cadence);
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true };
+  } catch (err) {
+    console.error("setRecurringCadenceAction error:", err);
+    return { success: false, error: "Failed to update cadence." };
+  }
+}
+
+/**
+ * Snooze the re-engagement prompt for a client by 30 days. Used by the
+ * inbox detail panel's "Snooze 30 days" button. Does NOT touch cadence.
+ */
+export async function dismissReengagementPrompt(
+  clientId: string
+): Promise<{ success: boolean; error?: string }> {
+  await requireAdmin();
+  if (!clientId) return { success: false, error: "Missing client id." };
+  try {
+    const next = new Date();
+    next.setDate(next.getDate() + 30);
+    await bumpRecurringNextPromptAt(clientId, next);
+    revalidatePath("/admin/inbox");
+    revalidatePath("/admin");
+    return { success: true };
+  } catch (err) {
+    console.error("dismissReengagementPrompt error:", err);
+    return { success: false, error: "Failed to snooze prompt." };
   }
 }

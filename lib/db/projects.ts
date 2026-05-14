@@ -172,6 +172,33 @@ export interface ProjectDoc {
    * admin advanced (or set) the sub-stage and who did it.
    */
   editingSubStageHistory?: { stage: EditingSubStage; at: Timestamp; byUid?: string }[];
+
+  // ─── Phase 3.9 — COI (Certificate of Insurance) workflow ────────────────────
+  //
+  // Venue-required shoots (most weddings, some commercial) need a COI issued
+  // by the photographer's insurer naming the venue as an additional insured.
+  // All fields are optional / back-compat — legacy projects render as "NONE".
+  /**
+   * Toggled by the admin on the Contract tab. When true, the request /
+   * upload UI appears and the pipeline surfaces a "COI" chip.
+   */
+  coiRequired?: boolean;
+  /** Set when `requestCoiAction` emails the insurer. */
+  coiRequestedAt?: Timestamp;
+  /** Insurer destination email captured from `users/{uid}.insurerContact.email`. */
+  coiInsurerEmail?: string;
+  /** Venue display name (e.g. "The Olde Mill"). */
+  coiVenueName?: string;
+  /** Full venue mailing address — printed on the cert. */
+  coiVenueAddress?: string;
+  /** Required additional-insured language. Defaults from user setting. */
+  coiAdditionalInsuredText?: string;
+  /** R2 object key under `coi/{projectId}/` once the cert PDF comes back. */
+  coiR2Key?: string;
+  /** Set when the cert PDF has been uploaded. */
+  coiReceivedAt?: Timestamp;
+  /** State machine: NONE (default) → REQUESTED → RECEIVED → EXPIRED. */
+  coiStatus?: "NONE" | "REQUESTED" | "RECEIVED" | "EXPIRED";
 }
 
 export interface MessageDoc {

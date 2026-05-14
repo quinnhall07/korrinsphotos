@@ -12,10 +12,19 @@ import {
   regenerateShootBrief,
   getShootBriefDownloadUrl,
   setEditingSubStage,
+  setRecurringCadenceAction,
+  dismissReengagementPrompt,
 } from "../actions";
 import { EDITING_SUB_STAGES, type EditingSubStage } from "@/lib/editing-sla";
 import { computeEditingStatus, editingStatusColor } from "@/lib/editing-status";
 import { createDraftContract, sendContract } from "../contract-actions";
+import {
+  setCoiRequiredAction,
+  updateCoiVenueAction,
+  requestCoiAction,
+  presignCoiUploadAction,
+  confirmCoiUploadAction,
+} from "../coi-actions";
 import { sendInvoice, markInvoicePaidManually } from "../invoice-actions";
 import { sendProjectMessage } from "../message-actions";
 import {
@@ -25,6 +34,12 @@ import {
   type CreatePressSubmissionInput,
   type UpdatePressSubmissionInput,
 } from "../press-actions";
+import {
+  createTimelineBlockAction,
+  updateTimelineBlockAction,
+  deleteTimelineBlockAction,
+  reorderTimelineBlocksAction,
+} from "../timeline-actions";
 import { sendQuestionnaireForProjectAction } from "@/app/admin/questionnaires/templates/actions";
 // AI components — supplied by Agent 5 (AI features) in the same merge.
 // Imported eagerly so the parent's npm build wires the dependency edge.
@@ -43,6 +58,7 @@ import type {
   SerialGearLogEntry,
   SerialGearTemplateOption,
   SerialPressSubmission,
+  SerialTimelineBlock,
 } from "./page";
 import {
   initializeGearLog,
@@ -90,6 +106,7 @@ type TabId =
   | "contract"
   | "invoice"
   | "gallery"
+  | "day-of"
   | "timeline"
   | "files"
   | "gear"
@@ -102,11 +119,24 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "contract", label: "Contract" },
   { id: "invoice", label: "Invoice" },
   { id: "gallery", label: "Gallery" },
+  { id: "day-of", label: "Day-of" },
   { id: "timeline", label: "Timeline" },
   { id: "files", label: "Files" },
   { id: "gear", label: "Gear" },
   { id: "press", label: "Press" },
   { id: "notes", label: "Notes" },
+];
+
+const TIMELINE_BLOCK_TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: "PREP", label: "Prep" },
+  { value: "TRAVEL", label: "Travel" },
+  { value: "SHOOT", label: "Shoot" },
+  { value: "BREAK", label: "Break" },
+  { value: "DETAIL", label: "Detail" },
+  { value: "FAMILY", label: "Family" },
+  { value: "CEREMONY", label: "Ceremony" },
+  { value: "RECEPTION", label: "Reception" },
+  { value: "OTHER", label: "Other" },
 ];
 
 const TEMPLATES: { id: string; label: string; subject: string; body: string }[] = [
@@ -249,6 +279,10 @@ interface Props {
   defaultGearTemplateId: string | null;
   defaultGearTemplateName: string | null;
   pressSubmissions: SerialPressSubmission[];
+  dayOfTimeline: SerialTimelineBlock[];
+  /** Phase 3.9 — pre-filled from `users/{uid}.insurerContact`. */
+  insurerDefaultAdditionalInsuredText: string | null;
+  insurerEmailConfigured: boolean;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -268,6 +302,9 @@ export function ProjectWorkspaceClient({
   defaultGearTemplateId,
   defaultGearTemplateName,
   pressSubmissions,
+  dayOfTimeline,
+  insurerDefaultAdditionalInsuredText,
+  insurerEmailConfigured,
 }: Props) {
   const [tab, setTab] = useState<TabId>("overview");
   const [statusModalOpen, setStatusModalOpen] = useState(false);
@@ -396,6 +433,7 @@ export function ProjectWorkspaceClient({
           {tab === "overview" && (
             <OverviewTab
               project={project}
+              client={client}
               nextBestAction={nextBestAction}
               questionnaires={questionnaires}
               reviewRequests={reviewRequests}
@@ -405,10 +443,19 @@ export function ProjectWorkspaceClient({
             <MessagesTab projectId={project.id} messages={messages} />
           )}
           {tab === "contract" && (
-            <ContractTab projectId={project.id} contract={contract} />
+            <ContractTab
+              projectId={project.id}
+              contract={contract}
+              project={project}
+              insurerDefaultAdditionalInsuredText={insurerDefaultAdditionalInsuredText}
+              insurerEmailConfigured={insurerEmailConfigured}
+            />
           )}
           {tab === "invoice" && <InvoiceTab invoices={invoices} />}
           {tab === "gallery" && <GalleryTab eventId={eventId} />}
+          {tab === "day-of" && (
+            <DayOfTab projectId={project.id} initialBlocks={dayOfTimeline} />
+          )}
           {tab === "timeline" && (
             <TimelineTab
               project={project}
@@ -544,11 +591,13 @@ function TabNav({ active, onChange }: { active: TabId; onChange: (t: TabId) => v
 
 function OverviewTab({
   project,
+  client,
   nextBestAction,
   questionnaires,
   reviewRequests,
 }: {
   project: SerialProject;
+  client: SerialClient;
   nextBestAction: string;
   questionnaires: SerialQuestionnaire[];
   reviewRequests: SerialReviewRequest[];
@@ -726,6 +775,8 @@ function OverviewTab({
         shootDate={project.shootDate}
         shootBriefGeneratedAt={project.shootBriefGeneratedAt}
       />
+
+      <RecurringRevenueBlock projectId={project.id} client={client} />
 
       <div style={{ display: "flex", gap: "1.5rem", fontSize: "0.8rem", color: "var(--charcoal-muted)", flexWrap: "wrap" }}>
         <span>Status changes: <strong style={{ color: "var(--charcoal)" }}>{project.statusHistory.length}</strong></span>
@@ -1006,6 +1057,176 @@ function ShootBriefBlock({
   );
 }
 
+// ─── Recurring revenue block (Phase 13.6 — rendered inside Overview tab) ───
+
+function RecurringRevenueBlock({
+  projectId,
+  client,
+}: {
+  projectId: string;
+  client: SerialClient;
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
+
+  const cadence = client.recurringCadence;
+  const nextPromptLabel = client.recurringNextPromptAt
+    ? fmtDate(client.recurringNextPromptAt)
+    : "—";
+  const cadenceLabel =
+    cadence === "ANNUAL"
+      ? "Annual"
+      : cadence === "SEMI_ANNUAL"
+      ? "Every 6 months"
+      : "Off";
+
+  const handleCadenceChange = (next: "ANNUAL" | "SEMI_ANNUAL" | "NONE") => {
+    startTransition(async () => {
+      const res = await setRecurringCadenceAction(projectId, next);
+      if (res.success) {
+        toast("Cadence updated");
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to update cadence");
+      }
+    });
+  };
+
+  const handleSnooze = () => {
+    startTransition(async () => {
+      const res = await dismissReengagementPrompt(client.id);
+      if (res.success) {
+        toast("Snoozed 30 days");
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to snooze");
+      }
+    });
+  };
+
+  return (
+    <div
+      style={{
+        marginBottom: "1.5rem",
+        border: "0.5px solid var(--border)",
+        padding: "1rem 1.1rem",
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          width: "100%",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          background: "transparent",
+          border: "none",
+          padding: 0,
+          cursor: "pointer",
+          textAlign: "left",
+          color: "var(--charcoal)",
+          fontFamily: "'Jost', sans-serif",
+        }}
+        aria-expanded={open}
+      >
+        <div>
+          <p style={{ ...EYEBROW, margin: "0 0 0.3rem 0" }}>Recurring revenue</p>
+          <p style={{ margin: 0, fontSize: "0.88rem", color: "var(--charcoal-light)" }}>
+            {cadenceLabel}
+            {cadence !== "NONE" && (
+              <span style={{ color: "var(--charcoal-muted)" }}>
+                {" "}· next prompt {nextPromptLabel}
+              </span>
+            )}
+            {client.recurringPromptsSent > 0 && (
+              <span style={{ color: "var(--charcoal-muted)" }}>
+                {" "}· {client.recurringPromptsSent} sent
+              </span>
+            )}
+          </p>
+        </div>
+        <span style={{ fontSize: "0.85rem", color: "var(--charcoal-muted)" }}>
+          {open ? "▾" : "▸"}
+        </span>
+      </button>
+
+      {open && (
+        <div style={{ marginTop: "0.95rem" }}>
+          <p
+            style={{
+              fontSize: "0.78rem",
+              color: "var(--charcoal-muted)",
+              margin: "0 0 0.65rem 0",
+              lineHeight: 1.5,
+            }}
+          >
+            Choose how often Korrin&apos;s inbox should surface a re-engagement
+            prompt for this client. Set after gallery delivery for repeat-friendly
+            session types (Family, Portrait, Engagement, Wedding).
+          </p>
+
+          <div
+            style={{
+              display: "flex",
+              gap: "0.4rem",
+              flexWrap: "wrap",
+              marginBottom: "0.85rem",
+            }}
+          >
+            {(["ANNUAL", "SEMI_ANNUAL", "NONE"] as const).map((opt) => {
+              const isActive = opt === cadence;
+              const label =
+                opt === "ANNUAL"
+                  ? "Annual"
+                  : opt === "SEMI_ANNUAL"
+                  ? "Every 6 months"
+                  : "Off";
+              return (
+                <button
+                  key={opt}
+                  type="button"
+                  disabled={pending || isActive}
+                  onClick={() => handleCadenceChange(opt)}
+                  style={{
+                    padding: "0.4rem 0.85rem",
+                    border: isActive
+                      ? "0.5px solid var(--olive)"
+                      : "0.5px solid var(--border-strong)",
+                    background: isActive ? "var(--olive-dim)" : "var(--white)",
+                    color: isActive ? "var(--olive)" : "var(--charcoal)",
+                    fontFamily: "'Jost', sans-serif",
+                    fontSize: "0.78rem",
+                    letterSpacing: "0.06em",
+                    cursor: isActive || pending ? "default" : "pointer",
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+
+          {cadence !== "NONE" && (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={handleSnooze}
+              style={{
+                ...BTN_GHOST,
+                opacity: pending ? 0.6 : 1,
+              }}
+            >
+              Snooze 30 days
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Messages tab ─────────────────────────────────────────────────────────────
 
 function MessagesTab({ projectId, messages }: { projectId: string; messages: SerialMessage[] }) {
@@ -1228,7 +1449,19 @@ function MessagesTab({ projectId, messages }: { projectId: string; messages: Ser
 
 // ─── Contract tab ─────────────────────────────────────────────────────────────
 
-function ContractTab({ projectId, contract }: { projectId: string; contract: SerialContract | null }) {
+function ContractTab({
+  projectId,
+  contract,
+  project,
+  insurerDefaultAdditionalInsuredText,
+  insurerEmailConfigured,
+}: {
+  projectId: string;
+  contract: SerialContract | null;
+  project: SerialProject;
+  insurerDefaultAdditionalInsuredText: string | null;
+  insurerEmailConfigured: boolean;
+}) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
 
@@ -1261,6 +1494,14 @@ function ContractTab({ projectId, contract }: { projectId: string; contract: Ser
   return (
     <div>
       <h2 style={SECTION_HEAD}>Contract</h2>
+
+      <CoiBlock
+        projectId={projectId}
+        project={project}
+        insurerDefaultAdditionalInsuredText={insurerDefaultAdditionalInsuredText}
+        insurerEmailConfigured={insurerEmailConfigured}
+      />
+
       {!contract ? (
         <div>
           <p style={{ color: "var(--charcoal-muted)", fontSize: "0.9rem" }}>
@@ -1304,6 +1545,428 @@ function ContractTab({ projectId, contract }: { projectId: string; contract: Ser
               background: "var(--white)",
             }}
           />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── COI block (rendered inside the Contract tab) ───────────────────────────
+//
+// Phase 3.9 — Venue-required shoots need a Certificate of Insurance from the
+// photographer's insurer naming the venue as an additional insured. This
+// block lets the admin (a) toggle COI required, (b) capture venue + clause,
+// (c) email the insurer, and (d) upload the returned PDF.
+
+function coiStatusPill(
+  status: "NONE" | "REQUESTED" | "RECEIVED" | "EXPIRED"
+): React.CSSProperties {
+  const base: React.CSSProperties = {
+    display: "inline-block",
+    padding: "0.25rem 0.7rem",
+    fontSize: "0.65rem",
+    letterSpacing: "0.15em",
+    textTransform: "uppercase",
+    border: "0.5px solid",
+  };
+  if (status === "RECEIVED") {
+    return {
+      ...base,
+      background: "var(--olive)",
+      color: "var(--white)",
+      borderColor: "var(--olive)",
+    };
+  }
+  if (status === "REQUESTED") {
+    return {
+      ...base,
+      background: "var(--olive-dim)",
+      color: "var(--olive)",
+      borderColor: "var(--olive)",
+    };
+  }
+  if (status === "EXPIRED") {
+    return {
+      ...base,
+      background: "rgba(176,50,50,0.08)",
+      color: "#b03232",
+      borderColor: "rgba(176,50,50,0.5)",
+    };
+  }
+  return {
+    ...base,
+    background: "transparent",
+    color: "var(--charcoal-muted)",
+    borderColor: "var(--border-strong)",
+  };
+}
+
+function CoiBlock({
+  projectId,
+  project,
+  insurerDefaultAdditionalInsuredText,
+  insurerEmailConfigured,
+}: {
+  projectId: string;
+  project: SerialProject;
+  insurerDefaultAdditionalInsuredText: string | null;
+  insurerEmailConfigured: boolean;
+}) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [venueName, setVenueName] = useState(project.coiVenueName ?? "");
+  const [venueAddress, setVenueAddress] = useState(project.coiVenueAddress ?? "");
+  const [additionalInsuredText, setAdditionalInsuredText] = useState(
+    project.coiAdditionalInsuredText ?? insurerDefaultAdditionalInsuredText ?? ""
+  );
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const toggleRequired = (next: boolean) => {
+    startTransition(async () => {
+      const res = await setCoiRequiredAction(projectId, next);
+      if (res.success) {
+        toast(next ? "COI required" : "COI not required");
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to update COI flag");
+      }
+    });
+  };
+
+  const saveVenue = async (silent = false) => {
+    const res = await updateCoiVenueAction(projectId, {
+      coiVenueName: venueName,
+      coiVenueAddress: venueAddress,
+      coiAdditionalInsuredText: additionalInsuredText,
+    });
+    if (!res.success) {
+      toast(res.error ?? "Failed to save venue");
+      return false;
+    }
+    if (!silent) toast("Venue details saved");
+    return true;
+  };
+
+  const handleRequest = () => {
+    if (!insurerEmailConfigured) {
+      toast("Configure insurer email in /admin/settings/insurer first");
+      return;
+    }
+    if (!venueName.trim() || !venueAddress.trim()) {
+      toast("Venue name and address are required");
+      return;
+    }
+    startTransition(async () => {
+      // Persist edited venue fields first so the request email uses the
+      // latest values without a separate save click.
+      const saved = await saveVenue(true);
+      if (!saved) return;
+      const res = await requestCoiAction(projectId);
+      if (res.success) {
+        toast("COI requested");
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to request COI");
+      }
+    });
+  };
+
+  const handlePdfPicked = async (file: File) => {
+    if (file.type !== "application/pdf") {
+      toast("Only PDF files are allowed");
+      return;
+    }
+    setUploadBusy(true);
+    try {
+      const presign = await presignCoiUploadAction(
+        projectId,
+        file.name,
+        "application/pdf"
+      );
+      if (!presign.success) {
+        toast(presign.error ?? "Failed to mint upload URL");
+        return;
+      }
+      const putRes = await fetch(presign.presignedUrl, {
+        method: "PUT",
+        body: file,
+        headers: { "Content-Type": "application/pdf" },
+      });
+      if (!putRes.ok) {
+        toast(`Upload failed (${putRes.status})`);
+        return;
+      }
+      const confirm = await confirmCoiUploadAction(projectId, presign.key);
+      if (!confirm.success) {
+        toast(confirm.error ?? "Failed to record upload");
+        return;
+      }
+      toast("COI uploaded");
+      router.refresh();
+    } catch (err) {
+      console.error("[CoiBlock] upload failed", err);
+      toast("Upload failed");
+    } finally {
+      setUploadBusy(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (uploadBusy) return;
+    const file = e.dataTransfer?.files?.[0];
+    if (file) void handlePdfPicked(file);
+  };
+
+  return (
+    <div
+      style={{
+        marginBottom: "1.5rem",
+        border: "0.5px solid var(--border)",
+        padding: "1rem 1.1rem",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: "0.75rem",
+          flexWrap: "wrap",
+          marginBottom: project.coiRequired ? "1rem" : 0,
+        }}
+      >
+        <div>
+          <p style={{ ...EYEBROW, margin: "0 0 0.3rem 0" }}>
+            Certificate of Insurance
+          </p>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.6rem",
+              flexWrap: "wrap",
+            }}
+          >
+            <span style={coiStatusPill(project.coiStatus)}>
+              {project.coiStatus.toLowerCase()}
+            </span>
+            {project.coiStatus === "REQUESTED" && project.coiRequestedAt && (
+              <span style={{ fontSize: "0.78rem", color: "var(--charcoal-muted)" }}>
+                Requested {fmtDate(project.coiRequestedAt)}
+                {project.coiInsurerEmail ? ` · ${project.coiInsurerEmail}` : ""}
+              </span>
+            )}
+            {project.coiStatus === "RECEIVED" && project.coiReceivedAt && (
+              <span style={{ fontSize: "0.78rem", color: "var(--charcoal-muted)" }}>
+                Received {fmtDate(project.coiReceivedAt)}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <label
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "0.5rem",
+            fontSize: "0.82rem",
+            color: "var(--charcoal)",
+            cursor: "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={project.coiRequired}
+            disabled={isPending}
+            onChange={(e) => toggleRequired(e.target.checked)}
+          />
+          COI required
+        </label>
+      </div>
+
+      {project.coiRequired && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
+          {!insurerEmailConfigured && (
+            <p
+              style={{
+                fontSize: "0.78rem",
+                color: "#b03232",
+                margin: 0,
+                padding: "0.5rem 0.7rem",
+                background: "rgba(176,50,50,0.06)",
+                border: "0.5px solid rgba(176,50,50,0.4)",
+              }}
+            >
+              No insurer email configured.{" "}
+              <Link href="/admin/settings/insurer" style={{ color: "#b03232", textDecoration: "underline" }}>
+                Set one in Settings → Insurer
+              </Link>{" "}
+              before requesting a COI.
+            </p>
+          )}
+
+          <div>
+            <label
+              style={{
+                ...EYEBROW,
+                display: "block",
+                marginBottom: "0.3rem",
+                fontSize: "0.6rem",
+              }}
+            >
+              Venue name
+            </label>
+            <input
+              type="text"
+              value={venueName}
+              onChange={(e) => setVenueName(e.target.value)}
+              placeholder="e.g. The Olde Mill"
+              style={{
+                width: "100%",
+                padding: "0.55rem 0.65rem",
+                border: "0.5px solid var(--border-strong)",
+                background: "var(--white)",
+                fontSize: "0.88rem",
+                fontFamily: "'Jost', sans-serif",
+                borderRadius: 0,
+              }}
+            />
+          </div>
+
+          <div>
+            <label
+              style={{
+                ...EYEBROW,
+                display: "block",
+                marginBottom: "0.3rem",
+                fontSize: "0.6rem",
+              }}
+            >
+              Venue address
+            </label>
+            <textarea
+              value={venueAddress}
+              onChange={(e) => setVenueAddress(e.target.value)}
+              placeholder="Street, City, State ZIP"
+              rows={2}
+              style={{
+                width: "100%",
+                padding: "0.55rem 0.65rem",
+                border: "0.5px solid var(--border-strong)",
+                background: "var(--white)",
+                fontSize: "0.88rem",
+                fontFamily: "'Jost', sans-serif",
+                borderRadius: 0,
+                resize: "vertical",
+              }}
+            />
+          </div>
+
+          <div>
+            <label
+              style={{
+                ...EYEBROW,
+                display: "block",
+                marginBottom: "0.3rem",
+                fontSize: "0.6rem",
+              }}
+            >
+              Additional-insured language
+            </label>
+            <textarea
+              value={additionalInsuredText}
+              onChange={(e) => setAdditionalInsuredText(e.target.value)}
+              placeholder="Defaults to your Settings → Insurer value."
+              rows={3}
+              style={{
+                width: "100%",
+                padding: "0.55rem 0.65rem",
+                border: "0.5px solid var(--border-strong)",
+                background: "var(--white)",
+                fontSize: "0.85rem",
+                fontFamily: "'Jost', sans-serif",
+                borderRadius: 0,
+                resize: "vertical",
+                lineHeight: 1.5,
+              }}
+            />
+          </div>
+
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              style={BTN_GHOST}
+              disabled={isPending}
+              onClick={() => startTransition(() => void saveVenue())}
+            >
+              Save venue
+            </button>
+            <button
+              type="button"
+              style={BTN_PRIMARY}
+              disabled={isPending || !insurerEmailConfigured}
+              onClick={handleRequest}
+            >
+              {isPending
+                ? "Working…"
+                : project.coiStatus === "REQUESTED"
+                ? "Re-request COI"
+                : "Request COI"}
+            </button>
+          </div>
+
+          {/* Upload-cert drop zone */}
+          <div
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={handleDrop}
+            style={{
+              padding: "1rem",
+              border: "0.5px dashed var(--border-strong)",
+              background: "rgba(42,42,40,0.02)",
+              textAlign: "center",
+              fontSize: "0.82rem",
+              color: "var(--charcoal-light)",
+            }}
+          >
+            <p style={{ margin: "0 0 0.55rem 0" }}>
+              {project.coiR2Key
+                ? "Replace cert PDF (drop or pick)"
+                : "Drop the cert PDF here, or pick a file"}
+            </p>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/pdf"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void handlePdfPicked(file);
+              }}
+              style={{ display: "none" }}
+            />
+            <button
+              type="button"
+              style={BTN_GHOST}
+              disabled={uploadBusy}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {uploadBusy ? "Uploading…" : "Choose PDF"}
+            </button>
+            {project.coiR2Key && (
+              <p
+                style={{
+                  margin: "0.6rem 0 0 0",
+                  fontSize: "0.72rem",
+                  color: "var(--charcoal-muted)",
+                  wordBreak: "break-all",
+                }}
+              >
+                Current: {project.coiR2Key}
+              </p>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -1483,6 +2146,596 @@ function GalleryTab({ eventId }: { eventId: string | null }) {
           Event auto-creates on BOOKED status. Until then, there is no gallery to manage.
         </p>
       )}
+    </div>
+  );
+}
+
+// ─── Day-of tab (Phase 2.8) ───────────────────────────────────────────────────
+//
+// Drag-orderable list of timeline blocks (e.g. "12:00 — First look @ Garden").
+// Reused by the shoot-brief generator and the client portal. Uses native HTML5
+// drag-and-drop — no react-dnd dep. Reordering rewrites all `order` values
+// transactionally via `reorderTimelineBlocksAction`.
+
+type DayOfBlockDraft = {
+  title: string;
+  startTime: string;
+  durationMinutes: number;
+  location: string;
+  blockType: string;
+  notes: string;
+  visibleToClient: boolean;
+};
+
+function blockToDraft(b: SerialTimelineBlock): DayOfBlockDraft {
+  return {
+    title: b.title ?? "",
+    startTime: b.startTime ?? "",
+    durationMinutes: b.durationMinutes ?? 0,
+    location: b.location ?? "",
+    blockType: b.blockType,
+    notes: b.notes ?? "",
+    visibleToClient: !!b.visibleToClient,
+  };
+}
+
+function formatDurationTotal(totalMinutes: number): string {
+  if (!Number.isFinite(totalMinutes) || totalMinutes <= 0) return "0m";
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  if (h > 0 && m > 0) return `${h}h ${m}m`;
+  if (h > 0) return `${h}h`;
+  return `${m}m`;
+}
+
+function DayOfTab({
+  projectId,
+  initialBlocks,
+}: {
+  projectId: string;
+  initialBlocks: SerialTimelineBlock[];
+}) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  // Local ordering — mirrors the server state but lets the drag-and-drop UI
+  // update optimistically before the round-trip completes.
+  const [blocks, setBlocks] = useState<SerialTimelineBlock[]>(initialBlocks);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<DayOfBlockDraft | null>(null);
+  const dragIdRef = useRef<string | null>(null);
+  const [hoverId, setHoverId] = useState<string | null>(null);
+
+  // If the server data updates (e.g. after a `router.refresh()`), re-seed
+  // local state. We compare by id-order so we don't clobber an in-flight
+  // local reorder.
+  useEffect(() => {
+    setBlocks(initialBlocks);
+  }, [initialBlocks]);
+
+  const totalMinutes = blocks.reduce(
+    (acc, b) => acc + (Number.isFinite(b.durationMinutes) ? b.durationMinutes : 0),
+    0
+  );
+
+  const handleAdd = () => {
+    startTransition(async () => {
+      const res = await createTimelineBlockAction(projectId, {
+        title: "New block",
+        startTime: "12:00",
+        durationMinutes: 30,
+        blockType: "SHOOT",
+        visibleToClient: true,
+      });
+      if (res.success) {
+        toast("Block added");
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to add block");
+      }
+    });
+  };
+
+  const handleDelete = (id: string, title: string) => {
+    if (!confirm(`Delete "${title}" from the timeline?`)) return;
+    startTransition(async () => {
+      const res = await deleteTimelineBlockAction(projectId, id);
+      if (res.success) {
+        toast("Block deleted");
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to delete block");
+      }
+    });
+  };
+
+  const beginEdit = (b: SerialTimelineBlock) => {
+    setEditingId(b.id);
+    setDraft(blockToDraft(b));
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setDraft(null);
+  };
+
+  const saveEdit = () => {
+    if (!editingId || !draft) return;
+    const patch = {
+      title: draft.title,
+      startTime: draft.startTime,
+      durationMinutes: draft.durationMinutes,
+      location: draft.location,
+      blockType: draft.blockType as
+        | "PREP"
+        | "TRAVEL"
+        | "SHOOT"
+        | "BREAK"
+        | "DETAIL"
+        | "FAMILY"
+        | "CEREMONY"
+        | "RECEPTION"
+        | "OTHER",
+      notes: draft.notes,
+      visibleToClient: draft.visibleToClient,
+    };
+    const id = editingId;
+    startTransition(async () => {
+      const res = await updateTimelineBlockAction(projectId, id, patch);
+      if (res.success) {
+        toast("Block saved");
+        setEditingId(null);
+        setDraft(null);
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to save block");
+      }
+    });
+  };
+
+  // ─── Drag-and-drop ────────────────────────────────────────────────────────
+  const handleDragStart = (id: string) => (e: React.DragEvent<HTMLDivElement>) => {
+    dragIdRef.current = id;
+    e.dataTransfer.effectAllowed = "move";
+    // Firefox requires data to be set for the drag to fire.
+    try {
+      e.dataTransfer.setData("text/plain", id);
+    } catch {
+      /* noop */
+    }
+  };
+
+  const handleDragOver = (id: string) => (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (hoverId !== id) setHoverId(id);
+  };
+
+  const handleDragLeave = () => {
+    setHoverId(null);
+  };
+
+  const handleDrop = (targetId: string) => (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const sourceId = dragIdRef.current;
+    dragIdRef.current = null;
+    setHoverId(null);
+    if (!sourceId || sourceId === targetId) return;
+    const srcIdx = blocks.findIndex((b) => b.id === sourceId);
+    const tgtIdx = blocks.findIndex((b) => b.id === targetId);
+    if (srcIdx < 0 || tgtIdx < 0) return;
+    const next = blocks.slice();
+    const [moved] = next.splice(srcIdx, 1);
+    next.splice(tgtIdx, 0, moved);
+    setBlocks(next); // optimistic
+    const orderedIds = next.map((b) => b.id);
+    startTransition(async () => {
+      const res = await reorderTimelineBlocksAction(projectId, orderedIds);
+      if (res.success) {
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to reorder");
+        // Revert by re-reading server state.
+        router.refresh();
+      }
+    });
+  };
+
+  // ─── Render ───────────────────────────────────────────────────────────────
+  return (
+    <div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          gap: "1rem",
+          marginBottom: "1.25rem",
+          flexWrap: "wrap",
+        }}
+      >
+        <h2 style={{ ...SECTION_HEAD, margin: 0 }}>Day-of schedule</h2>
+        <span
+          style={{
+            ...PILL,
+            background: "var(--white)",
+            color: "var(--charcoal)",
+            borderColor: "var(--border-strong)",
+          }}
+        >
+          Total duration: {formatDurationTotal(totalMinutes)}
+        </span>
+      </div>
+
+      <p
+        style={{
+          fontSize: "0.85rem",
+          color: "var(--charcoal-muted)",
+          lineHeight: 1.55,
+          margin: "0 0 1.25rem 0",
+        }}
+      >
+        Drag rows to reorder. Toggle visibility per block to control what the
+        client portal shows. Times are local to the shoot — the shoot date
+        itself is set on the project.
+      </p>
+
+      {blocks.length === 0 ? (
+        <div
+          style={{
+            padding: "1.5rem",
+            border: "0.5px dashed var(--border-strong)",
+            background: "var(--white)",
+            textAlign: "center",
+          }}
+        >
+          <p
+            style={{
+              fontSize: "0.9rem",
+              color: "var(--charcoal-light)",
+              margin: "0 0 1rem 0",
+            }}
+          >
+            No timeline blocks yet.
+          </p>
+          <button
+            type="button"
+            style={BTN_PRIMARY}
+            onClick={handleAdd}
+            disabled={isPending}
+          >
+            + Add block
+          </button>
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+            {blocks.map((b) => {
+              const isEditing = editingId === b.id;
+              const isHover = hoverId === b.id;
+              return (
+                <div
+                  key={b.id}
+                  draggable={!isEditing}
+                  onDragStart={handleDragStart(b.id)}
+                  onDragOver={handleDragOver(b.id)}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop(b.id)}
+                  style={{
+                    border: `0.5px solid ${
+                      isHover ? "var(--olive)" : "var(--border)"
+                    }`,
+                    background: "var(--white)",
+                    padding: "0.85rem 1rem",
+                    display: "grid",
+                    gridTemplateColumns: "auto 1fr auto",
+                    gap: "0.85rem",
+                    alignItems: "start",
+                    transition: "border-color 120ms ease",
+                  }}
+                >
+                  {/* Drag handle */}
+                  <div
+                    aria-hidden
+                    style={{
+                      cursor: isEditing ? "default" : "grab",
+                      color: "var(--charcoal-muted)",
+                      fontFamily: "monospace",
+                      fontSize: "1rem",
+                      paddingTop: "0.15rem",
+                      userSelect: "none",
+                    }}
+                    title="Drag to reorder"
+                  >
+                    ⋮⋮
+                  </div>
+
+                  {/* Body */}
+                  {isEditing && draft ? (
+                    <DayOfBlockEditor
+                      draft={draft}
+                      onChange={setDraft}
+                      onCancel={cancelEdit}
+                      onSave={saveEdit}
+                      disabled={isPending}
+                    />
+                  ) : (
+                    <DayOfBlockRow block={b} />
+                  )}
+
+                  {/* Row actions */}
+                  {!isEditing && (
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "0.35rem",
+                        alignItems: "flex-end",
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => beginEdit(b)}
+                        style={{
+                          ...BTN_GHOST,
+                          padding: "0.35rem 0.7rem",
+                          fontSize: "0.65rem",
+                        }}
+                        disabled={isPending}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(b.id, b.title)}
+                        style={{
+                          ...BTN_GHOST,
+                          padding: "0.35rem 0.7rem",
+                          fontSize: "0.65rem",
+                          color: "var(--charcoal-muted)",
+                        }}
+                        disabled={isPending}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <div style={{ marginTop: "1.25rem" }}>
+            <button
+              type="button"
+              style={BTN_PRIMARY}
+              onClick={handleAdd}
+              disabled={isPending}
+            >
+              + Add block
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function DayOfBlockRow({ block }: { block: SerialTimelineBlock }) {
+  const typeLabel =
+    TIMELINE_BLOCK_TYPE_OPTIONS.find((o) => o.value === block.blockType)?.label ??
+    block.blockType;
+  const durationLabel =
+    block.durationMinutes > 0 ? formatDurationTotal(block.durationMinutes) : "instant";
+  return (
+    <div>
+      <div
+        style={{
+          display: "flex",
+          gap: "0.6rem",
+          alignItems: "baseline",
+          flexWrap: "wrap",
+        }}
+      >
+        <span
+          style={{
+            fontFamily: "'Cormorant Garamond', serif",
+            fontSize: "1.15rem",
+            color: "var(--charcoal)",
+            fontWeight: 400,
+            letterSpacing: "0.02em",
+          }}
+        >
+          {block.startTime || "—"}
+        </span>
+        <span
+          style={{
+            fontSize: "0.95rem",
+            color: "var(--charcoal)",
+            fontWeight: 400,
+          }}
+        >
+          {block.title || "Untitled block"}
+        </span>
+        <span
+          style={{
+            fontSize: "0.6rem",
+            letterSpacing: "0.15em",
+            textTransform: "uppercase",
+            color: "var(--olive)",
+            border: "0.5px solid var(--olive)",
+            padding: "0.1rem 0.5rem",
+          }}
+        >
+          {typeLabel}
+        </span>
+        {!block.visibleToClient && (
+          <span
+            style={{
+              fontSize: "0.6rem",
+              letterSpacing: "0.15em",
+              textTransform: "uppercase",
+              color: "var(--charcoal-muted)",
+              border: "0.5px solid var(--border-strong)",
+              padding: "0.1rem 0.5rem",
+            }}
+          >
+            Internal
+          </span>
+        )}
+      </div>
+      <div
+        style={{
+          marginTop: "0.3rem",
+          fontSize: "0.78rem",
+          color: "var(--charcoal-muted)",
+          display: "flex",
+          gap: "0.6rem",
+          flexWrap: "wrap",
+        }}
+      >
+        <span>{durationLabel}</span>
+        {block.location && <span>· {block.location}</span>}
+      </div>
+      {block.notes && (
+        <p
+          style={{
+            margin: "0.45rem 0 0 0",
+            fontSize: "0.8rem",
+            color: "var(--charcoal-light)",
+            lineHeight: 1.5,
+          }}
+        >
+          {block.notes}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function DayOfBlockEditor({
+  draft,
+  onChange,
+  onCancel,
+  onSave,
+  disabled,
+}: {
+  draft: DayOfBlockDraft;
+  onChange: (next: DayOfBlockDraft) => void;
+  onCancel: () => void;
+  onSave: () => void;
+  disabled: boolean;
+}) {
+  const fieldStyle: React.CSSProperties = {
+    padding: "0.5rem 0.65rem",
+    border: "0.5px solid var(--border-strong)",
+    fontFamily: "'Jost', sans-serif",
+    fontSize: "0.85rem",
+    background: "var(--white)",
+    borderRadius: 0,
+    width: "100%",
+  };
+  const labelStyle: React.CSSProperties = {
+    ...EYEBROW,
+    fontSize: "0.55rem",
+    margin: "0 0 0.25rem 0",
+  };
+  return (
+    <div style={{ display: "grid", gap: "0.6rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 110px", gap: "0.6rem" }}>
+        <div>
+          <p style={labelStyle}>Title</p>
+          <input
+            type="text"
+            value={draft.title}
+            onChange={(e) => onChange({ ...draft, title: e.target.value })}
+            placeholder="First look"
+            style={fieldStyle}
+          />
+        </div>
+        <div>
+          <p style={labelStyle}>Start time</p>
+          <input
+            type="time"
+            value={draft.startTime}
+            onChange={(e) => onChange({ ...draft, startTime: e.target.value })}
+            style={fieldStyle}
+          />
+        </div>
+        <div>
+          <p style={labelStyle}>Duration (min)</p>
+          <input
+            type="number"
+            min={0}
+            value={draft.durationMinutes}
+            onChange={(e) =>
+              onChange({
+                ...draft,
+                durationMinutes: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+              })
+            }
+            style={fieldStyle}
+          />
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 160px", gap: "0.6rem" }}>
+        <div>
+          <p style={labelStyle}>Location</p>
+          <input
+            type="text"
+            value={draft.location}
+            onChange={(e) => onChange({ ...draft, location: e.target.value })}
+            placeholder="Garden / Patio / Hotel suite"
+            style={fieldStyle}
+          />
+        </div>
+        <div>
+          <p style={labelStyle}>Type</p>
+          <select
+            value={draft.blockType}
+            onChange={(e) => onChange({ ...draft, blockType: e.target.value })}
+            style={fieldStyle}
+          >
+            {TIMELINE_BLOCK_TYPE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div>
+        <p style={labelStyle}>Notes</p>
+        <textarea
+          value={draft.notes}
+          onChange={(e) => onChange({ ...draft, notes: e.target.value })}
+          rows={2}
+          style={{ ...fieldStyle, resize: "vertical" }}
+        />
+      </div>
+      <label
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "0.5rem",
+          fontSize: "0.8rem",
+          color: "var(--charcoal-light)",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={draft.visibleToClient}
+          onChange={(e) => onChange({ ...draft, visibleToClient: e.target.checked })}
+        />
+        Visible on client portal
+      </label>
+      <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
+        <button type="button" onClick={onCancel} style={BTN_GHOST} disabled={disabled}>
+          Cancel
+        </button>
+        <button type="button" onClick={onSave} style={BTN_PRIMARY} disabled={disabled}>
+          Save
+        </button>
+      </div>
     </div>
   );
 }

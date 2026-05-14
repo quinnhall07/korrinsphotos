@@ -20,21 +20,39 @@
 //   - "Korrin's picks (N)" — Phase 13.5. Narrows to photos tagged
 //     `"korrinsPick"` by the admin gallery editor.
 //
+// Phase 2.6 — Gallery polish:
+//   - Slideshow mode (▶ button) opens `SlideshowOverlay` with auto-advance,
+//     interval picker, optional muted background audio, and swipe gestures.
+//   - Lightbox gains a per-photo "Download" menu offering `web` / `print` /
+//     `original` resolutions. URLs route through
+//     `/api/download/[eventId]/photo/[photoId]?resolution=…&pin=…`.
+//   - Full-gallery zip download now respects a resolution-tier picker
+//     surfaced in the download bar (defaults to `web`).
+//   - When the event has a `downloadPin` set, the zip download prompts the
+//     viewer for the PIN before kicking off the request. Three wrong tries
+//     disable the download for 60 seconds.
+//
 // TODO(multi-list): v1 only supports a single "My picks" list per client.
 // Phase 2.5 plans for multiple named lists ("Mom's picks", "for the album",
 // etc). When that lands, replace `favoritedBy: string[]` with a per-list
 // shape and add list-management UI here.
 
-import { useState, useMemo, useTransition } from "react";
+import { useEffect, useState, useMemo, useRef, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { MasonryGrid, type MasonryPhoto } from "@/components/MasonryGrid";
+import { SlideshowOverlay } from "@/components/SlideshowOverlay";
+import type { ResolutionTier } from "@/components/Lightbox";
 import { toast } from "@/components/ui/Toaster";
 import { submitClientNps, toggleFavorite } from "./actions";
 
 export interface GalleryPhoto extends MasonryPhoto {
   favoritedBy: string[];
   tags: string[];
+  /** Phase 2.6 — null when the photo has no Cloudflare Images variant. */
+  cloudflareImageId: string | null;
+  /** Phase 2.6 — true when an R2 original is available for download. */
+  hasOriginal: boolean;
 }
 
 type FilterMode = "ALL" | "MY_PICKS" | "KORRIN_PICKS";
@@ -49,7 +67,12 @@ interface GalleryViewerProps {
   canSubmitNps: boolean;
   /** Phase 2.5 — clientId for the signed-in viewer (or null if unresolvable). */
   viewerClientId: string | null;
+  /** Phase 2.6 — true when the event has a downloadPin set server-side. */
+  downloadPinRequired: boolean;
 }
+
+const PIN_MAX_ATTEMPTS = 3;
+const PIN_LOCKOUT_SECONDS = 60;
 
 export function GalleryViewer({
   eventId,
@@ -60,6 +83,7 @@ export function GalleryViewer({
   existingNps,
   canSubmitNps,
   viewerClientId,
+  downloadPinRequired,
 }: GalleryViewerProps) {
   const router = useRouter();
   const [downloading, setDownloading] = useState(false);
@@ -73,6 +97,37 @@ export function GalleryViewer({
   const [photos, setPhotos] = useState<GalleryPhoto[]>(initialPhotos);
   const [favoritePending, startFavoriteTransition] = useTransition();
   const [filter, setFilter] = useState<FilterMode>("ALL");
+
+  // Phase 2.6 — Slideshow.
+  const [slideshowOpen, setSlideshowOpen] = useState(false);
+
+  // Phase 2.6 — Download resolution + PIN gate.
+  const [resolution, setResolution] = useState<ResolutionTier>("web");
+  const [pinModalOpen, setPinModalOpen] = useState(false);
+  const [pinInput, setPinInput] = useState("");
+  const [pinAttempts, setPinAttempts] = useState(0);
+  const [pinLockedUntil, setPinLockedUntil] = useState<number | null>(null);
+  const [pinTick, setPinTick] = useState(0);
+
+  // Re-render every second while the PIN is locked so the countdown updates.
+  useEffect(() => {
+    if (!pinLockedUntil) return;
+    const id = window.setInterval(() => setPinTick((t) => t + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [pinLockedUntil]);
+
+  const lockoutRemaining = useMemo(() => {
+    if (!pinLockedUntil) return 0;
+    const remaining = Math.ceil((pinLockedUntil - Date.now()) / 1000);
+    return remaining > 0 ? remaining : 0;
+  }, [pinLockedUntil, pinTick]);
+
+  useEffect(() => {
+    if (pinLockedUntil && Date.now() >= pinLockedUntil) {
+      setPinLockedUntil(null);
+      setPinAttempts(0);
+    }
+  }, [pinTick, pinLockedUntil]);
 
   const showNpsWidget = eventStatus === "DELIVERED" && canSubmitNps;
 
@@ -98,6 +153,26 @@ export function GalleryViewer({
     }
     return photos;
   }, [photos, filter, viewerClientId]);
+
+  // Phase 2.6 — Build the per-photo download URL forwarded to the Lightbox
+  // overflow menu. We use the proxy route at /api/download/[eventId]/photo
+  // so the R2 presigned URL never leaks into the DOM. Photos with neither a
+  // Cloudflare image id nor an R2 original return null and disable the
+  // option in the menu.
+  const pinQueryRef = useRef<string | null>(null);
+  function buildDownloadUrl(photo: GalleryPhoto, tier: ResolutionTier): string | null {
+    if (tier === "original" && !photo.hasOriginal && !photo.cloudflareImageId) {
+      return null;
+    }
+    if (tier !== "original" && !photo.cloudflareImageId) {
+      return null;
+    }
+    const qs = new URLSearchParams({ resolution: tier });
+    if (downloadPinRequired && pinQueryRef.current) {
+      qs.set("pin", pinQueryRef.current);
+    }
+    return `/api/download/${eventId}/photo/${photo.id}?${qs.toString()}`;
+  }
 
   function handleRate(rating: 1 | 2 | 3 | 4 | 5) {
     if (submitting || localNps !== null) return;
@@ -148,15 +223,30 @@ export function GalleryViewer({
     });
   }
 
-  async function requestDownload() {
+  async function runDownload(pin: string | null) {
     if (downloading) return;
     setDownloading(true);
     toast("Preparing your download…");
 
     try {
-      const res = await fetch(`/api/download/${eventId}/zip`, {
+      const qs = new URLSearchParams({ resolution });
+      if (pin) qs.set("pin", pin);
+      const res = await fetch(`/api/download/${eventId}/zip?${qs.toString()}`, {
         method: "POST",
       });
+
+      if (res.status === 401) {
+        // PIN was wrong. Caller already handled the modal flow; surface the
+        // error so the modal can register a retry.
+        let message = "Invalid PIN";
+        try {
+          const data = (await res.json()) as { error?: string };
+          if (data.error) message = data.error;
+        } catch {
+          /* non-JSON body */
+        }
+        throw new Error(message);
+      }
 
       if (!res.ok) {
         let message = "Download failed";
@@ -170,9 +260,6 @@ export function GalleryViewer({
         return;
       }
 
-      // Stream the response into a Blob, then trigger a browser save.
-      // Going through a Blob URL gives us full control over the filename
-      // and a cleaner UX than `window.location = url` (no full nav).
       const blob = await res.blob();
       const downloadUrl = URL.createObjectURL(blob);
       const disposition = res.headers.get("Content-Disposition") ?? "";
@@ -188,11 +275,64 @@ export function GalleryViewer({
       URL.revokeObjectURL(downloadUrl);
 
       toast("Download started");
+      // Cache the valid PIN for the rest of the session so single-photo
+      // downloads from the lightbox menu work without re-prompting.
+      if (pin) pinQueryRef.current = pin;
     } catch (err) {
-      console.error("[gallery] download failed:", err);
-      toast("Download failed");
+      throw err;
     } finally {
       setDownloading(false);
+    }
+  }
+
+  async function requestDownload() {
+    if (downloading) return;
+    if (downloadPinRequired && !pinQueryRef.current) {
+      // Open the modal and let the user enter a PIN before we hit the API.
+      setPinInput("");
+      setPinModalOpen(true);
+      return;
+    }
+    try {
+      await runDownload(pinQueryRef.current);
+    } catch (err) {
+      // Cached PIN became invalid (e.g. admin rotated it) — drop it and
+      // re-prompt.
+      pinQueryRef.current = null;
+      console.error("[gallery] download error:", err);
+      if (downloadPinRequired) {
+        setPinInput("");
+        setPinModalOpen(true);
+      } else {
+        toast(err instanceof Error ? err.message : "Download failed");
+      }
+    }
+  }
+
+  async function submitPin() {
+    if (lockoutRemaining > 0) return;
+    const trimmed = pinInput.trim();
+    if (!trimmed) {
+      toast("Enter the PIN to continue.");
+      return;
+    }
+    try {
+      await runDownload(trimmed);
+      // Success → cache + close modal.
+      pinQueryRef.current = trimmed;
+      setPinModalOpen(false);
+      setPinAttempts(0);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Invalid PIN";
+      const nextAttempts = pinAttempts + 1;
+      setPinAttempts(nextAttempts);
+      toast(`${message}. ${PIN_MAX_ATTEMPTS - nextAttempts} attempt${
+        PIN_MAX_ATTEMPTS - nextAttempts === 1 ? "" : "s"
+      } left.`);
+      if (nextAttempts >= PIN_MAX_ATTEMPTS) {
+        setPinLockedUntil(Date.now() + PIN_LOCKOUT_SECONDS * 1000);
+        toast(`Too many wrong attempts. Try again in ${PIN_LOCKOUT_SECONDS}s.`);
+      }
     }
   }
 
@@ -324,31 +464,47 @@ export function GalleryViewer({
             </p>
           </div>
           {photos.length > 0 && (
-            <button
-              onClick={requestDownload}
-              disabled={downloading}
-              style={{
-                padding: "0.6rem 1.4rem",
-                fontSize: "0.68rem",
-                letterSpacing: "0.12em",
-                textTransform: "uppercase",
-                background: downloading ? "var(--charcoal-muted)" : "var(--olive)",
-                color: "var(--white)",
-                border: "none",
-                cursor: downloading ? "wait" : "pointer",
-                fontFamily: "'Jost', sans-serif",
-                flexShrink: 0,
-                transition: "background 0.25s",
-              }}
-            >
-              {downloading ? "Preparing…" : "Download all"}
-            </button>
+            <div style={{ display: "flex", gap: "0.5rem", flexShrink: 0, flexWrap: "wrap" }}>
+              <button
+                onClick={() => setSlideshowOpen(true)}
+                style={{
+                  padding: "0.6rem 1.4rem",
+                  fontSize: "0.68rem",
+                  letterSpacing: "0.12em",
+                  textTransform: "uppercase",
+                  background: "transparent",
+                  color: "var(--charcoal)",
+                  border: "0.5px solid var(--border-strong)",
+                  cursor: "pointer",
+                  fontFamily: "'Jost', sans-serif",
+                  transition: "background 0.25s",
+                }}
+              >
+                ▶ Slideshow
+              </button>
+              <button
+                onClick={requestDownload}
+                disabled={downloading}
+                style={{
+                  padding: "0.6rem 1.4rem",
+                  fontSize: "0.68rem",
+                  letterSpacing: "0.12em",
+                  textTransform: "uppercase",
+                  background: downloading ? "var(--charcoal-muted)" : "var(--olive)",
+                  color: "var(--white)",
+                  border: "none",
+                  cursor: downloading ? "wait" : "pointer",
+                  fontFamily: "'Jost', sans-serif",
+                  transition: "background 0.25s",
+                }}
+              >
+                {downloading ? "Preparing…" : "Download all"}
+              </button>
+            </div>
           )}
         </div>
 
-        {/* Phase 2.5 / 13.5 — Filter pills. Always render the "All" pill; the
-            "My picks" + "Korrin's picks" pills appear conditionally so the
-            header stays quiet on empty galleries. */}
+        {/* Phase 2.5 / 13.5 — Filter pills. */}
         {photos.length > 0 && (
           <div
             style={{
@@ -380,7 +536,7 @@ export function GalleryViewer({
           </div>
         )}
 
-        {/* Download bar */}
+        {/* Download bar — resolution picker + zip button. */}
         {photos.length > 0 && (
           <div
             style={{
@@ -401,25 +557,60 @@ export function GalleryViewer({
               All images delivered at optimized resolution via Cloudflare CDN.
               Right-click is disabled to protect your photos.
             </p>
-            <button
-              onClick={requestDownload}
-              disabled={downloading}
-              style={{
-                padding: "0.6rem 1.4rem",
-                fontSize: "0.68rem",
-                letterSpacing: "0.12em",
-                textTransform: "uppercase",
-                background: downloading ? "var(--charcoal-muted)" : "var(--olive)",
-                color: "var(--white)",
-                border: "none",
-                cursor: downloading ? "wait" : "pointer",
-                fontFamily: "'Jost', sans-serif",
-                flexShrink: 0,
-                transition: "background 0.25s",
-              }}
-            >
-              {downloading ? "Preparing…" : "Download all (.zip)"}
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+              <span
+                style={{
+                  fontSize: "0.65rem",
+                  letterSpacing: "0.2em",
+                  textTransform: "uppercase",
+                  color: "var(--charcoal-muted)",
+                }}
+              >
+                Resolution
+              </span>
+              {(["web", "print", "original"] as ResolutionTier[]).map((tier) => (
+                <button
+                  key={tier}
+                  onClick={() => setResolution(tier)}
+                  type="button"
+                  style={{
+                    padding: "0.4rem 0.85rem",
+                    fontSize: "0.64rem",
+                    letterSpacing: "0.12em",
+                    textTransform: "uppercase",
+                    background: resolution === tier ? "var(--olive)" : "transparent",
+                    color: resolution === tier ? "var(--white)" : "var(--charcoal)",
+                    border:
+                      resolution === tier
+                        ? "0.5px solid var(--olive)"
+                        : "0.5px solid var(--border-strong)",
+                    cursor: "pointer",
+                    fontFamily: "'Jost', sans-serif",
+                  }}
+                >
+                  {tier}
+                </button>
+              ))}
+              <button
+                onClick={requestDownload}
+                disabled={downloading}
+                style={{
+                  padding: "0.6rem 1.4rem",
+                  fontSize: "0.68rem",
+                  letterSpacing: "0.12em",
+                  textTransform: "uppercase",
+                  background: downloading ? "var(--charcoal-muted)" : "var(--olive)",
+                  color: "var(--white)",
+                  border: "none",
+                  cursor: downloading ? "wait" : "pointer",
+                  fontFamily: "'Jost', sans-serif",
+                  flexShrink: 0,
+                  transition: "background 0.25s",
+                }}
+              >
+                {downloading ? "Preparing…" : "Download all (.zip)"}
+              </button>
+            </div>
           </div>
         )}
 
@@ -435,15 +626,16 @@ export function GalleryViewer({
             </p>
           </div>
         ) : (
-          <MasonryGrid
+          <MasonryGrid<GalleryPhoto>
             photos={filteredPhotos}
             columns={4}
             eventName={eventTitle}
+            buildDownloadUrl={buildDownloadUrl}
             renderOverlay={(photo) => (
               <HeartButton
                 active={
                   viewerClientId
-                    ? (photo as GalleryPhoto).favoritedBy?.includes(viewerClientId) ?? false
+                    ? photo.favoritedBy?.includes(viewerClientId) ?? false
                     : false
                 }
                 disabled={favoritePending}
@@ -453,6 +645,29 @@ export function GalleryViewer({
           />
         )}
       </div>
+
+      {/* Phase 2.6 — Slideshow overlay. */}
+      {slideshowOpen && (
+        <SlideshowOverlay
+          photos={filteredPhotos.length > 0 ? filteredPhotos : photos}
+          onClose={() => setSlideshowOpen(false)}
+          eventName={eventTitle}
+        />
+      )}
+
+      {/* Phase 2.6 — PIN gate modal. */}
+      {pinModalOpen && (
+        <PinModal
+          attempts={pinAttempts}
+          lockoutRemaining={lockoutRemaining}
+          maxAttempts={PIN_MAX_ATTEMPTS}
+          value={pinInput}
+          onChange={setPinInput}
+          onSubmit={submitPin}
+          onCancel={() => setPinModalOpen(false)}
+          submitting={downloading}
+        />
+      )}
     </div>
   );
 }
@@ -532,5 +747,154 @@ function HeartButton({
     >
       {active ? "♥" : "♡"}
     </button>
+  );
+}
+
+interface PinModalProps {
+  attempts: number;
+  lockoutRemaining: number;
+  maxAttempts: number;
+  value: string;
+  onChange: (v: string) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+  submitting: boolean;
+}
+
+function PinModal({
+  attempts,
+  lockoutRemaining,
+  maxAttempts,
+  value,
+  onChange,
+  onSubmit,
+  onCancel,
+  submitting,
+}: PinModalProps) {
+  const locked = lockoutRemaining > 0;
+  return (
+    <div
+      onClick={onCancel}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 1050,
+        background: "rgba(20,20,18,0.6)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--white)",
+          padding: "1.8rem 2rem",
+          border: "0.5px solid var(--border-strong)",
+          width: "min(90vw, 380px)",
+        }}
+      >
+        <p
+          style={{
+            fontSize: "0.65rem",
+            letterSpacing: "0.2em",
+            textTransform: "uppercase",
+            color: "var(--olive)",
+            marginBottom: "0.5rem",
+          }}
+        >
+          Download PIN
+        </p>
+        <h3
+          style={{
+            fontFamily: "'Cormorant Garamond', serif",
+            fontSize: "1.4rem",
+            fontWeight: 300,
+            marginBottom: "0.5rem",
+          }}
+        >
+          Enter your gallery PIN
+        </h3>
+        <p style={{ fontSize: "0.82rem", color: "var(--charcoal-muted)", marginBottom: "1.2rem" }}>
+          Korrin shared a 4–6 digit PIN to unlock the full-resolution download.
+        </p>
+        <input
+          autoFocus
+          type="text"
+          inputMode="numeric"
+          maxLength={6}
+          value={value}
+          onChange={(e) => onChange(e.target.value.replace(/\D/g, "").slice(0, 6))}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !locked && !submitting) onSubmit();
+          }}
+          disabled={locked || submitting}
+          placeholder="••••"
+          style={{
+            width: "100%",
+            fontSize: "1.4rem",
+            letterSpacing: "0.4em",
+            textAlign: "center",
+            padding: "0.6rem 0.5rem",
+            border: "0.5px solid var(--border-strong)",
+            background: "var(--white)",
+            outline: "none",
+            fontFamily: "'Jost', sans-serif",
+            marginBottom: "0.5rem",
+          }}
+        />
+        {locked && (
+          <p style={{ fontSize: "0.78rem", color: "var(--charcoal-muted)", marginBottom: "0.5rem" }}>
+            Too many wrong attempts. Try again in {lockoutRemaining}s.
+          </p>
+        )}
+        {!locked && attempts > 0 && (
+          <p style={{ fontSize: "0.78rem", color: "var(--charcoal-muted)", marginBottom: "0.5rem" }}>
+            {maxAttempts - attempts} attempt{maxAttempts - attempts === 1 ? "" : "s"} remaining.
+          </p>
+        )}
+        <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end", marginTop: "0.8rem" }}>
+          <button
+            type="button"
+            onClick={onCancel}
+            style={{
+              padding: "0.55rem 1.2rem",
+              fontSize: "0.68rem",
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+              background: "transparent",
+              color: "var(--charcoal)",
+              border: "0.5px solid var(--border-strong)",
+              cursor: "pointer",
+              fontFamily: "'Jost', sans-serif",
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onSubmit}
+            disabled={locked || submitting || value.length < 4}
+            style={{
+              padding: "0.55rem 1.2rem",
+              fontSize: "0.68rem",
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+              background:
+                locked || submitting || value.length < 4
+                  ? "var(--charcoal-muted)"
+                  : "var(--olive)",
+              color: "var(--white)",
+              border: "none",
+              cursor:
+                locked || submitting || value.length < 4 ? "not-allowed" : "pointer",
+              fontFamily: "'Jost', sans-serif",
+            }}
+          >
+            {submitting ? "Checking…" : "Unlock"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

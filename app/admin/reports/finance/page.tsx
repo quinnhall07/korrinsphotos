@@ -304,6 +304,22 @@ export default async function FinanceReportPage() {
           Snapshot {snapshot?.computedAt ? `computed ${formatDate(snapshot.computedAt.toMillis())}` : "computed on demand"}.
           All revenue figures are gross USD across paid invoices in the trailing 18 months.
         </p>
+        <p style={{ marginTop: "0.5rem" }}>
+          <a
+            href="/admin/reports/ad-spend"
+            style={{
+              fontSize: "0.7rem",
+              letterSpacing: "0.18em",
+              textTransform: "uppercase",
+              color: "var(--olive)",
+              textDecoration: "none",
+              borderBottom: "0.5px solid var(--olive)",
+              paddingBottom: "0.15rem",
+            }}
+          >
+            View ad-spend &amp; ROAS report →
+          </a>
+        </p>
       </div>
 
       {/* Hero KPI strip — 6 tiles */}

@@ -16,6 +16,10 @@ import {
   listPressSubmissionsForProject,
   type PressSubmissionStatus,
 } from "@/lib/db/press-submissions";
+import {
+  listDayOfTimeline,
+  type TimelineBlockType,
+} from "@/lib/db/day-of-timeline";
 import { ProjectWorkspaceClient } from "./ProjectWorkspaceClient";
 
 export const metadata: Metadata = { title: "Project Detail | Admin" };
@@ -104,6 +108,16 @@ export type SerialProject = {
   weatherSnapshot: SerialWeatherSnapshot | null;
   /** Phase 3.13 — editing-workflow sub-stage. */
   editingSubStage: string | null;
+  // ── Phase 3.9 — COI workflow ──────────────────────────────────────────────
+  coiRequired: boolean;
+  coiStatus: "NONE" | "REQUESTED" | "RECEIVED" | "EXPIRED";
+  coiRequestedAt: string | null;
+  coiReceivedAt: string | null;
+  coiInsurerEmail: string | null;
+  coiVenueName: string | null;
+  coiVenueAddress: string | null;
+  coiAdditionalInsuredText: string | null;
+  coiR2Key: string | null;
 };
 
 export type SerialSunTimes = {
@@ -143,6 +157,10 @@ export type SerialClient = {
   firstTouchSource: string;
   referralCredit: number;
   totalSessionsBooked: number;
+  /** Phase 13.6 — recurring revenue layer. */
+  recurringCadence: "ANNUAL" | "SEMI_ANNUAL" | "NONE";
+  recurringNextPromptAt: string | null;
+  recurringPromptsSent: number;
 };
 
 export type SerialMessage = {
@@ -210,6 +228,18 @@ export type SerialGearTemplateOption = {
   name: string;
   itemCount: number;
   isDefault: boolean;
+};
+
+export type SerialTimelineBlock = {
+  id: string;
+  order: number;
+  title: string;
+  startTime: string;
+  durationMinutes: number;
+  location: string | null;
+  blockType: TimelineBlockType;
+  notes: string | null;
+  visibleToClient: boolean;
 };
 
 export type SerialPressSubmission = {
@@ -326,7 +356,7 @@ function serialiseWeatherSnapshot(raw: any): SerialWeatherSnapshot | null {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default async function ProjectDetailPage({ params }: Props) {
-  await requireAdmin();
+  const session = await requireAdmin();
   const { id } = await params;
 
   const projectSnap = await adminDb.collection("projects").doc(id).get();
@@ -410,7 +440,41 @@ export default async function ProjectDetailPage({ params }: Props) {
       typeof projectData.editingSubStage === "string"
         ? projectData.editingSubStage
         : null,
+    coiRequired: !!projectData.coiRequired,
+    coiStatus:
+      projectData.coiStatus === "REQUESTED" ||
+      projectData.coiStatus === "RECEIVED" ||
+      projectData.coiStatus === "EXPIRED"
+        ? (projectData.coiStatus as "REQUESTED" | "RECEIVED" | "EXPIRED")
+        : "NONE",
+    coiRequestedAt: ts(projectData.coiRequestedAt),
+    coiReceivedAt: ts(projectData.coiReceivedAt),
+    coiInsurerEmail:
+      typeof projectData.coiInsurerEmail === "string"
+        ? projectData.coiInsurerEmail
+        : null,
+    coiVenueName:
+      typeof projectData.coiVenueName === "string" ? projectData.coiVenueName : null,
+    coiVenueAddress:
+      typeof projectData.coiVenueAddress === "string"
+        ? projectData.coiVenueAddress
+        : null,
+    coiAdditionalInsuredText:
+      typeof projectData.coiAdditionalInsuredText === "string"
+        ? projectData.coiAdditionalInsuredText
+        : null,
+    coiR2Key:
+      typeof projectData.coiR2Key === "string" ? projectData.coiR2Key : null,
   };
+
+  const rawCadence =
+    typeof clientData?.recurringCadence === "string"
+      ? clientData.recurringCadence
+      : "NONE";
+  const cadence: "ANNUAL" | "SEMI_ANNUAL" | "NONE" =
+    rawCadence === "ANNUAL" || rawCadence === "SEMI_ANNUAL" || rawCadence === "NONE"
+      ? rawCadence
+      : "NONE";
 
   const client: SerialClient = {
     id: clientId,
@@ -422,6 +486,12 @@ export default async function ProjectDetailPage({ params }: Props) {
     firstTouchSource: clientData?.firstTouchSource ?? "DIRECT",
     referralCredit: clientData?.referralCredit ?? 0,
     totalSessionsBooked: clientData?.totalSessionsBooked ?? 0,
+    recurringCadence: cadence,
+    recurringNextPromptAt: ts(clientData?.recurringNextPromptAt),
+    recurringPromptsSent:
+      typeof clientData?.recurringPromptsSent === "number"
+        ? clientData.recurringPromptsSent
+        : 0,
   };
 
   // Phase 1.6 — fetch all emailEvents for this project and roll up per-sendId
@@ -600,6 +670,27 @@ export default async function ProjectDetailPage({ params }: Props) {
     console.error("[ProjectDetailPage] Failed to load gear templates", err);
   }
 
+  // Phase 2.8: pull the project's day-of timeline blocks (drag-orderable list
+  // of "12:00 — First look @ Garden" entries). Best-effort — if the read
+  // fails the workspace renders an empty timeline tab.
+  let dayOfTimeline: SerialTimelineBlock[] = [];
+  try {
+    const blocks = await listDayOfTimeline(id);
+    dayOfTimeline = blocks.map((b) => ({
+      id: b.id,
+      order: b.order,
+      title: b.title,
+      startTime: b.startTime,
+      durationMinutes: b.durationMinutes,
+      location: b.location ?? null,
+      blockType: b.blockType,
+      notes: b.notes ?? null,
+      visibleToClient: !!b.visibleToClient,
+    }));
+  } catch (err) {
+    console.error("[ProjectDetailPage] Failed to load day-of timeline", err);
+  }
+
   // Phase 4.7: pull press-submission rows. Best-effort — Firestore hiccup
   // shouldn't break the entire workspace.
   let pressSubmissions: SerialPressSubmission[] = [];
@@ -631,6 +722,30 @@ export default async function ProjectDetailPage({ params }: Props) {
     console.error("[ProjectDetailPage] Failed to load press submissions", err);
   }
 
+  // Phase 3.9 — pull the admin's insurer-contact defaults so the COI block
+  // can pre-fill the additional-insured language. Best-effort.
+  let insurerDefaultAdditionalInsuredText: string | null = null;
+  let insurerEmailConfigured = false;
+  try {
+    const adminUserSnap = await adminDb
+      .collection("users")
+      .doc(session.uid)
+      .get();
+    const insurer = (adminUserSnap.data()?.insurerContact ?? {}) as {
+      email?: string;
+      defaultAdditionalInsuredText?: string;
+    };
+    if (
+      typeof insurer.defaultAdditionalInsuredText === "string" &&
+      insurer.defaultAdditionalInsuredText.trim()
+    ) {
+      insurerDefaultAdditionalInsuredText = insurer.defaultAdditionalInsuredText;
+    }
+    insurerEmailConfigured = !!(insurer.email && insurer.email.trim());
+  } catch (err) {
+    console.error("[ProjectDetailPage] Failed to load admin insurer contact", err);
+  }
+
   return (
     <ProjectWorkspaceClient
       project={project}
@@ -647,6 +762,9 @@ export default async function ProjectDetailPage({ params }: Props) {
       defaultGearTemplateId={defaultGearTemplateId}
       defaultGearTemplateName={defaultGearTemplateName}
       pressSubmissions={pressSubmissions}
+      dayOfTimeline={dayOfTimeline}
+      insurerDefaultAdditionalInsuredText={insurerDefaultAdditionalInsuredText}
+      insurerEmailConfigured={insurerEmailConfigured}
     />
   );
 }

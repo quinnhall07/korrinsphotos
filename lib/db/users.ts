@@ -22,6 +22,24 @@ export interface AutomationConfigEntry {
 
 export type AutomationConfigMap = { [recipeKey: string]: AutomationConfigEntry };
 
+/**
+ * Phase 3.9 — Insurer contact for the COI (Certificate of Insurance) request
+ * workflow. Stored on each admin's user doc so the "Request COI" action on a
+ * project can auto-populate the insurer email and the additional-insured
+ * language without re-prompting. All fields optional — feature degrades to
+ * a prompt-on-send if absent.
+ */
+export interface InsurerContact {
+  name?: string;
+  email?: string;
+  phone?: string;
+  /**
+   * Boilerplate additional-insured clause the venue's COI must contain.
+   * Used as the default for the per-project `coiAdditionalInsuredText`.
+   */
+  defaultAdditionalInsuredText?: string;
+}
+
 export interface UserDoc {
   uid: string;
   email: string;
@@ -31,6 +49,8 @@ export interface UserDoc {
   phone?: string;
   notificationPrefs?: NotificationPrefs;
   automationConfig?: AutomationConfigMap;
+  /** Phase 3.9 — per-admin insurer contact used by the COI request flow. */
+  insurerContact?: InsurerContact;
   createdAt: Timestamp;
   updatedAt?: Timestamp;
 }
@@ -86,6 +106,33 @@ export async function updateUserAutomationConfig(
   const ref = usersCol().doc(uid);
   await ref.set(
     { automationConfig: config, updatedAt: FieldValue.serverTimestamp() },
+    { merge: true }
+  );
+}
+
+/**
+ * Phase 3.9 — Persist (or update) the per-admin insurer contact. Stored on
+ * `users/{uid}.insurerContact`. Empty-string fields are normalised to
+ * `undefined` so the read site doesn't have to special-case blank values.
+ */
+export async function updateUserInsurerContact(
+  uid: string,
+  contact: InsurerContact
+): Promise<void> {
+  const trimmed: InsurerContact = {};
+  if (contact.name && contact.name.trim()) trimmed.name = contact.name.trim();
+  if (contact.email && contact.email.trim()) trimmed.email = contact.email.trim();
+  if (contact.phone && contact.phone.trim()) trimmed.phone = contact.phone.trim();
+  if (
+    contact.defaultAdditionalInsuredText &&
+    contact.defaultAdditionalInsuredText.trim()
+  ) {
+    trimmed.defaultAdditionalInsuredText = contact.defaultAdditionalInsuredText.trim();
+  }
+
+  const ref = usersCol().doc(uid);
+  await ref.set(
+    { insurerContact: trimmed, updatedAt: FieldValue.serverTimestamp() },
     { merge: true }
   );
 }

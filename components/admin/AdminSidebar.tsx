@@ -209,6 +209,16 @@ const NAV = [
         ),
       },
       {
+        label: "Sales Tax",
+        href: "/admin/reports/sales-tax",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <rect x="2" y="3" width="12" height="10" rx="0.5" />
+            <path d="M5 7h6M5 10l3-3" />
+          </svg>
+        ),
+      },
+      {
         label: "Referrals",
         href: "/admin/reports/referrals",
         icon: (
@@ -217,6 +227,26 @@ const NAV = [
             <circle cx="11" cy="3.5" r="2" />
             <circle cx="11" cy="12.5" r="2" />
             <path d="M4.7 7l4.6-2.6M4.7 9l4.6 2.6" />
+          </svg>
+        ),
+      },
+      {
+        label: "Compliance",
+        href: "/admin/reports/compliance",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <path d="M8 1l5 2v5c0 3.5-2.3 6.4-5 7-2.7-.6-5-3.5-5-7V3l5-2z" />
+            <path d="M5.5 8l2 2 3-4" />
+          </svg>
+        ),
+      },
+      {
+        label: "Ad Spend",
+        href: "/admin/reports/ad-spend",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <path d="M2 13L6 9l3 3 5-7" />
+            <path d="M10 5h4v4" />
           </svg>
         ),
       },
@@ -243,6 +273,26 @@ const NAV = [
             <rect x="2" y="5" width="12" height="9" rx="0.5" />
             <path d="M6 5V3h4v2" />
             <path d="M5 9h6M5 11h4" />
+          </svg>
+        ),
+      },
+      {
+        label: "Studio Hours",
+        href: "/admin/settings/studio-hours",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <circle cx="8" cy="8" r="6.5" />
+            <path d="M8 4v4l2.5 2" />
+          </svg>
+        ),
+      },
+      {
+        label: "Insurer",
+        href: "/admin/settings/insurer",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <path d="M8 1l6 3v4c0 4-3 6.5-6 7-3-0.5-6-3-6-7V4l6-3z" />
+            <path d="M5.5 8l1.7 1.7L11 6" />
           </svg>
         ),
       },

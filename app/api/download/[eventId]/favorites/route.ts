@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin }              from "@/lib/session";
 import { adminDb }                   from "@/lib/firebase-admin";
 import { buildCdnUrl }               from "@/lib/storage/images";
+import { verifyDownloadPin }         from "@/lib/db/events";
 import { ZipArchive }                from "archiver";
 import { Readable }                  from "stream";
 
@@ -44,7 +45,7 @@ function extensionFromContentType(contentType: string | null): string {
   return "jpg";
 }
 
-export async function POST(_req: NextRequest, { params }: Params) {
+export async function POST(req: NextRequest, { params }: Params) {
   const { eventId } = await params;
   await requireAdmin();
 
@@ -53,6 +54,15 @@ export async function POST(_req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "Event not found" }, { status: 404 });
   }
   const eventTitle = (eventDoc.data()?.title as string | undefined) ?? "gallery";
+
+  // Phase 2.6 — PIN gate. Admin sessions are still subject to the PIN when
+  // one is set so admins can preview the flow before sharing with clients.
+  const url = new URL(req.url);
+  const suppliedPin = url.searchParams.get("pin");
+  const pinCheck = await verifyDownloadPin(eventId, suppliedPin);
+  if (pinCheck.required && !pinCheck.ok) {
+    return NextResponse.json({ error: "Invalid PIN" }, { status: 401 });
+  }
 
   // Pull every photo in the event, then filter to ones with at least one
   // favoriting client. We intentionally do NOT require `galleryReady` —

@@ -1,8 +1,19 @@
 import { adminDb } from "@/lib/firebase-admin";
-import type { Timestamp } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import type { Role } from "./users";
 
 export type LeadSource = "WEBSITE" | "INSTAGRAM" | "GOOGLE" | "REFERRAL" | "DIRECT" | "OTHER";
+
+/**
+ * Phase 13.6 — recurring revenue cadence.
+ *
+ * Drives the re-engagement prompts that surface in the admin inbox on or
+ * near the anniversary of a delivered shoot. `NONE` (or absent) opts the
+ * client out entirely. Defaulted to `ANNUAL` for Family/Portrait/
+ * Engagement/Wedding session types when `onGalleryDelivered` fires, unless
+ * the admin has already chosen a value.
+ */
+export type RecurringCadence = "ANNUAL" | "SEMI_ANNUAL" | "NONE";
 
 export type ReferralRewardKind = "CREDIT" | "MINI_SESSION" | "GIFT";
 
@@ -58,6 +69,26 @@ export interface ClientDoc {
   lifecycleStage?: LifecycleStage;
   lifeEventTags?: string[];
   instagramHandle?: string;
+  /**
+   * Phase 13.6 — recurring revenue layer. Cadence controls whether (and how
+   * often) the cron sweep enqueues a `RE_ENGAGEMENT_DUE` inbox prompt for
+   * Korrin. `recurringNextPromptAt` is the next time the sweep should fire;
+   * `lastReengagementInboxItemAt` is the idempotency guard so two cron runs
+   * within 30 days do not double-queue. `recurringPromptsSent` is a simple
+   * lifetime counter — useful for dashboards / debugging.
+   */
+  recurringCadence?: RecurringCadence;
+  recurringNextPromptAt?: Timestamp;
+  recurringPromptsSent?: number;
+  lastReengagementInboxItemAt?: Timestamp;
+  /**
+   * Phase 3.11 — sales tax engine.
+   *
+   * Two-letter USPS state code (e.g. "NC") used to look up the applicable
+   * sales-tax rule when an invoice is generated. Falls back to the project's
+   * shoot location state, then the admin's `taxConfig.defaultBusinessStateCode`.
+   */
+  billingStateCode?: string;
 }
 
 /**
@@ -110,4 +141,38 @@ export function generateReferralCode(firstName: string): string {
   const slug = firstName.toLowerCase().replace(/[^a-z0-9]/g, "");
   const randomChars = Math.random().toString(36).substring(2, 6);
   return `${slug}-${randomChars}`;
+}
+
+/* ─── Phase 13.6 — recurring revenue helpers ─────────────────────────────── */
+
+/**
+ * Set (or clear) the client's recurring re-engagement cadence. Bumps
+ * `updatedAt` via `serverTimestamp()`. Does NOT touch
+ * `recurringNextPromptAt` — that is owned by the cron sweep and the
+ * gallery-delivered lifecycle hook.
+ */
+export async function setClientRecurringCadence(
+  clientId: string,
+  cadence: RecurringCadence
+): Promise<void> {
+  await clientsCol().doc(clientId).update({
+    recurringCadence: cadence,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+}
+
+/**
+ * Advance `recurringNextPromptAt` to the given moment. Used by the cron
+ * sweep (after a prompt fires) and by `dismissReengagementPrompt` (snooze).
+ */
+export async function bumpRecurringNextPromptAt(
+  clientId: string,
+  next: Date | Timestamp
+): Promise<void> {
+  const value =
+    next instanceof Timestamp ? next : Timestamp.fromDate(next);
+  await clientsCol().doc(clientId).update({
+    recurringNextPromptAt: value,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
 }

@@ -14,6 +14,7 @@ import { AddToCalendarButton } from "./AddToCalendarButton";
 import { TitleEditor } from "./TitleEditor";
 import { ShootDateEditor } from "./ShootDateEditor";
 import { EventActions } from "./EventActions";
+import { DownloadPinEditor } from "./DownloadPinEditor";
 import { formatDisplayDate } from "@/lib/date";
 import type { EventStatus } from "@/lib/db/events";
 import type { Metadata } from "next";
@@ -144,6 +145,7 @@ async function getEventData(eventId: string) {
       isMultiDay: (eventData.isMultiDay as boolean) || false,
       location: (eventData.location as string) || "",
       calendarDate: calendarDate.toISOString(),
+      downloadPin: (eventData.downloadPin as string | undefined) ?? null,
     },
     photos,
     clients,
@@ -242,6 +244,9 @@ export default async function EventDetailPage({ params }: Props) {
           <UploadZone eventId={event.id} />
         </div>
       </div>
+
+      {/* Phase 2.6 — Download PIN gate */}
+      <DownloadPinEditor eventId={event.id} initialPin={event.downloadPin} />
 
       {/* Client access panel */}
       <InvitePanel eventId={event.id} clients={clients} />

@@ -6,6 +6,11 @@ import { useRouter } from "next/navigation";
 import type { ProjectStatus } from "@/lib/db/projects";
 import type { EditingSubStage } from "@/lib/editing-sla";
 import { computeEditingStatus, editingStatusColor } from "@/lib/editing-status";
+import {
+  assessFarFutureRisk,
+  farFutureRiskColor,
+  type FarFutureRiskInfo,
+} from "@/lib/far-future-risk";
 import { toast } from "@/components/ui/Toaster";
 import {
   bulkArchiveProjects,
@@ -37,6 +42,14 @@ type PipelineProject = {
   deliveredAtIso: string | null;
   /** Phase 3.13 — current editing sub-stage (or null). */
   editingSubStage: string | null;
+  /** Phase 13.16 — ISO depositPaidAt (or null) — used by far-future-risk. */
+  depositPaidAtIso: string | null;
+  /** Phase 13.16 — ISO lastRespondedAt (or null) — used by far-future-risk. */
+  lastRespondedAtIso: string | null;
+  /** Phase 3.9 — COI required flag (set by admin on the workspace). */
+  coiRequired: boolean;
+  /** Phase 3.9 — COI state-machine value. */
+  coiStatus: "NONE" | "REQUESTED" | "RECEIVED" | "EXPIRED";
 };
 
 interface Props {
@@ -147,6 +160,21 @@ function isProjectRotting(p: PipelineProject, now: number): boolean {
   if (TERMINAL_STATUSES.has(p.status)) return false;
   const days = daysBetween(p.lastStatusChangeIso, now);
   return days > stageSla(p.status);
+}
+
+/**
+ * Phase 13.16 — far-future risk lookup for a pipeline row. Returns the full
+ * info object; callers gate rendering on `info.risk !== "NONE"`.
+ */
+function projectFarFutureRisk(p: PipelineProject, now: number): FarFutureRiskInfo {
+  return assessFarFutureRisk({
+    shootDate: p.shootDateIso ? new Date(p.shootDateIso) : null,
+    depositPaidAt: p.depositPaidAtIso ? new Date(p.depositPaidAtIso) : null,
+    lastContactedAt: p.lastContactedIso ? new Date(p.lastContactedIso) : null,
+    lastRespondedAt: p.lastRespondedAtIso ? new Date(p.lastRespondedAtIso) : null,
+    status: p.status as ProjectStatus,
+    now: new Date(now),
+  });
 }
 
 function applyViewFilter(
@@ -782,6 +810,7 @@ function KanbanView({
               {colProjects.map((p) => {
                 const rotting = isProjectRotting(p, now);
                 const days = Math.floor(daysBetween(p.lastStatusChangeIso, now));
+                const risk = projectFarFutureRisk(p, now);
                 return (
                   <Link
                     href={`/admin/projects/${p.id}`}
@@ -825,6 +854,7 @@ function KanbanView({
                         >
                           {p.title}
                         </h4>
+                        <RiskDot info={risk} />
                         {rotting && (
                           <span
                             title={`Stuck ${days}d in ${col.label} (SLA ${stageSla(p.status)}d)`}
@@ -1132,9 +1162,13 @@ function TableView({
                         fontWeight: 400,
                         color: "var(--charcoal)",
                         lineHeight: 1.2,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0.45rem",
                       }}
                     >
-                      {p.title || `${p.firstName} ${p.lastName}`.trim() || "Untitled"}
+                      <span>{p.title || `${p.firstName} ${p.lastName}`.trim() || "Untitled"}</span>
+                      <CoiChip project={p} now={now} />
                     </div>
                     <div
                       style={{
@@ -1183,7 +1217,16 @@ function TableView({
                     {days}d
                   </td>
                   <td style={tdStyle()}>
-                    <EditingPill project={p} now={now} />
+                    <div
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "0.5rem",
+                      }}
+                    >
+                      <EditingPill project={p} now={now} />
+                      <RiskDot info={projectFarFutureRisk(p, now)} />
+                    </div>
                   </td>
                   <td style={tdStyle()}>{lastContactedLabel}</td>
                 </tr>
@@ -1308,5 +1351,104 @@ function EditingPill({ project, now }: { project: PipelineProject; now: number }
       />
       {info.pillLabel}
     </span>
+  );
+}
+
+/**
+ * Phase 3.9 — small inline COI chip rendered next to the row title when the
+ * project is flagged `coiRequired` and the cert has not been received. Olive
+ * outline when REQUESTED, red when NONE-but-shoot-within-14-days, muted
+ * olive otherwise. Returns `null` for projects that don't need a chip.
+ */
+function CoiChip({ project, now }: { project: PipelineProject; now: number }) {
+  if (!project.coiRequired) return null;
+  if (project.coiStatus === "RECEIVED") return null;
+
+  // Compute proximity to shoot — drives the urgency styling.
+  let imminent = false;
+  if (project.shootDateIso) {
+    const shootMs = new Date(project.shootDateIso).getTime();
+    if (!Number.isNaN(shootMs)) {
+      const daysToShoot = (shootMs - now) / (1000 * 60 * 60 * 24);
+      imminent = daysToShoot >= 0 && daysToShoot <= 14;
+    }
+  }
+
+  const isUrgent = project.coiStatus === "NONE" && imminent;
+  const isRequested = project.coiStatus === "REQUESTED";
+
+  let bg: string;
+  let color: string;
+  let borderColor: string;
+  if (isUrgent) {
+    bg = "rgba(176,50,50,0.08)";
+    color = "#b03232";
+    borderColor = "rgba(176,50,50,0.5)";
+  } else if (isRequested) {
+    bg = "var(--olive-dim)";
+    color = "var(--olive)";
+    borderColor = "var(--olive)";
+  } else {
+    bg = "transparent";
+    color = "var(--charcoal-muted)";
+    borderColor = "var(--border-strong)";
+  }
+
+  const title =
+    project.coiStatus === "NONE"
+      ? imminent
+        ? "COI required — shoot within 14 days and cert not yet requested"
+        : "COI required — not yet requested"
+      : project.coiStatus === "REQUESTED"
+      ? "COI requested — awaiting cert from insurer"
+      : "COI expired";
+
+  return (
+    <span
+      title={title}
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        display: "inline-block",
+        fontSize: "0.55rem",
+        letterSpacing: "0.14em",
+        textTransform: "uppercase",
+        padding: "0.12rem 0.4rem",
+        background: bg,
+        color,
+        border: `0.5px solid ${borderColor}`,
+        fontFamily: "'Jost', sans-serif",
+        fontWeight: 500,
+        flexShrink: 0,
+      }}
+    >
+      COI
+    </span>
+  );
+}
+
+/**
+ * Phase 13.16 — far-future-risk dot/chip. Renders nothing when `risk === "NONE"`.
+ * Olive for WATCH, amber for FLAG, red for STALE. Tooltip carries the
+ * helper's `reason` string so operators can see why the dot is lit without
+ * leaving the table.
+ */
+function RiskDot({ info }: { info: FarFutureRiskInfo }) {
+  if (info.risk === "NONE") return null;
+  const color = farFutureRiskColor(info.risk);
+  if (!color) return null;
+  return (
+    <span
+      title={info.reason}
+      aria-label={info.reason}
+      style={{
+        display: "inline-block",
+        width: "8px",
+        height: "8px",
+        borderRadius: "50%",
+        background: color,
+        flexShrink: 0,
+        marginTop: "3px",
+      }}
+    />
   );
 }

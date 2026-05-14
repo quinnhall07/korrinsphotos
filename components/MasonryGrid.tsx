@@ -5,7 +5,7 @@
 // photo data and the dev placeholder seeds used in the prototype.
 
 import { useState, type ReactNode } from "react";
-import { Lightbox } from "@/components/Lightbox";
+import { Lightbox, type ResolutionTier } from "@/components/Lightbox";
 
 export interface MasonryPhoto {
   id: string;
@@ -27,6 +27,12 @@ interface MasonryGridProps<T extends MasonryPhoto = MasonryPhoto> {
    * lightbox.
    */
   renderOverlay?: (photo: T) => ReactNode;
+  /**
+   * Phase 2.6 — optional URL builder forwarded to the Lightbox so its
+   * "Download this photo" submenu can resolve `web` / `print` / `original`
+   * variants. When omitted the menu is hidden.
+   */
+  buildDownloadUrl?: (photo: T, tier: ResolutionTier) => string | null;
 }
 
 const HEIGHTS = [280, 340, 260, 420, 300, 380, 250, 350, 290, 410, 270, 360];
@@ -36,6 +42,7 @@ export function MasonryGrid<T extends MasonryPhoto = MasonryPhoto>({
   columns = 3,
   eventName,
   renderOverlay,
+  buildDownloadUrl,
 }: MasonryGridProps<T>) {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
@@ -89,6 +96,11 @@ export function MasonryGrid<T extends MasonryPhoto = MasonryPhoto>({
           initialIndex={lightboxIndex}
           eventName={eventName}
           onClose={() => setLightboxIndex(null)}
+          buildDownloadUrl={
+            buildDownloadUrl
+              ? (p, tier) => buildDownloadUrl(p as T, tier)
+              : undefined
+          }
         />
       )}
     </>

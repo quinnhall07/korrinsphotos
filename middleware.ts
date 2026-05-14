@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const PROTECTED_ADMIN   = /^\/admin(\/|$)/;
 const PROTECTED_GALLERY = /^\/gallery(\/|$)/;
+const PROTECTED_PORTAL  = /^\/portal(\/|$)/;
 const SESSION_COOKIE    = "__session";
 
 function inferSource(req: NextRequest): string {
@@ -48,6 +49,16 @@ export function middleware(req: NextRequest) {
 
   // ── Client gallery routes ─────────────────────────────────────────────────
   if (PROTECTED_GALLERY.test(pathname)) {
+    if (!sessionCookie?.value) {
+      return NextResponse.redirect(new URL("/login", req.url));
+    }
+    return res;
+  }
+
+  // ── Client portal routes ──────────────────────────────────────────────────
+  // Email-match auth is enforced server-side in app/portal/[projectId]/page.tsx
+  // via requireSession(). This Edge check only confirms cookie presence.
+  if (PROTECTED_PORTAL.test(pathname)) {
     if (!sessionCookie?.value) {
       return NextResponse.redirect(new URL("/login", req.url));
     }

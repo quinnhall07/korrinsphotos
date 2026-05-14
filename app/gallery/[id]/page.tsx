@@ -34,14 +34,21 @@ async function getEventPhotos(eventId: string): Promise<GalleryPhoto[]> {
 
   return snap.docs.map((doc) => {
     const data = doc.data();
+    const cloudflareImageId = data.cloudflareImageId as string | undefined;
     return {
       id: doc.id,
-      src: buildCdnUrl(data.cloudflareImageId, "gallery"),
-      thumbnailSrc: buildCdnUrl(data.cloudflareImageId, "thumbnail"),
+      src: cloudflareImageId ? buildCdnUrl(cloudflareImageId, "gallery") : "",
+      thumbnailSrc: cloudflareImageId
+        ? buildCdnUrl(cloudflareImageId, "thumbnail")
+        : undefined,
       label: data.label ?? undefined,
       category: data.category ?? undefined,
       favoritedBy: (data.favoritedBy as string[] | undefined) ?? [],
       tags: (data.tags as string[] | undefined) ?? [],
+      cloudflareImageId: cloudflareImageId ?? null,
+      // Phase 2.6 — surface whether an R2 original exists (per-photo
+      // download menu uses this to enable/disable the "Original" option).
+      hasOriginal: Boolean(data.r2Key || data.storageKey),
     };
   });
 }
@@ -110,6 +117,11 @@ export default async function GalleryEventPage({ params }: Props) {
     }
   }
 
+  // Phase 2.6 — Surface whether this event is gated by a download PIN. We
+  // intentionally do NOT ship the PIN value to the client; the API verifies
+  // the supplied PIN server-side.
+  const downloadPinRequired = Boolean(eventData.downloadPin);
+
   return (
     <GalleryViewer
       eventId={id}
@@ -124,6 +136,7 @@ export default async function GalleryEventPage({ params }: Props) {
       existingNps={existingNps}
       canSubmitNps={canSubmitNps}
       viewerClientId={viewerClientId}
+      downloadPinRequired={downloadPinRequired}
     />
   );
 }

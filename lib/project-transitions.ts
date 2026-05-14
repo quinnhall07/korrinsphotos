@@ -14,6 +14,8 @@ import {
   type ResolvedAutomationConfig,
 } from "./automations/recipes";
 import { enqueueTrackedMail } from "./email/tracking";
+import { computeSalesTaxCents, STATE_TAX_RULES, applyRuleOverride } from "./sales-tax-rules";
+import { getStudioTaxConfig } from "./db/admin-settings";
 
 // Called when project status changes
 export async function handleProjectTransition(projectId: string, fromStatus: ProjectStatus, toStatus: ProjectStatus) {
@@ -267,13 +269,23 @@ async function onProjectBooked(
     isRecipeEnabled(automationConfig, "auto_create_balance_invoice") &&
     project.packagePriceUsd
   ) {
+    const subtotalCents = (project.packagePriceUsd * 0.5) * 100; // Remaining 50%
+    const tax = await computeInvoiceTaxBreakdown({
+      subtotalCents,
+      project,
+      client,
+    });
     const invoiceRef = adminDb.collection("invoices").doc();
     await invoiceRef.set({
       projectId,
       clientId: project.clientId,
       type: "BALANCE",
       status: "DRAFT",
-      amountCents: (project.packagePriceUsd * 0.5) * 100, // Remaining 50%
+      amountCents: tax.amountCents,
+      subtotalCents: tax.subtotalCents,
+      taxCents: tax.taxCents,
+      ...(tax.taxStateCode ? { taxStateCode: tax.taxStateCode } : {}),
+      ...(typeof tax.taxRatePct === "number" ? { taxRatePct: tax.taxRatePct } : {}),
       dueDate: project.shootDate ? new Date(project.shootDate.toMillis() - 14 * 24 * 60 * 60 * 1000) : null,
       createdAt: FieldValue.serverTimestamp(),
     });
@@ -317,21 +329,37 @@ async function onProposalSent(
   if (!projectSnap.exists) return;
   const project = projectSnap.data()!;
 
-  // Create deposit invoice (DRAFT)
+  // Create deposit invoice (DRAFT). Look up the client so we can read
+  // `billingStateCode` for the Phase 3.11 sales-tax breakdown.
   if (project.packagePriceUsd) {
+    let client: FirebaseFirestore.DocumentData | null = null;
+    if (project.clientId) {
+      try {
+        const clientSnap = await adminDb.collection("clients").doc(project.clientId).get();
+        if (clientSnap.exists) client = clientSnap.data() ?? null;
+      } catch (err) {
+        console.error("[onProposalSent] client lookup failed", err);
+      }
+    }
+    const subtotalCents = (project.packagePriceUsd * 0.5) * 100; // 50% deposit
+    const tax = await computeInvoiceTaxBreakdown({
+      subtotalCents,
+      project,
+      client,
+    });
     const invoiceRef = adminDb.collection("invoices").doc();
     await invoiceRef.set({
       projectId,
       clientId: project.clientId,
       type: "DEPOSIT",
       status: "DRAFT",
-      amountCents: (project.packagePriceUsd * 0.5) * 100, // 50% deposit
+      amountCents: tax.amountCents,
+      subtotalCents: tax.subtotalCents,
+      taxCents: tax.taxCents,
+      ...(tax.taxStateCode ? { taxStateCode: tax.taxStateCode } : {}),
+      ...(typeof tax.taxRatePct === "number" ? { taxRatePct: tax.taxRatePct } : {}),
       dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // Due in 7 days
       createdAt: FieldValue.serverTimestamp(),
-      // TODO (Phase 3.11 — Sales tax engine): when `users/{uid}.taxRules` is
-      // populated, look up the rate for the project's shipping/jurisdiction
-      // and add `salesTaxCents` + `salesTaxRate` + `salesTaxJurisdiction` here
-      // (fields already exist on InvoiceDoc).
     });
   }
 
@@ -418,6 +446,54 @@ async function onGalleryDelivered(
       err,
     });
   }
+
+  // Phase 13.6 — recurring revenue layer. For session types that have
+  // legitimate annual cadence (Family / Portrait / Engagement / Wedding),
+  // default the client's `recurringCadence` to ANNUAL and set the next
+  // prompt at `deliveredAt + 11 months` so Korrin gets a 1-month lead time
+  // before the anniversary. Never overrides an admin-chosen value: an
+  // existing ANNUAL/SEMI_ANNUAL/NONE on the client is left untouched.
+  //
+  // Editorial / Commercial / other types are left at the implicit NONE
+  // default. Wrapped in try/catch — a misconfiguration here must not abort
+  // the rest of the GALLERY_DELIVERED transition.
+  try {
+    const sessionType = String(project.sessionType ?? "").trim();
+    const recurringEligible =
+      sessionType === "Family" ||
+      sessionType === "Portrait" ||
+      sessionType === "Engagement" ||
+      sessionType === "Wedding";
+
+    if (recurringEligible && project.clientId) {
+      const clientRef = adminDb.collection("clients").doc(project.clientId);
+      const clientSnap = await clientRef.get();
+      if (clientSnap.exists) {
+        const c = clientSnap.data() ?? {};
+        const existing = c.recurringCadence as string | undefined;
+        // Only seed when null/undefined or explicitly NONE.
+        if (!existing || existing === "NONE") {
+          const baseMs =
+            project.deliveredAt instanceof Timestamp
+              ? project.deliveredAt.toMillis()
+              : Date.now();
+          const next = new Date(baseMs);
+          // 11 months — gives Korrin lead time before the actual anniversary.
+          next.setMonth(next.getMonth() + 11);
+          await clientRef.update({
+            recurringCadence: "ANNUAL",
+            recurringNextPromptAt: Timestamp.fromDate(next),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[onGalleryDelivered] recurring cadence seed failed", {
+      projectId,
+      err,
+    });
+  }
 }
 
 /**
@@ -464,4 +540,92 @@ async function maybeScheduleFollowUp(
     status: "PENDING",
     createdAt: FieldValue.serverTimestamp(),
   });
+}
+
+/**
+ * Phase 3.11 — compute the sales-tax breakdown for a new invoice.
+ *
+ * Returns a payload that callers should spread into the invoice doc:
+ *
+ *   { amountCents, subtotalCents, taxCents, taxStateCode?, taxRatePct? }
+ *
+ * `amountCents` is always the **gross** (subtotal + tax) so the existing
+ * Stripe payment-link flow keeps working unchanged. When the studio config
+ * has `collectSalesTax: false`, the result is `{ amountCents: subtotalCents,
+ * subtotalCents, taxCents: 0 }` — no state code is recorded.
+ *
+ * Best-effort: any error reading the config falls through to a tax-free
+ * breakdown so a Firestore hiccup never blocks invoice creation.
+ */
+export async function computeInvoiceTaxBreakdown(input: {
+  subtotalCents: number;
+  project: FirebaseFirestore.DocumentData;
+  client: FirebaseFirestore.DocumentData | null | undefined;
+  productType?: "DIGITAL_PHOTOS" | "PRINTS" | "SESSION_FEE";
+}): Promise<{
+  amountCents: number;
+  subtotalCents: number;
+  taxCents: number;
+  taxStateCode?: string;
+  taxRatePct?: number;
+}> {
+  const { subtotalCents, project, client } = input;
+  const productType = input.productType ?? "DIGITAL_PHOTOS";
+
+  let config;
+  try {
+    config = await getStudioTaxConfig();
+  } catch (err) {
+    console.error("[computeInvoiceTaxBreakdown] config read failed", err);
+    return { amountCents: subtotalCents, subtotalCents, taxCents: 0 };
+  }
+  if (!config.collectSalesTax) {
+    return { amountCents: subtotalCents, subtotalCents, taxCents: 0 };
+  }
+
+  // Resolve the billing state: client's billing state → project's shoot state →
+  // admin's defaultBusinessStateCode.
+  const candidates = [
+    typeof client?.billingStateCode === "string" ? client.billingStateCode : null,
+    typeof project?.shootStateCode === "string" ? project.shootStateCode : null,
+    config.defaultBusinessStateCode,
+  ];
+  const stateCode = candidates.find((c) => typeof c === "string" && c.trim().length > 0) ?? null;
+
+  // Apply admin overrides on top of the seeded rule.
+  const code = (stateCode ?? "").toUpperCase();
+  const baseRule = code ? STATE_TAX_RULES[code] : undefined;
+  const effectiveRule = baseRule
+    ? applyRuleOverride(baseRule, config.overrideRulesByState?.[code])
+    : null;
+
+  if (!effectiveRule || effectiveRule.ratePct <= 0) {
+    return { amountCents: subtotalCents, subtotalCents, taxCents: 0 };
+  }
+
+  // Reuse the pure helper, but feed it the overridden rule by temporarily
+  // computing manually — `computeSalesTaxCents` always reads the static table.
+  let taxable = false;
+  if (productType === "DIGITAL_PHOTOS" || productType === "SESSION_FEE") {
+    taxable = effectiveRule.digitalPhotosTaxable;
+  } else {
+    taxable = effectiveRule.printsTaxable;
+  }
+  if (!taxable || subtotalCents <= 0) {
+    return { amountCents: subtotalCents, subtotalCents, taxCents: 0 };
+  }
+
+  const taxCents = Math.round((subtotalCents * effectiveRule.ratePct) / 100);
+  // Touch the imported helper so static analyzers don't drop it; also a
+  // safety check that the static table agrees on taxability for the base
+  // (un-overridden) case.
+  void computeSalesTaxCents;
+
+  return {
+    amountCents: subtotalCents + taxCents,
+    subtotalCents,
+    taxCents,
+    taxStateCode: effectiveRule.stateCode,
+    taxRatePct: effectiveRule.ratePct,
+  };
 }

@@ -18,8 +18,30 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireSession }            from "@/lib/session";
 import { adminDb }                   from "@/lib/firebase-admin";
 import { buildCdnUrl }               from "@/lib/storage/images";
+import { generatePresignedGetUrl }   from "@/lib/storage/r2";
+import { verifyDownloadPin }         from "@/lib/db/events";
 import { ZipArchive }                from "archiver";
 import { Readable }                  from "stream";
+
+// Phase 2.6 — Resolution tier picker.
+// `web`      → CF Images `gallery` variant (~1200px wide, default).
+// `print`    → CF Images `download` variant (~2048px wide).
+// `original` → presigned R2 GET URL against `r2Key` / `storageKey`. Falls
+//              back to `download` per-photo if neither key exists; the
+//              archive's MANIFEST.txt records each fallback.
+type ResolutionTier = "web" | "print" | "original";
+const VALID_TIERS: ReadonlySet<ResolutionTier> = new Set(["web", "print", "original"]);
+
+function parseResolution(input: string | null): ResolutionTier {
+  if (input && VALID_TIERS.has(input as ResolutionTier)) {
+    return input as ResolutionTier;
+  }
+  return "web";
+}
+
+function variantForTier(tier: Exclude<ResolutionTier, "original">) {
+  return tier === "print" ? "download" : "gallery";
+}
 
 export const runtime  = "nodejs";
 export const dynamic  = "force-dynamic";
@@ -47,7 +69,7 @@ function extensionFromContentType(contentType: string | null): string {
   return "jpg";
 }
 
-export async function POST(_req: NextRequest, { params }: Params) {
+export async function POST(req: NextRequest, { params }: Params) {
   const { eventId } = await params;
   const session = await requireSession();
 
@@ -67,6 +89,18 @@ export async function POST(_req: NextRequest, { params }: Params) {
   }
   const eventTitle = (eventDoc.data()?.title as string | undefined) ?? "gallery";
 
+  // Phase 2.6 — Per-event download PIN gate. Admin sessions still must
+  // satisfy the PIN when one is set; that's a deliberate "preview-as-client"
+  // check that catches a bad PIN before it ships to a real client.
+  const url = new URL(req.url);
+  const suppliedPin = url.searchParams.get("pin");
+  const pinCheck = await verifyDownloadPin(eventId, suppliedPin);
+  if (pinCheck.required && !pinCheck.ok) {
+    return NextResponse.json({ error: "Invalid PIN" }, { status: 401 });
+  }
+
+  const tier = parseResolution(url.searchParams.get("resolution"));
+
   // Pull the photo list.
   const snap = await adminDb
     .collection("events")
@@ -76,18 +110,51 @@ export async function POST(_req: NextRequest, { params }: Params) {
     .orderBy("uploadedAt", "asc")
     .get();
 
-  const photos = snap.docs
-    .map((doc) => {
-      const data = doc.data();
-      const cloudflareImageId = data.cloudflareImageId as string | undefined;
-      if (!cloudflareImageId) return null;
-      return {
-        id: doc.id,
-        url: buildCdnUrl(cloudflareImageId, "download"),
-        label: (data.label as string | undefined) ?? null,
-      };
-    })
-    .filter((p): p is { id: string; url: string; label: string | null } => p !== null);
+  // For each photo, resolve the URL appropriate to the requested tier.
+  // `original` requires an R2 key (`r2Key` for single-PUT, `storageKey` for
+  // multipart). If neither exists we fall back to the `download` variant per
+  // photo and note it in the manifest text file at the end of the archive.
+  const fallbackNotes: string[] = [];
+  const photos: { id: string; url: string; label: string | null }[] = [];
+  for (const doc of snap.docs) {
+    const data = doc.data();
+    const cloudflareImageId = data.cloudflareImageId as string | undefined;
+    const r2Key =
+      (data.r2Key as string | undefined) ??
+      (data.storageKey as string | undefined) ??
+      null;
+
+    let url: string | null = null;
+    if (tier === "original") {
+      if (r2Key) {
+        try {
+          url = await generatePresignedGetUrl(r2Key, 3600);
+        } catch (err) {
+          console.error("[download/zip] presign failed", { id: doc.id, err });
+        }
+      }
+      if (!url) {
+        // Fall back to the print variant if we have a Cloudflare image id.
+        if (cloudflareImageId) {
+          url = buildCdnUrl(cloudflareImageId, "download");
+          fallbackNotes.push(
+            `${doc.id}: no R2 original available, exported "print" variant instead.`,
+          );
+        }
+      }
+    } else {
+      if (cloudflareImageId) {
+        url = buildCdnUrl(cloudflareImageId, variantForTier(tier));
+      }
+    }
+
+    if (!url) continue;
+    photos.push({
+      id: doc.id,
+      url,
+      label: (data.label as string | undefined) ?? null,
+    });
+  }
 
   if (photos.length === 0) {
     return NextResponse.json({ error: "No photos available for download" }, { status: 404 });
@@ -137,6 +204,24 @@ export async function POST(_req: NextRequest, { params }: Params) {
         const nodeStream = Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]);
         archive.append(nodeStream, { name });
       }
+
+      // Phase 2.6 — drop a MANIFEST.txt at the root of the zip describing the
+      // tier the user picked and any per-photo fallbacks (e.g. `original`
+      // tier with no R2 key falls back to `print`).
+      const manifestLines = [
+        `Gallery: ${eventTitle}`,
+        `Resolution tier requested: ${tier}`,
+        `Photos exported: ${photos.length}`,
+        "",
+        fallbackNotes.length === 0
+          ? "All photos exported at the requested tier."
+          : "Fallbacks:",
+        ...fallbackNotes,
+      ];
+      archive.append(Buffer.from(manifestLines.join("\n"), "utf8"), {
+        name: "MANIFEST.txt",
+      });
+
       await archive.finalize();
     } catch (err) {
       console.error("[download/zip] Archive build failed:", err);
@@ -181,7 +266,7 @@ export async function POST(_req: NextRequest, { params }: Params) {
     },
   });
 
-  const filename = `${sanitiseFilename(eventTitle)}.zip`;
+  const filename = `${sanitiseFilename(eventTitle)}-${tier}.zip`;
 
   return new Response(webStream, {
     status: 200,

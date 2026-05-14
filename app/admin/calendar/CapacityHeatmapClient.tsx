@@ -19,7 +19,13 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import type { WeekBucket } from "@/lib/domain/capacity";
+import type { BucketProject, WeekBucket } from "@/lib/domain/capacity";
+import {
+  assessFarFutureRisk,
+  farFutureRiskColor,
+  type FarFutureRiskInfo,
+} from "@/lib/far-future-risk";
+import type { ProjectStatus } from "@/lib/db/projects";
 
 interface Props {
   buckets: WeekBucket[];
@@ -75,8 +81,27 @@ function fmtShootDate(iso: string): string {
   }
 }
 
+/**
+ * Phase 13.16 — far-future-risk lookup for a bucket project. Pure wrapper
+ * around `assessFarFutureRisk` that materialises the ISO inputs into Dates.
+ */
+function bucketProjectRisk(p: BucketProject, now: Date): FarFutureRiskInfo {
+  return assessFarFutureRisk({
+    shootDate: p.shootDate ? new Date(p.shootDate) : null,
+    depositPaidAt: p.depositPaidAt ? new Date(p.depositPaidAt) : null,
+    lastContactedAt: p.lastContactedAt ? new Date(p.lastContactedAt) : null,
+    lastRespondedAt: p.lastRespondedAt ? new Date(p.lastRespondedAt) : null,
+    status: p.status as ProjectStatus,
+    now,
+  });
+}
+
 export function CapacityHeatmapClient({ buckets, weeklyCap }: Props) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+
+  // Pin "now" at mount so risk math stays stable across re-renders within
+  // a single page visit.
+  const [now] = useState<Date>(() => new Date());
 
   // Bucket lookup for the side panel.
   const bucketByKey = useMemo(() => {
@@ -84,6 +109,25 @@ export function CapacityHeatmapClient({ buckets, weeklyCap }: Props) {
     for (const b of buckets) m.set(b.weekStart, b);
     return m;
   }, [buckets]);
+
+  // Phase 13.16 — per-bucket worst-case far-future risk (FLAG or STALE only).
+  // Used to render a small warning glyph in the cell corner.
+  const bucketWarning = useMemo(() => {
+    const out = new Map<string, "FLAG" | "STALE">();
+    for (const b of buckets) {
+      let worst: "FLAG" | "STALE" | null = null;
+      for (const p of b.projects) {
+        const r = bucketProjectRisk(p, now).risk;
+        if (r === "STALE") {
+          worst = "STALE";
+          break;
+        }
+        if (r === "FLAG" && worst === null) worst = "FLAG";
+      }
+      if (worst) out.set(b.weekStart, worst);
+    }
+    return out;
+  }, [buckets, now]);
 
   const selected = selectedKey ? bucketByKey.get(selectedKey) ?? null : null;
 
@@ -191,6 +235,9 @@ export function CapacityHeatmapClient({ buckets, weeklyCap }: Props) {
           const isCurrent = b.weekStart === currentWeekKey;
           const bg = cellBackground(b.shootCount, weeklyCap);
           const fg = cellForeground(b.shootCount, weeklyCap);
+          const warning = bucketWarning.get(b.weekStart) ?? null;
+          const warningColor =
+            warning === "STALE" ? "#DC2626" : warning === "FLAG" ? "#D97706" : null;
           return (
             <button
               key={b.weekStart}
@@ -200,8 +247,9 @@ export function CapacityHeatmapClient({ buckets, weeklyCap }: Props) {
               }
               title={`Week of ${fmtMonthDay(b.weekStart)} — ${b.shootCount} shoot${
                 b.shootCount === 1 ? "" : "s"
-              }`}
+              }${warning ? ` · ${warning.toLowerCase()} far-future risk` : ""}`}
               style={{
+                position: "relative",
                 display: "flex",
                 flexDirection: "column",
                 alignItems: "flex-start",
@@ -223,6 +271,24 @@ export function CapacityHeatmapClient({ buckets, weeklyCap }: Props) {
                 boxShadow: isSelected ? "0 0 0 1px var(--charcoal) inset" : "none",
               }}
             >
+              {warningColor && (
+                <span
+                  aria-hidden
+                  style={{
+                    position: "absolute",
+                    top: "3px",
+                    right: "4px",
+                    fontSize: "0.7rem",
+                    color: warningColor,
+                    lineHeight: 1,
+                    fontWeight: 600,
+                    textShadow: "0 0 2px rgba(255,255,255,0.85)",
+                  }}
+                  title={`Far-future risk: ${warning?.toLowerCase()}`}
+                >
+                  ⚠
+                </span>
+              )}
               <span
                 style={{
                   fontSize: "0.62rem",
@@ -262,6 +328,7 @@ export function CapacityHeatmapClient({ buckets, weeklyCap }: Props) {
       <SidePanel
         bucket={selected}
         weeklyCap={weeklyCap}
+        now={now}
         onClose={() => setSelectedKey(null)}
       />
     </div>
@@ -350,10 +417,12 @@ function Legend({ cap }: { cap: number }) {
 function SidePanel({
   bucket,
   weeklyCap,
+  now,
   onClose,
 }: {
   bucket: WeekBucket | null;
   weeklyCap: number;
+  now: Date;
   onClose: () => void;
 }) {
   if (!bucket) return null;
@@ -473,7 +542,10 @@ function SidePanel({
             gap: "0.5rem",
           }}
         >
-          {bucket.projects.map((p) => (
+          {bucket.projects.map((p) => {
+            const risk = bucketProjectRisk(p, now);
+            const riskColor = farFutureRiskColor(risk.risk);
+            return (
             <li
               key={p.id}
               style={{
@@ -537,8 +609,37 @@ function SidePanel({
               >
                 Status · {p.status.replace(/_/g, " ").toLowerCase()}
               </p>
+              {risk.risk !== "NONE" && riskColor && (
+                <p
+                  style={{
+                    margin: "0.45rem 0 0",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "0.4rem",
+                    padding: "0.2rem 0.5rem",
+                    border: `0.5px solid ${riskColor}`,
+                    color: riskColor,
+                    fontSize: "0.65rem",
+                    letterSpacing: "0.1em",
+                    textTransform: "uppercase",
+                  }}
+                  title={risk.reason}
+                >
+                  <span
+                    style={{
+                      display: "inline-block",
+                      width: "6px",
+                      height: "6px",
+                      borderRadius: "50%",
+                      background: riskColor,
+                    }}
+                  />
+                  {risk.risk}: {risk.reason.replace(/^[A-Z]+:\s*/, "")}
+                </p>
+              )}
             </li>
-          ))}
+            );
+          })}
         </ul>
       </aside>
     </>

@@ -134,6 +134,22 @@ export function Navbar() {
 
             {user ? (
               <>
+                {/* My Portal — server-rendered router resolves the user's
+                    email to their current project and redirects. */}
+                <li>
+                  <Link
+                    href="/portal/router"
+                    style={{
+                      ...navLinkStyle,
+                      color: isActive("/portal") ? "var(--charcoal)" : "var(--charcoal-light)",
+                      borderBottom: isActive("/portal") ? "0.5px solid var(--olive)" : "none",
+                      paddingBottom: "2px",
+                    }}
+                  >
+                    My Portal
+                  </Link>
+                </li>
+
                 {/* My Galleries — visible to ALL logged-in users */}
                 <li>
                   <Link

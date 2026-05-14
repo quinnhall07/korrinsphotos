@@ -48,6 +48,23 @@ async function getProjects() {
     const editingSubStage =
       typeof data.editingSubStage === "string" ? data.editingSubStage : null;
 
+    // Phase 13.16 — far-future-risk inputs.
+    const depositPaidAt = toDate(data.depositPaidAt);
+    const depositPaidAtIso = depositPaidAt ? depositPaidAt.toISOString() : null;
+    const lastResponded = toDate(data.lastRespondedAt);
+    const lastRespondedAtIso = lastResponded ? lastResponded.toISOString() : null;
+
+    // Phase 3.9 — COI surface on the pipeline table.
+    const coiRequired = !!data.coiRequired;
+    const rawCoiStatus =
+      typeof data.coiStatus === "string" ? data.coiStatus : "NONE";
+    const coiStatus: "NONE" | "REQUESTED" | "RECEIVED" | "EXPIRED" =
+      rawCoiStatus === "REQUESTED" ||
+      rawCoiStatus === "RECEIVED" ||
+      rawCoiStatus === "EXPIRED"
+        ? rawCoiStatus
+        : "NONE";
+
     return {
       id: doc.id,
       clientId: data.clientId,
@@ -65,6 +82,10 @@ async function getProjects() {
       lastContactedIso,
       deliveredAtIso,
       editingSubStage,
+      depositPaidAtIso,
+      lastRespondedAtIso,
+      coiRequired,
+      coiStatus,
     };
   });
 }

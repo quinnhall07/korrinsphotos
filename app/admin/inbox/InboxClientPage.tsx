@@ -15,6 +15,9 @@ import {
   markInboxRead,
   markInboxUnread,
   snoozeInboxItem,
+  sendReengagementEmail,
+  snoozeReengagement30Days,
+  getDefaultReengagementBody,
 } from "./actions";
 
 export type InboxItemView = {
@@ -28,10 +31,16 @@ export type InboxItemView = {
     | "PAYMENT_DISPUTE_CLOSED"
     | "CONTRACT_SIGNED"
     | "MESSAGE_RECEIVED"
+    | "CLIENT_MESSAGE"
     | "GALLERY_REQUESTED"
     | "UNMATCHED_INBOUND"
     | "TASK_FIRED"
-    | "PRESS_LINK_DOWN";
+    | "PRESS_LINK_DOWN"
+    | "RE_ENGAGEMENT_DUE"
+    | "FAR_FUTURE_RISK"
+    | "COI_REQUESTED"
+    | "COI_RECEIVED"
+    | "SALES_TAX_OVERDUE";
   projectId: string | null;
   clientId: string | null;
   title: string;
@@ -51,10 +60,16 @@ const TYPE_LABELS: Record<InboxItemView["type"], string> = {
   PAYMENT_DISPUTE_CLOSED: "DISPUTE CLOSED",
   CONTRACT_SIGNED: "CONTRACT",
   MESSAGE_RECEIVED: "MESSAGE",
+  CLIENT_MESSAGE: "CLIENT MESSAGE",
   GALLERY_REQUESTED: "GALLERY",
   UNMATCHED_INBOUND: "UNMATCHED",
   TASK_FIRED: "AUTOMATION",
   PRESS_LINK_DOWN: "PRESS LINK DOWN",
+  RE_ENGAGEMENT_DUE: "RE-ENGAGEMENT DUE",
+  FAR_FUTURE_RISK: "FAR-FUTURE RISK",
+  COI_REQUESTED: "COI REQUESTED",
+  COI_RECEIVED: "COI RECEIVED",
+  SALES_TAX_OVERDUE: "SALES TAX OVERDUE",
 };
 
 function relativeTime(iso: string): string {
@@ -553,6 +568,13 @@ function DetailPane({
         </div>
       )}
 
+      {item.type === "RE_ENGAGEMENT_DUE" && item.clientId && (
+        <ReengagementBlock
+          inboxItemId={item.id}
+          clientId={item.clientId}
+        />
+      )}
+
       <div
         style={{
           marginTop: "1.5rem",
@@ -583,6 +605,197 @@ function DetailPane({
         </button>
         <button onClick={onArchive} style={pillButtonStyle()}>
           Archive
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Phase 13.6 — inline re-engagement quick actions, rendered inside the
+ * inbox detail panel when an item carries `type === "RE_ENGAGEMENT_DUE"`.
+ * Loads the default subject/body lazily on mount so the textarea is
+ * pre-populated, then offers two buttons:
+ *   - "Send re-engagement email now" → enqueueTrackedMail + advance window 12mo
+ *   - "Snooze 30 days"               → bump next-prompt window forward
+ */
+function ReengagementBlock({
+  inboxItemId,
+  clientId,
+}: {
+  inboxItemId: string;
+  clientId: string;
+}) {
+  const router = useRouter();
+  const [subject, setSubject] = useState<string>("");
+  const [body, setBody] = useState<string>("");
+  const [loaded, setLoaded] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [snoozing, setSnoozing] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await getDefaultReengagementBody(clientId);
+        if (cancelled) return;
+        setSubject(res.subject);
+        setBody(res.body);
+      } catch {
+        // Keep empty defaults if the lookup fails.
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
+
+  const handleSend = async () => {
+    if (sending) return;
+    setSending(true);
+    const res = await sendReengagementEmail(inboxItemId, clientId, {
+      subject,
+      body,
+    });
+    setSending(false);
+    if (res.success) {
+      toast("Re-engagement email sent");
+      router.refresh();
+    } else {
+      toast(res.error ?? "Failed to send");
+    }
+  };
+
+  const handleSnooze = async () => {
+    if (snoozing) return;
+    setSnoozing(true);
+    const res = await snoozeReengagement30Days(inboxItemId, clientId);
+    setSnoozing(false);
+    if (res.success) {
+      toast("Snoozed 30 days");
+      router.refresh();
+    } else {
+      toast(res.error ?? "Failed to snooze");
+    }
+  };
+
+  return (
+    <div
+      style={{
+        marginTop: "1.5rem",
+        padding: "1.25rem",
+        border: "0.5px solid var(--olive)",
+        background: "var(--olive-dim)",
+      }}
+    >
+      <p
+        style={{
+          fontSize: "0.6rem",
+          letterSpacing: "0.18em",
+          textTransform: "uppercase",
+          color: "var(--olive)",
+          margin: 0,
+        }}
+      >
+        Quick action — re-engagement email
+      </p>
+
+      <label
+        style={{
+          display: "block",
+          marginTop: "0.85rem",
+          fontSize: "0.7rem",
+          letterSpacing: "0.1em",
+          textTransform: "uppercase",
+          color: "var(--charcoal-light)",
+        }}
+      >
+        Subject
+      </label>
+      <input
+        type="text"
+        value={subject}
+        onChange={(e) => setSubject(e.target.value)}
+        disabled={!loaded}
+        style={{
+          display: "block",
+          width: "100%",
+          marginTop: "0.3rem",
+          padding: "0.55rem 0.75rem",
+          border: "0.5px solid var(--border-strong)",
+          background: "var(--white)",
+          fontFamily: "'Jost', sans-serif",
+          fontSize: "0.88rem",
+          color: "var(--charcoal)",
+        }}
+      />
+
+      <label
+        style={{
+          display: "block",
+          marginTop: "0.85rem",
+          fontSize: "0.7rem",
+          letterSpacing: "0.1em",
+          textTransform: "uppercase",
+          color: "var(--charcoal-light)",
+        }}
+      >
+        Body
+      </label>
+      <textarea
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        rows={8}
+        disabled={!loaded}
+        style={{
+          display: "block",
+          width: "100%",
+          marginTop: "0.3rem",
+          padding: "0.55rem 0.75rem",
+          border: "0.5px solid var(--border-strong)",
+          background: "var(--white)",
+          fontFamily: "'Jost', sans-serif",
+          fontSize: "0.88rem",
+          color: "var(--charcoal)",
+          lineHeight: 1.55,
+          resize: "vertical",
+        }}
+      />
+
+      <div
+        style={{
+          marginTop: "0.85rem",
+          display: "flex",
+          gap: "0.6rem",
+          flexWrap: "wrap",
+        }}
+      >
+        <button
+          onClick={handleSend}
+          disabled={sending || snoozing || !loaded || !body.trim()}
+          style={{
+            ...pillButtonStyle(),
+            background: "var(--olive)",
+            color: "var(--white)",
+            border: "0.5px solid var(--olive)",
+            cursor: sending ? "wait" : "pointer",
+            opacity: sending || !body.trim() ? 0.6 : 1,
+          }}
+        >
+          {sending ? "Sending…" : "Send re-engagement email now"}
+        </button>
+        <button
+          onClick={handleSnooze}
+          disabled={sending || snoozing}
+          style={{
+            ...pillButtonStyle(),
+            cursor: snoozing ? "wait" : "pointer",
+            opacity: snoozing ? 0.6 : 1,
+          }}
+        >
+          {snoozing ? "Snoozing…" : "Snooze 30 days"}
         </button>
       </div>
     </div>

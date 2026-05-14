@@ -1,0 +1,5 @@
+# Drop a `gallery-loop.mp3` here (small, looping, royalty-free audio)
+# to enable optional background music for the gallery slideshow.
+# The slideshow audio element is muted by default and references
+# `/audio/gallery-loop.mp3` — when the file is absent the slideshow
+# silently no-ops, so this directory can stay empty until Korrin uploads.
