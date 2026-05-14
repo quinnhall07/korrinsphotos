@@ -5,6 +5,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { handleProjectTransition } from "@/lib/project-transitions";
 import { logActivity } from "@/lib/db/activity";
+import { createInboxItem } from "@/lib/db/inbox";
 import type { InvoiceDoc } from "@/lib/db/invoices";
 import type { ProjectDoc } from "@/lib/db/projects";
 
@@ -70,6 +71,19 @@ async function processInvoicePayment(invoiceId: string, paymentIntentId: string)
     paidAt: FieldValue.serverTimestamp(),
     stripePaymentIntentId: paymentIntentId,
   });
+
+  // 1a. Surface to admin inbox (best-effort).
+  const amountDollars =
+    typeof invoice.amountCents === "number" ? (invoice.amountCents / 100).toFixed(2) : null;
+  await createInboxItem({
+    type: "PAYMENT_RECEIVED",
+    projectId: invoice.projectId ?? null,
+    clientId: invoice.clientId ?? null,
+    title: `Payment received${amountDollars ? ` — $${amountDollars}` : ""} (${invoice.type})`,
+    body: `Invoice ${invoiceId} marked PAID via Stripe.`,
+    link: invoice.projectId ? `/admin/projects/${invoice.projectId}` : null,
+    read: false,
+  }).catch(() => {});
 
   // 2. Advance Project Status based on invoice type
   const projectRef = adminDb.collection("projects").doc(invoice.projectId);

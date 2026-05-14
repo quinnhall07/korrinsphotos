@@ -59,3 +59,43 @@ export async function sendInvoice(invoiceId: string) {
   revalidatePath(`/admin/projects/${invoice.projectId}`);
   return { success: true };
 }
+
+/**
+ * Manually mark an invoice paid (cash, bank transfer, etc.) without going
+ * through Stripe. Does NOT advance project status — the Stripe webhook is
+ * the canonical writer for the deposit→booked and editing→delivered moves.
+ * Admins who need to advance the project after a manual payment should use
+ * the Advance Status modal afterwards.
+ */
+export async function markInvoicePaidManually(
+  invoiceId: string,
+): Promise<{ success: boolean; error?: string }> {
+  await requireAdmin();
+
+  if (!invoiceId) return { success: false, error: "Missing invoice id." };
+
+  try {
+    const invoiceRef = adminDb.collection("invoices").doc(invoiceId);
+    const snap = await invoiceRef.get();
+    if (!snap.exists) return { success: false, error: "Invoice not found." };
+
+    const invoice = snap.data() as InvoiceDoc;
+    if (invoice.status === "PAID") {
+      return { success: true };
+    }
+    if (invoice.status === "VOID") {
+      return { success: false, error: "Cannot mark a voided invoice paid." };
+    }
+
+    await invoiceRef.update({
+      status: "PAID",
+      paidAt: FieldValue.serverTimestamp(),
+    });
+
+    revalidatePath(`/admin/projects/${invoice.projectId}`);
+    return { success: true };
+  } catch (err) {
+    console.error("markInvoicePaidManually error:", err);
+    return { success: false, error: "Failed to mark invoice paid." };
+  }
+}

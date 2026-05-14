@@ -11,6 +11,7 @@ import { z }          from "zod";
 import { cookies }    from "next/headers";
 import { calculateLeadScore } from "@/lib/lead-scoring";
 import { logActivity } from "@/lib/db/activity";
+import { createInboxItem } from "@/lib/db/inbox";
 import type { LeadStatus } from "@/lib/booking-kanban";
 
 const BookingSchema = z.object({
@@ -232,6 +233,17 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
       ...inquiryData,
       leadScore,
     });
+
+    // 5. Surface in the unified admin inbox (best-effort — must not break submission).
+    await createInboxItem({
+      type: "INQUIRY_RECEIVED",
+      projectId,
+      clientId,
+      title: `New inquiry from ${firstName} ${lastName}`,
+      body: message,
+      link: `/admin/projects/${projectId}`,
+      read: false,
+    }).catch(() => {});
 
     // Log to activity feed (best-effort)
     await logActivity(

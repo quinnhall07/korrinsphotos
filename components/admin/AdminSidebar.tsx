@@ -23,6 +23,15 @@ const NAV = [
         ),
       },
       {
+        label: "Inbox",
+        href: "/admin/inbox",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <path d="M2 9l2-6h8l2 6M2 9v5h12V9M2 9h4l1 2h2l1-2h4" />
+          </svg>
+        ),
+      },
+      {
         label: "Pipeline",
         href: "/admin/projects",
         icon: (
@@ -79,6 +88,17 @@ const NAV = [
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <path d="M2 4h12M2 8h12M2 12h7" />
+          </svg>
+        ),
+      },
+      {
+        label: "Segments",
+        href: "/admin/segments",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <circle cx="5" cy="6" r="3" />
+            <circle cx="11" cy="6" r="3" />
+            <circle cx="8" cy="11" r="3" />
           </svg>
         ),
       },
