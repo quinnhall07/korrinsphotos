@@ -41,9 +41,10 @@ function toAnchor(s: BrandVoiceSample): BrandVoiceAnchor {
 export default async function AdminInboxPage() {
   const session = await requireAdmin();
 
-  const [openItems, allItems, voiceSamples] = await Promise.all([
+  const [openItems, allItems, archivedItems, voiceSamples] = await Promise.all([
     listInboxItems({ includeRead: false, includeSnoozed: false }),
     listInboxItems({ includeRead: false, includeSnoozed: true }),
+    listInboxItems({ archivedOnly: true, includeRead: true, includeSnoozed: true }),
     getBrandVoiceSamples(session.uid),
   ]);
 
@@ -54,6 +55,7 @@ export default async function AdminInboxPage() {
     <InboxClientPage
       openItems={openItems.map(toView)}
       snoozedItems={snoozedItems.map(toView)}
+      archivedItems={archivedItems.map(toView)}
       voiceAnchors={voiceSamples.map(toAnchor)}
     />
   );

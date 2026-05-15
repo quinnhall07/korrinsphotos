@@ -38,8 +38,14 @@ function isLikelyBot(req: NextRequest): boolean {
   return false;
 }
 
+function honorsPrivacySignals(req: NextRequest): boolean {
+  if (req.headers.get("dnt") === "1") return true;
+  if (req.headers.get("sec-gpc") === "1") return true;
+  return false;
+}
+
 export async function POST(req: NextRequest) {
-  if (isLikelyBot(req)) {
+  if (isLikelyBot(req) || honorsPrivacySignals(req)) {
     return NextResponse.json({ ok: true, skipped: true });
   }
 

@@ -10,9 +10,12 @@ import {
   markRead,
   markUnread,
   archiveItem,
+  unarchiveItem,
   snoozeItem,
+  clearSnooze,
   bulkMarkRead as dbBulkMarkRead,
   bulkArchive as dbBulkArchive,
+  bulkUnarchive as dbBulkUnarchive,
 } from "@/lib/db/inbox";
 import { adminDb } from "@/lib/firebase-admin";
 import { enqueueTrackedMail } from "@/lib/email/tracking";
@@ -65,6 +68,30 @@ export async function archiveInboxItem(id: string): Promise<ActionResult> {
   }
 }
 
+export async function unarchiveInboxItem(id: string): Promise<ActionResult> {
+  await requireAdmin();
+  try {
+    await unarchiveItem(id);
+    revalidate();
+    return { success: true };
+  } catch (err) {
+    console.error("unarchiveInboxItem error:", err);
+    return { success: false, error: "Failed to restore." };
+  }
+}
+
+export async function unsnoozeInboxItem(id: string): Promise<ActionResult> {
+  await requireAdmin();
+  try {
+    await clearSnooze(id);
+    revalidate();
+    return { success: true };
+  } catch (err) {
+    console.error("unsnoozeInboxItem error:", err);
+    return { success: false, error: "Failed to unsnooze." };
+  }
+}
+
 export async function snoozeInboxItem(
   id: string,
   hours: number = 24
@@ -103,6 +130,18 @@ export async function bulkArchiveInboxItems(ids: string[]): Promise<ActionResult
   } catch (err) {
     console.error("bulkArchiveInboxItems error:", err);
     return { success: false, error: "Failed to archive selected." };
+  }
+}
+
+export async function bulkUnarchiveInboxItems(ids: string[]): Promise<ActionResult> {
+  await requireAdmin();
+  try {
+    await dbBulkUnarchive(ids);
+    revalidate();
+    return { success: true };
+  } catch (err) {
+    console.error("bulkUnarchiveInboxItems error:", err);
+    return { success: false, error: "Failed to restore selected." };
   }
 }
 

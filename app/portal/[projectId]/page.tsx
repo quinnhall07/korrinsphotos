@@ -252,19 +252,26 @@ export default async function PortalProjectPage({ params }: Props) {
       })
     : [];
 
-  // Day-of timeline (subcollection — agent A3 owns the schema; we read defensively)
+  // Day-of timeline (subcollection — agent A3 owns the schema; we read defensively).
+  // Filter to client-visible blocks ONLY. Admin-only blocks (vendor notes,
+  // off-the-record callouts, internal cues) live in the same subcollection with
+  // `visibleToClient: false` and must never leak to the portal.
   const timeline: PortalTimelineEntry[] = timelineSnap
-    ? timelineSnap.docs.map((d) => {
-        const t = d.data();
-        return {
-          id: d.id,
-          startTime: ts(t.startTime),
-          endTime: ts(t.endTime),
-          title: typeof t.title === "string" ? t.title : "",
-          description: typeof t.description === "string" ? t.description : null,
-          location: typeof t.location === "string" ? t.location : null,
-        };
-      })
+    ? timelineSnap.docs
+        .map((d) => {
+          const t = d.data();
+          return {
+            id: d.id,
+            startTime: ts(t.startTime),
+            endTime: ts(t.endTime),
+            title: typeof t.title === "string" ? t.title : "",
+            description: typeof t.description === "string" ? t.description : null,
+            location: typeof t.location === "string" ? t.location : null,
+            __visible: t.visibleToClient !== false,
+          };
+        })
+        .filter((t) => t.__visible)
+        .map(({ __visible: _v, ...rest }) => rest)
     : [];
 
   // Gallery — first 12 ready photos for the linked event.

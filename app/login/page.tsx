@@ -31,7 +31,7 @@ export default async function LoginPage({
     try {
       const userDoc = await adminDb.collection("users").doc(session.uid).get();
       const role = userDoc.exists ? (userDoc.data()?.role as string) : null;
-      redirect(role === "ADMIN" ? "/admin" : "/gallery");
+      redirect(role === "ADMIN" ? "/admin" : "/portal/router");
     } catch {
       // Firestore unavailable — fall back to JWT claim
       redirect(session["role"] === "ADMIN" ? "/admin" : "/gallery");

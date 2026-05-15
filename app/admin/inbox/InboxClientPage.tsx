@@ -10,7 +10,10 @@ import Link from "next/link";
 import { toast } from "@/components/ui/Toaster";
 import {
   archiveInboxItem,
+  unarchiveInboxItem,
+  unsnoozeInboxItem,
   bulkArchiveInboxItems,
+  bulkUnarchiveInboxItems,
   bulkMarkRead,
   markInboxRead,
   markInboxUnread,
@@ -96,13 +99,16 @@ function relativeTime(iso: string): string {
 export function InboxClientPage({
   openItems,
   snoozedItems,
+  archivedItems = [],
   voiceAnchors,
 }: {
   openItems: InboxItemView[];
   snoozedItems: InboxItemView[];
+  archivedItems?: InboxItemView[];
   voiceAnchors: BrandVoiceAnchor[];
 }) {
   const router = useRouter();
+  const [view, setView] = useState<"active" | "archived">("active");
   const [typeFilter, setTypeFilter] = useState<InboxItemView["type"] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(
     openItems[0]?.id ?? null
@@ -115,13 +121,21 @@ export function InboxClientPage({
     [openItems, typeFilter]
   );
 
+  const filteredArchived = useMemo(
+    () => (typeFilter ? archivedItems.filter((i) => i.type === typeFilter) : archivedItems),
+    [archivedItems, typeFilter]
+  );
+
   const selected = useMemo(
     () =>
       filteredOpen.find((i) => i.id === selectedId) ??
       snoozedItems.find((i) => i.id === selectedId) ??
+      filteredArchived.find((i) => i.id === selectedId) ??
       null,
-    [filteredOpen, snoozedItems, selectedId]
+    [filteredOpen, snoozedItems, filteredArchived, selectedId]
   );
+
+  const inArchivedView = view === "archived";
 
   // Keep selectedId valid when the list changes (e.g. after a revalidation).
   useEffect(() => {
@@ -155,6 +169,32 @@ export function InboxClientPage({
         router.refresh();
       } else {
         toast(res.error ?? "Failed to archive");
+      }
+    },
+    [router]
+  );
+
+  const doUnarchive = useCallback(
+    async (id: string) => {
+      const res = await unarchiveInboxItem(id);
+      if (res.success) {
+        toast("Restored");
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to restore");
+      }
+    },
+    [router]
+  );
+
+  const doUnsnooze = useCallback(
+    async (id: string) => {
+      const res = await unsnoozeInboxItem(id);
+      if (res.success) {
+        toast("Snooze cleared");
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to unsnooze");
       }
     },
     [router]
@@ -203,10 +243,22 @@ export function InboxClientPage({
         moveSelection(-1);
       } else if (e.key === "e" && selected) {
         e.preventDefault();
-        void doArchive(selected.id);
+        if (inArchivedView) {
+          void doUnarchive(selected.id);
+        } else {
+          void doArchive(selected.id);
+        }
       } else if (e.key === "s" && selected) {
         e.preventDefault();
-        void doSnooze(selected.id);
+        // In active view, `s` snoozes 24h. If the selected item is already
+        // snoozed (i.e. we're viewing it inside the Snoozed section), `s` now
+        // CLEARS the snooze instead — previously it re-snoozed forever, which
+        // was confusing.
+        if (selected.snoozedUntilIso && new Date(selected.snoozedUntilIso).getTime() > Date.now()) {
+          void doUnsnooze(selected.id);
+        } else {
+          void doSnooze(selected.id);
+        }
       } else if (e.key === "m" && selected) {
         e.preventDefault();
         void doToggleRead(selected);
@@ -217,7 +269,7 @@ export function InboxClientPage({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [moveSelection, selected, doArchive, doSnooze, doToggleRead, router]);
+  }, [moveSelection, selected, doArchive, doSnooze, doToggleRead, doUnarchive, doUnsnooze, inArchivedView, router]);
 
   const toggleCheck = (id: string) => {
     setChecked((prev) => {
@@ -245,6 +297,18 @@ export function InboxClientPage({
     const res = await bulkArchiveInboxItems(ids);
     if (res.success) {
       toast(`Archived ${ids.length}`);
+      setChecked(new Set());
+      router.refresh();
+    } else {
+      toast(res.error ?? "Failed");
+    }
+  };
+
+  const doBulkUnarchive = async () => {
+    const ids = Array.from(checked);
+    const res = await bulkUnarchiveInboxItems(ids);
+    if (res.success) {
+      toast(`Restored ${ids.length}`);
       setChecked(new Set());
       router.refresh();
     } else {
@@ -286,13 +350,48 @@ export function InboxClientPage({
           Inbox
         </h1>
         <p style={{ fontSize: "0.78rem", color: "var(--charcoal-muted)", margin: 0 }}>
-          {unreadCount} unread · {openItems.length} open · {snoozedItems.length} snoozed
+          {unreadCount} unread · {openItems.length} open · {snoozedItems.length} snoozed · {archivedItems.length} archived
           <span style={{ marginLeft: "1rem", letterSpacing: "0.08em" }}>
             <KbdHint k="j" /> next · <KbdHint k="k" /> prev · <KbdHint k="e" /> archive ·{" "}
             <KbdHint k="s" /> snooze · <KbdHint k="m" /> toggle read ·{" "}
             <KbdHint k="↵" /> open
           </span>
         </p>
+
+        {/* View switcher: Active ↔ Archived. Archive is now a soft state — the
+            Archived tab is the destination, not a black hole. */}
+        <div style={{ marginTop: "0.75rem", display: "flex", gap: "0.5rem" }}>
+          {(["active", "archived"] as const).map((mode) => {
+            const isActive = view === mode;
+            return (
+              <button
+                key={mode}
+                onClick={() => {
+                  setView(mode);
+                  setTypeFilter(null);
+                  setSelectedId(null);
+                  setChecked(new Set());
+                }}
+                style={{
+                  padding: "0.4rem 0.85rem",
+                  fontSize: "0.7rem",
+                  letterSpacing: "0.12em",
+                  textTransform: "uppercase",
+                  fontFamily: "'Jost', sans-serif",
+                  border: "0.5px solid var(--border-strong)",
+                  background: isActive ? "var(--charcoal)" : "transparent",
+                  color: isActive ? "var(--white)" : "var(--charcoal-muted)",
+                  cursor: "pointer",
+                  transition: "all 0.15s",
+                }}
+              >
+                {mode === "active"
+                  ? `Active (${openItems.length})`
+                  : `Archived (${archivedItems.length})`}
+              </button>
+            );
+          })}
+        </div>
 
         {/* Filter chips */}
         {typeFilter && (
@@ -325,12 +424,21 @@ export function InboxClientPage({
             }}
           >
             <span>{checked.size} selected</span>
-            <button onClick={doBulkMarkRead} style={pillButtonStyle()}>
-              Mark all read
-            </button>
-            <button onClick={doBulkArchive} style={pillButtonStyle()}>
-              Archive all
-            </button>
+            {!inArchivedView && (
+              <>
+                <button onClick={doBulkMarkRead} style={pillButtonStyle()}>
+                  Mark all read
+                </button>
+                <button onClick={doBulkArchive} style={pillButtonStyle()}>
+                  Archive all
+                </button>
+              </>
+            )}
+            {inArchivedView && (
+              <button onClick={doBulkUnarchive} style={pillButtonStyle()}>
+                Restore all
+              </button>
+            )}
             <button
               onClick={() => setChecked(new Set())}
               style={{ ...pillButtonStyle(), background: "transparent" }}
@@ -351,7 +459,27 @@ export function InboxClientPage({
             maxHeight: "calc(100vh - 200px)",
           }}
         >
-          {filteredOpen.length === 0 ? (
+          {inArchivedView ? (
+            filteredArchived.length === 0 ? (
+              <div style={{ padding: "2rem", color: "var(--charcoal-muted)", fontSize: "0.85rem" }}>
+                {archivedItems.length === 0
+                  ? "Nothing in the archive yet."
+                  : "No archived items match this filter."}
+              </div>
+            ) : (
+              filteredArchived.map((item) => (
+                <Row
+                  key={item.id}
+                  item={item}
+                  selected={item.id === selectedId}
+                  checked={checked.has(item.id)}
+                  onSelect={() => setSelectedId(item.id)}
+                  onToggleCheck={() => toggleCheck(item.id)}
+                  onFilterType={() => setTypeFilter(item.type)}
+                />
+              ))
+            )
+          ) : filteredOpen.length === 0 ? (
             <div style={{ padding: "2rem", color: "var(--charcoal-muted)", fontSize: "0.85rem" }}>
               {openItems.length === 0
                 ? "Inbox zero. Nothing to triage."
@@ -371,8 +499,8 @@ export function InboxClientPage({
             ))
           )}
 
-          {/* Snoozed section */}
-          {snoozedItems.length > 0 && (
+          {/* Snoozed section — hidden in archived view */}
+          {!inArchivedView && snoozedItems.length > 0 && (
             <div style={{ borderTop: "0.5px solid var(--border)", marginTop: "0.5rem" }}>
               <button
                 onClick={() => setSnoozedOpen((v) => !v)}
@@ -414,8 +542,15 @@ export function InboxClientPage({
             <DetailPane
               item={selected}
               voiceAnchors={voiceAnchors}
+              isArchived={inArchivedView}
+              isSnoozedNow={
+                !!selected.snoozedUntilIso &&
+                new Date(selected.snoozedUntilIso).getTime() > Date.now()
+              }
               onArchive={() => doArchive(selected.id)}
+              onUnarchive={() => doUnarchive(selected.id)}
               onSnooze={() => doSnooze(selected.id)}
+              onUnsnooze={() => doUnsnooze(selected.id)}
               onToggleRead={() => doToggleRead(selected)}
             />
           ) : (
@@ -521,14 +656,22 @@ function Row({
 function DetailPane({
   item,
   voiceAnchors,
+  isArchived,
+  isSnoozedNow,
   onArchive,
+  onUnarchive,
   onSnooze,
+  onUnsnooze,
   onToggleRead,
 }: {
   item: InboxItemView;
   voiceAnchors: BrandVoiceAnchor[];
+  isArchived: boolean;
+  isSnoozedNow: boolean;
   onArchive: () => void;
+  onUnarchive: () => void;
   onSnooze: () => void;
+  onUnsnooze: () => void;
   onToggleRead: () => void;
 }) {
   return (
@@ -614,12 +757,32 @@ function DetailPane({
         <button onClick={onToggleRead} style={pillButtonStyle()}>
           {item.read ? "Mark unread" : "Mark read"}
         </button>
-        <button onClick={onSnooze} style={pillButtonStyle()}>
-          Snooze 24h
-        </button>
-        <button onClick={onArchive} style={pillButtonStyle()}>
-          Archive
-        </button>
+        {isSnoozedNow ? (
+          <button onClick={onUnsnooze} style={pillButtonStyle()}>
+            Unsnooze
+          </button>
+        ) : !isArchived ? (
+          <button onClick={onSnooze} style={pillButtonStyle()}>
+            Snooze 24h
+          </button>
+        ) : null}
+        {isArchived ? (
+          <button
+            onClick={onUnarchive}
+            style={{
+              ...pillButtonStyle(),
+              background: "var(--olive)",
+              color: "var(--white)",
+              border: "0.5px solid var(--olive)",
+            }}
+          >
+            Restore
+          </button>
+        ) : (
+          <button onClick={onArchive} style={pillButtonStyle()}>
+            Archive
+          </button>
+        )}
       </div>
     </div>
   );

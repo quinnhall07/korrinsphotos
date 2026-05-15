@@ -31,6 +31,12 @@ export interface InboxItemDoc {
   link?: string | null;
   read: boolean;
   snoozedUntil?: Timestamp | null;
+  /**
+   * When set, the item is considered archived and is hidden from the default
+   * triage list. Unset (or null) ⇒ active. Archive is a soft state — items are
+   * never `.delete()`d from Firestore so archived rows can be restored.
+   */
+  archivedAt?: Timestamp | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -51,6 +57,7 @@ export async function createInboxItem(
     link: data.link ?? null,
     read: data.read ?? false,
     snoozedUntil: data.snoozedUntil ?? null,
+    archivedAt: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -59,9 +66,21 @@ export async function createInboxItem(
 }
 
 export async function listInboxItems(
-  opts: { includeRead?: boolean; includeSnoozed?: boolean } = {}
+  opts: {
+    includeRead?: boolean;
+    includeSnoozed?: boolean;
+    /** When true, return ONLY archived rows (for the Archived view). */
+    archivedOnly?: boolean;
+    /** When true, include archived rows alongside active ones (rare). */
+    includeArchived?: boolean;
+  } = {}
 ): Promise<InboxItemDoc[]> {
-  const { includeRead = false, includeSnoozed = false } = opts;
+  const {
+    includeRead = false,
+    includeSnoozed = false,
+    archivedOnly = false,
+    includeArchived = false,
+  } = opts;
 
   // Fetch broadly (single orderBy) and filter in-memory to avoid composite-index
   // requirements that proliferate quickly with `where(...) + orderBy(...)`.
@@ -71,6 +90,9 @@ export async function listInboxItems(
   const all = snap.docs.map((d) => ({ id: d.id, ...d.data() } as InboxItemDoc));
 
   return all.filter((item) => {
+    const isArchived = !!item.archivedAt;
+    if (archivedOnly) return isArchived;
+    if (!includeArchived && isArchived) return false;
     if (!includeRead && item.read) return false;
     if (!includeSnoozed) {
       // Hide items whose snooze window is still in the future.
@@ -96,13 +118,42 @@ export async function markUnread(id: string): Promise<void> {
   });
 }
 
+/**
+ * Soft-delete: mark an inbox row archived. The doc is preserved so it can be
+ * restored from the Archived view.
+ *
+ * Historical note: this used to `.delete()` the doc — that made archive a
+ * one-way operation and effectively a black hole. Existing callers (cron
+ * sweeps, sequence transitions, etc.) still work unchanged.
+ */
 export async function archiveItem(id: string): Promise<void> {
-  await inboxItemsCol().doc(id).delete();
+  await inboxItemsCol().doc(id).update({
+    archivedAt: FieldValue.serverTimestamp(),
+    read: true,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+}
+
+/** Clear `archivedAt` and `read`, returning the row to the active triage list. */
+export async function unarchiveItem(id: string): Promise<void> {
+  await inboxItemsCol().doc(id).update({
+    archivedAt: null,
+    read: false,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
 }
 
 export async function snoozeItem(id: string, until: Date): Promise<void> {
   await inboxItemsCol().doc(id).update({
     snoozedUntil: Timestamp.fromDate(until),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+}
+
+/** Clear an active snooze window so the item returns to triage immediately. */
+export async function clearSnooze(id: string): Promise<void> {
+  await inboxItemsCol().doc(id).update({
+    snoozedUntil: null,
     updatedAt: FieldValue.serverTimestamp(),
   });
 }
@@ -123,15 +174,39 @@ export async function bulkArchive(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
   const batch = adminDb.batch();
   for (const id of ids) {
-    batch.delete(inboxItemsCol().doc(id));
+    batch.update(inboxItemsCol().doc(id), {
+      archivedAt: FieldValue.serverTimestamp(),
+      read: true,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  }
+  await batch.commit();
+}
+
+export async function bulkUnarchive(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const batch = adminDb.batch();
+  for (const id of ids) {
+    batch.update(inboxItemsCol().doc(id), {
+      archivedAt: null,
+      read: false,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
   }
   await batch.commit();
 }
 
 export async function countUnread(): Promise<number> {
   try {
-    const snap = await inboxItemsCol().where("read", "==", false).count().get();
-    return snap.data().count;
+    // Count unread + non-archived. We fetch ids only (with a tight limit) and
+    // filter `archivedAt == null` in-memory to avoid a composite index on
+    // `(read, archivedAt)`. Cap matches the listInboxItems read horizon.
+    const snap = await inboxItemsCol().where("read", "==", false).limit(500).get();
+    let n = 0;
+    snap.docs.forEach((d) => {
+      if (!d.data().archivedAt) n += 1;
+    });
+    return n;
   } catch {
     return 0;
   }
