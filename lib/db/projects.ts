@@ -226,6 +226,13 @@ export interface ProjectDoc {
    * supplements the array-contains lookup on `vendors.linkedProjectIds`).
    */
   dayOfRoomVendorIds?: string[];
+
+  /**
+   * UX audit E.P0 — stamped when the client taps "Send my picks to Korrin"
+   * in the gallery viewer. Signals to admin that favorites are final and
+   * editing can proceed.
+   */
+  favoritesFinalizedAt?: Timestamp | null;
 }
 
 export interface MessageDoc {

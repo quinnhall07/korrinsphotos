@@ -13,7 +13,7 @@
 // — the same source the public portfolio filter consumes, so admin uploads
 // surface in the public filters without any further mapping.
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "@/components/ui/Toaster";
 import { uploadMultipartFile } from "@/lib/upload";
@@ -235,6 +235,19 @@ export function UploadZone({ eventId }: UploadZoneProps) {
     files.length > 0
       ? Math.round(files.reduce((sum, f) => sum + f.progress, 0) / files.length)
       : 0;
+
+  // Warn before unload while uploads are in flight — closing the tab silently
+  // aborts hundreds of in-flight PUTs otherwise. Browsers ignore custom text
+  // and show their built-in "Changes you made may not be saved" prompt.
+  useEffect(() => {
+    if (pendingCount === 0) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [pendingCount]);
 
   return (
     <div>

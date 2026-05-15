@@ -41,6 +41,41 @@ during the first pass.
 
 ---
 
+## Sprint 1 — Shipped (2026-05-15)
+
+The nine Sprint 1 P0 items from the suggested execution order all landed on
+`ux-audit-improvements`. Implementation was driven by parallel subagents per
+the dispatching plan in `NEW_SESSION_PROMPT.md`. The session hit Anthropic's
+usage cap mid-flight; the partial agents had already done the bulk of the
+work, and a follow-up pass finished the one item (pipeline filter bar) where
+state had been declared but UI/filter logic wasn't wired through.
+
+| # | Section | File(s) | What landed |
+|---|---|---|---|
+| a | E.P0 | `lib/db/projects.ts`, `app/gallery/[id]/{page,GalleryViewer,actions}.tsx` | New `favoritesFinalizedAt` field on `ProjectDoc`. New `finalizeFavorites` server action (gated by `requireSession()` + event-access check + email match) — idempotent: returns `alreadyFinalized: true` on repeat. On first call, stamps the project, writes an inbox item (`GALLERY_REQUESTED`), and enqueues a tracked email to the admin. Gallery viewer renders a "Send my picks to Korrin" CTA in olive when picks > 0; swaps to a locked confirmation chip with the sent date after finalize. |
+| b | I.P0 | `app/admin/events/[id]/UploadZone.tsx` | `useEffect` keyed on `pendingCount > 0` registers `beforeunload` with the standard empty `returnValue`. Cleanup removes the listener on unmount and when pending drops to zero. No change to `lib/upload.ts` was needed. |
+| c+g | I.P0 | `app/admin/events/[id]/{page,actions}.tsx`, new `NotifyGalleryReadyButton.tsx` | Header chip renders "Linked to {firstName} — View project →" when `event.clientId` is set (link only renders when `projectId` also exists). New `notifyGalleryReady(eventId)` server action sends a tracked email via `enqueueTrackedMail` (with `recipientClientId` + `sendKind: "gallery-ready-notification"`) and revalidates the event detail + events list. CTA renders next to the existing action buttons only when `event.status === "DELIVERED"` and a client is linked. |
+| d | H.P0 | `app/admin/page.tsx` | Vanity 4-count row removed. New "Today & Tomorrow" card driven by `where("shootDate", ">=", today).where("shootDate", "<=", tomorrowEnd)`, day-bucketed with studio-TZ (`America/New_York`) wall-clock math. New "Needs Action" card aggregating six urgency buckets — deposit pending, unsigned contract, overdue/late invoices, follow-up due, COI requested w/ shoot within 14 days, scheduled tasks past their `runAt`. Capped at 12 rows, sorted bucket asc then recency desc. Recent Inquiries + Recent Activity + Recent Events preserved. |
+| e | B.P0 | `app/admin/projects/[id]/ProjectWorkspaceClient.tsx` | New `PendingActionsCard` injected at the top of the Overview tab. Derives 7 readiness rows from existing serialised props (COI, contract, deposit invoice, balance invoice, latest pending questionnaire, gear log, day-of timeline). Empty-state row "All caught up." renders when all checks pass. Each pending row jumps to its relevant tab via the existing `onNavigateTab` handler. |
+| f | B.P0 | `app/admin/projects/ProjectsPipelineClientPage.tsx`, `app/admin/projects/page.tsx` | New olive-tinted filter bar above the result count: free-text search (client first/last/email + project title), lead-source `<select>` (mirrored `LeadSource` union), Min/Max value inputs. Composes additively with the saved-view filter and resets selection when the visible set changes. "Clear filters" button appears once any input is dirty. Pipeline hydrate path now also serialises `leadSource`. |
+| h | J.P0 | new `app/admin/settings/page.tsx` | Hub page (was a 404). Three-section tile grid — Automations (recipes, sequences, reply templates), Voice (brand voice), Business (insurer, sales tax, studio hours, gear templates). Every link points at a verified existing leaf route (confirmed via `Glob` `app/admin/settings/*/page.tsx` + `app/admin/sequences/page.tsx`). |
+| i | C.P1 + K.P0 | `app/admin/layout.tsx`, new `components/admin/AdminMobileShell.tsx`, `components/ui/CommandPaletteProvider.tsx` | Below 900px, the 200px sidebar column collapses; a new mobile header bar (sticky under the global 72px top bar) renders hamburger + brand wordmark + search icon. Hamburger dispatches a `admin-drawer:open` window event picked up by `AdminSidebarSlot`, which slides the existing `<AdminSidebar />` in from the left over a `rgba(0,0,0,0.4)` backdrop. Drawer dismisses on backdrop tap and on `pathname` change. Search icon calls the new imperative `useCommandPalette().open()` exposed by an extended provider context (existing Cmd/Ctrl+K + Escape keybindings preserved). Body scroll locks while open. |
+
+### Notes / Deviations
+
+- Inbox type used for the gallery-finalize signal: `GALLERY_REQUESTED`. Closest fit in the existing 18-type taxonomy; if a future `FAVORITES_FINALIZED` type is added, the call site is a single string update.
+- `lib/cloudflare.ts` is still imported by `app/admin/events/[id]/page.tsx` (`buildCdnUrl`). That import predates Sprint 1 and is the deprecated facade — leaving it for a dedicated migration pass rather than touching it inside an unrelated edit.
+- Pipeline filter state is component-local (no URL sync). URL persistence + saved-view integration are P2 follow-ups (B.P2 "?status= URL param doesn't survive saved-view switch").
+- Today & Tomorrow uses an in-process TZ helper rather than a new library — Studio TZ is hard-coded to `America/New_York` to match the rest of the studio defaults.
+- Mobile drawer + header live in a single new file (`components/admin/AdminMobileShell.tsx`) to keep the responsive plumbing co-located. The desktop `<AdminSidebar />` is rendered unchanged inside both the inline grid slot and the drawer.
+
+### Verification
+
+- `npm run build` → `✓ Compiled successfully in 11.0s`.
+- `npm run lint` → 0 errors, 25 pre-existing warnings (none added by Sprint 1).
+
+---
+
 ## Part 2 — Full prioritized backlog (12 completed audits)
 
 ### Severity legend

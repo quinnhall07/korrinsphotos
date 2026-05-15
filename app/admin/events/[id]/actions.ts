@@ -14,6 +14,8 @@ import {
 import type { EventStatus } from "@/lib/db/events";
 import { setDownloadPin } from "@/lib/db/events";
 import { updatePhoto } from "@/lib/db/photos";
+import { getClient } from "@/lib/db/clients";
+import { enqueueTrackedMail } from "@/lib/email/tracking";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 
 // ─── Delete Photo ─────────────────────────────────────────────────────────────
@@ -241,5 +243,72 @@ export async function updatePhotoMetadata(
   }
 
   revalidatePath(`/admin/events/${eventId}`);
+  return { success: true };
+}
+
+// ─── Notify Client — Gallery Ready ────────────────────────────────────────────
+//
+// UX P0 (c) — After the admin marks an event as "Gallery ready" / DELIVERED,
+// surface a one-click CTA that emails the linked client an invitation to
+// view their gallery. Routes through `enqueueTrackedMail` so the send is
+// captured by the engagement-tracking pipeline (sendId, click rewriting,
+// open pixel, emailEvents row).
+
+export async function notifyGalleryReady(
+  eventId: string,
+): Promise<{ success: boolean; error?: string }> {
+  await requireAdmin();
+
+  try {
+    const eventSnap = await adminDb.collection("events").doc(eventId).get();
+    if (!eventSnap.exists) {
+      return { success: false, error: "Event not found." };
+    }
+    const eventData = eventSnap.data()!;
+    const clientId = (eventData.clientId as string | undefined) ?? null;
+    const eventTitle = (eventData.title as string | undefined) ?? "Your gallery";
+
+    if (!clientId) {
+      return { success: false, error: "Event has no linked client." };
+    }
+
+    const client = await getClient(clientId);
+    if (!client || !client.email) {
+      return { success: false, error: "Linked client has no email on file." };
+    }
+
+    const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? "https://korrinsphotos.com").replace(/\/$/, "");
+    const galleryUrl = `${appUrl}/gallery/${eventId}`;
+    const firstName = (client.firstName ?? "").trim() || "there";
+
+    const subject = `Your gallery is ready — ${eventTitle}`;
+    const html = `
+      <p>Hi ${firstName},</p>
+      <p>Your photos from <strong>${eventTitle}</strong> are ready to view.</p>
+      <p style="margin: 1.5rem 0;">
+        <a href="${galleryUrl}" style="display:inline-block;padding:0.75rem 1.4rem;background:#6B7845;color:#FAF9F6;text-decoration:none;letter-spacing:0.08em;text-transform:uppercase;font-size:0.78rem;">View your gallery</a>
+      </p>
+      <p style="color:#8A8A85;font-size:0.85rem;">Or paste this link into your browser: <br/>${galleryUrl}</p>
+      <p style="margin-top:2rem;color:#8A8A85;font-size:0.85rem;">— Korrin's Photography</p>
+    `;
+
+    await enqueueTrackedMail({
+      to: client.email,
+      subject,
+      html,
+      recipientClientId: clientId,
+      projectId: (eventData.projectId as string | undefined) ?? null,
+      sendKind: "gallery-ready-notification",
+    });
+  } catch (err) {
+    console.error("[notifyGalleryReady] failed", { eventId, err });
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to send notification.",
+    };
+  }
+
+  revalidatePath(`/admin/events/${eventId}`);
+  revalidatePath("/admin/events");
   return { success: true };
 }

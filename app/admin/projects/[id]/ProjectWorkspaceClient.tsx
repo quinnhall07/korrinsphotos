@@ -471,6 +471,10 @@ export function ProjectWorkspaceClient({
               nextBestAction={nextBestAction}
               questionnaires={questionnaires}
               reviewRequests={reviewRequests}
+              invoices={invoices}
+              gearLog={gearLog}
+              dayOfTimeline={dayOfTimeline}
+              onNavigateTab={setTab}
             />
           )}
           {tab === "messages" && (
@@ -641,6 +645,210 @@ function TabNav({ active, onChange }: { active: TabId; onChange: (t: TabId) => v
   );
 }
 
+// ─── Pending Actions card (B.P0 e) ───────────────────────────────────────────
+//
+// Aggregates project-scoped readiness checks at the top of the Overview tab so
+// admins don't have to fan out across tabs to find what's outstanding. All
+// checks are pure derivations from props already passed to the workspace — no
+// new server queries. Each row has a "→" jump-link that switches the parent's
+// active tab (questionnaire row stays on Overview since its block lives here).
+
+function PendingActionsCard({
+  project,
+  questionnaires,
+  invoices,
+  gearLog,
+  dayOfTimeline,
+  onNavigateTab,
+}: {
+  project: SerialProject;
+  questionnaires: SerialQuestionnaire[];
+  invoices: SerialInvoice[];
+  gearLog: SerialGearLogEntry[];
+  dayOfTimeline: SerialTimelineBlock[];
+  onNavigateTab: (tab: TabId) => void;
+}) {
+  type PendingRow = {
+    key: string;
+    label: string;
+    target?: TabId;
+  };
+
+  const rows: PendingRow[] = [];
+
+  // COI required but not received.
+  if (project.coiRequired && project.coiStatus !== "RECEIVED") {
+    rows.push({
+      key: "coi",
+      label: "COI not yet received",
+      target: "contract",
+    });
+  }
+
+  // Contract unsigned (skip during early-funnel statuses where it's expected).
+  if (
+    !project.contractSignedAt &&
+    project.status !== "INQUIRY" &&
+    project.status !== "QUALIFYING"
+  ) {
+    rows.push({
+      key: "contract",
+      label: "Contract unsigned",
+      target: "contract",
+    });
+  }
+
+  // Invoices outstanding (any not-paid DEPOSIT / BALANCE invoice on the project).
+  const isOpenInvoice = (status: string): boolean =>
+    status !== "PAID" && status !== "VOID";
+  const hasUnpaidDeposit = invoices.some(
+    (i) => i.type === "DEPOSIT" && isOpenInvoice(i.status)
+  );
+  if (hasUnpaidDeposit) {
+    rows.push({
+      key: "deposit",
+      label: "Deposit invoice unpaid",
+      target: "invoice",
+    });
+  }
+  const hasUnpaidBalance = invoices.some(
+    (i) => i.type === "BALANCE" && isOpenInvoice(i.status)
+  );
+  if (hasUnpaidBalance) {
+    rows.push({
+      key: "balance",
+      label: "Balance invoice unpaid",
+      target: "invoice",
+    });
+  }
+
+  // Questionnaire pending — only flag if at least one instance exists and the
+  // latest one is still PENDING. (A project with no instance at all is a
+  // separate "send questionnaire" decision surfaced by the NBA chip.)
+  const latestQuestionnaire = questionnaires
+    .slice()
+    .sort((a, b) => {
+      const ax = a.completedAt ?? a.sentAt ?? "";
+      const bx = b.completedAt ?? b.sentAt ?? "";
+      return bx.localeCompare(ax);
+    })[0];
+  if (latestQuestionnaire && latestQuestionnaire.status === "PENDING") {
+    rows.push({
+      key: "questionnaire",
+      label: "Questionnaire pending",
+      // Block already lives on Overview — no jump needed.
+    });
+  }
+
+  // Gear log uninitialised.
+  if (gearLog.length === 0) {
+    rows.push({
+      key: "gear",
+      label: "Gear log not initialised",
+      target: "gear",
+    });
+  }
+
+  // Day-of timeline empty.
+  if (dayOfTimeline.length === 0) {
+    rows.push({
+      key: "day-of",
+      label: "Day-of timeline empty",
+      target: "day-of",
+    });
+  }
+
+  return (
+    <section
+      style={{
+        marginBottom: "1.5rem",
+        border: "0.5px solid var(--olive)",
+        background: "var(--olive-dim)",
+        padding: "1rem 1.1rem",
+      }}
+    >
+      <p
+        style={{
+          ...EYEBROW,
+          margin: "0 0 0.6rem 0",
+          color: "var(--olive)",
+        }}
+      >
+        Pending Actions
+      </p>
+
+      {rows.length === 0 ? (
+        <p
+          style={{
+            margin: 0,
+            fontSize: "0.85rem",
+            color: "var(--charcoal-light)",
+          }}
+        >
+          All caught up.
+        </p>
+      ) : (
+        <ul
+          style={{
+            listStyle: "none",
+            margin: 0,
+            padding: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.4rem",
+          }}
+        >
+          {rows.map((row) => (
+            <li
+              key={row.key}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "0.75rem",
+                fontSize: "0.85rem",
+                color: "var(--charcoal)",
+                paddingBottom: "0.35rem",
+                borderBottom: "0.5px solid var(--border)",
+              }}
+            >
+              <span>{row.label}</span>
+              {row.target ? (
+                <button
+                  type="button"
+                  onClick={() => onNavigateTab(row.target!)}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "var(--olive)",
+                    fontFamily: "'Jost', sans-serif",
+                    fontSize: "0.85rem",
+                    cursor: "pointer",
+                    padding: "0 0.25rem",
+                  }}
+                  aria-label={`Open ${row.target} tab`}
+                >
+                  →
+                </button>
+              ) : (
+                <span
+                  style={{
+                    color: "var(--charcoal-muted)",
+                    fontSize: "0.8rem",
+                  }}
+                  aria-hidden
+                >
+                  ↓
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 // ─── Overview tab ─────────────────────────────────────────────────────────────
 
 function OverviewTab({
@@ -649,12 +857,20 @@ function OverviewTab({
   nextBestAction,
   questionnaires,
   reviewRequests,
+  invoices,
+  gearLog,
+  dayOfTimeline,
+  onNavigateTab,
 }: {
   project: SerialProject;
   client: SerialClient;
   nextBestAction: string;
   questionnaires: SerialQuestionnaire[];
   reviewRequests: SerialReviewRequest[];
+  invoices: SerialInvoice[];
+  gearLog: SerialGearLogEntry[];
+  dayOfTimeline: SerialTimelineBlock[];
+  onNavigateTab: (tab: TabId) => void;
 }) {
   // Phase 4.6 surface metrics for the badge row.
   const reviewSentCount = reviewRequests.filter(
@@ -674,6 +890,15 @@ function OverviewTab({
   return (
     <div>
       <h2 style={SECTION_HEAD}>Overview</h2>
+
+      <PendingActionsCard
+        project={project}
+        questionnaires={questionnaires}
+        invoices={invoices}
+        gearLog={gearLog}
+        dayOfTimeline={dayOfTimeline}
+        onNavigateTab={onNavigateTab}
+      />
 
       {/* NBA chip + Phase 4.6 NPS / review-request badges */}
       <div

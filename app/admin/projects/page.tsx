@@ -45,6 +45,8 @@ type PipelineProjectRow = {
   title: string;
   status: string;
   leadScore: number;
+  /** B.P0 (f) — surfaced so the pipeline filter bar can filter by source. */
+  leadSource: string;
   estimatedValue: number | null;
   createdAt: string;
   lastStatusChangeIso: string | null;
@@ -125,6 +127,7 @@ function hydrateRow(
     title: String(data.title ?? ""),
     status: String(data.status ?? "INQUIRY"),
     leadScore: Number(data.leadScore ?? 0),
+    leadSource: String(data.leadSource ?? "DIRECT"),
     estimatedValue: data.estimatedValue ?? null,
     createdAt: formatDateTime(data.createdAt) ?? "Unknown",
     lastStatusChangeIso,

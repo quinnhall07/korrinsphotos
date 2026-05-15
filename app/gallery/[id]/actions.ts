@@ -24,6 +24,9 @@ import { adminDb } from "@/lib/firebase-admin";
 import { requireSession } from "@/lib/session";
 import { maybeScheduleReviewRequests } from "@/lib/domain/reviews";
 import { getClientByEmail } from "@/lib/db/clients";
+import { getProject, updateProject } from "@/lib/db/projects";
+import { createInboxItem } from "@/lib/db/inbox";
+import { enqueueTrackedMail } from "@/lib/email/tracking";
 
 export type SubmitNpsResult =
   | { success: true; scheduled: number }
@@ -201,3 +204,107 @@ export async function toggleFavorite(
 // NOTE: `toggleKorrinsPick` (Phase 13.5) lives in
 // `app/admin/events/[id]/gallery/actions.ts` since the toggle button only
 // renders inside the admin gallery editor.
+
+// --------------------------------------------------------------------------
+// UX audit E.P0 — Client finalizes their picks
+// --------------------------------------------------------------------------
+//
+// When the client taps "Send my picks to Korrin" in the gallery viewer:
+//   1. Stamp `favoritesFinalizedAt` on the project (idempotent — already-set
+//      projects return early with `alreadyFinalized: true`).
+//   2. Drop an inbox item (type GALLERY_REQUESTED) titled "Picks ready: <title>".
+//   3. Notify admin via tracked email.
+//
+// Access gate mirrors `submitClientNps` / `toggleFavorite` above: the viewer
+// must be signed in, must hold an `eventAccess` doc (or ADMIN role), and the
+// signed-in email must match the project's client (admins bypass).
+
+export type FinalizeFavoritesResult =
+  | { success: true; alreadyFinalized?: boolean }
+  | { success: false; error: string };
+
+export async function finalizeFavorites(
+  eventId: string,
+  projectId: string
+): Promise<FinalizeFavoritesResult> {
+  const session = await requireSession();
+
+  if (!eventId || typeof eventId !== "string") {
+    return { success: false, error: "Missing event." };
+  }
+  if (!projectId || typeof projectId !== "string") {
+    return { success: false, error: "Missing project." };
+  }
+
+  const accessId = `${session.uid}_${eventId}`;
+  const accessDoc = await adminDb.collection("eventAccess").doc(accessId).get();
+  if (!accessDoc.exists && session.role !== "ADMIN") {
+    return { success: false, error: "Not authorised for this event." };
+  }
+
+  const project = await getProject(projectId);
+  if (!project) return { success: false, error: "Project not found." };
+
+  if (session.role !== "ADMIN") {
+    const clientSnap = await adminDb.collection("clients").doc(project.clientId).get();
+    const clientEmail = (clientSnap.data()?.email as string | undefined) ?? "";
+    if (!session.email || clientEmail.toLowerCase() !== session.email.toLowerCase()) {
+      return { success: false, error: "Signed-in user does not own this project." };
+    }
+  }
+
+  if (project.favoritesFinalizedAt) {
+    return { success: true, alreadyFinalized: true };
+  }
+
+  const eventSnap = await adminDb.collection("events").doc(eventId).get();
+  const eventTitle = (eventSnap.data()?.title as string | undefined) ?? project.title ?? "gallery";
+
+  try {
+    await updateProject(projectId, {
+      favoritesFinalizedAt: Timestamp.now(),
+    });
+  } catch (err) {
+    console.error("[finalizeFavorites] update failed", { projectId, err });
+    return { success: false, error: "Failed to send your picks." };
+  }
+
+  try {
+    await createInboxItem({
+      type: "GALLERY_REQUESTED",
+      projectId,
+      clientId: project.clientId,
+      title: `Picks ready: ${eventTitle}`,
+      body: "Client finalized their gallery favorites.",
+      link: `/admin/projects/${projectId}`,
+      read: false,
+    });
+  } catch (err) {
+    console.error("[finalizeFavorites] inbox write failed", { projectId, err });
+  }
+
+  const adminTo =
+    process.env.ADMIN_EMAILS?.split(",")[0]?.trim() ||
+    process.env.ADMIN_EMAIL?.trim() ||
+    "";
+  if (adminTo) {
+    try {
+      await enqueueTrackedMail({
+        to: adminTo,
+        subject: `Picks ready: ${eventTitle}`,
+        html: `<p>The client just finalized their gallery favorites for <strong>${eventTitle}</strong>.</p><p><a href="${(process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "")}/admin/projects/${projectId}">Open the project workspace</a> to start culling.</p>`,
+        projectId,
+        recipientClientId: project.clientId,
+        sendKind: "favorites-finalized",
+      });
+    } catch (err) {
+      console.error("[finalizeFavorites] admin notify failed", { projectId, err });
+    }
+  }
+
+  revalidatePath(`/gallery/${eventId}`);
+  revalidatePath(`/admin/projects/${projectId}`);
+  revalidatePath(`/admin/projects`);
+  revalidatePath(`/admin/inbox`);
+  return { success: true };
+}

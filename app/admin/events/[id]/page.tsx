@@ -7,6 +7,7 @@ import Link from "next/link";
 import { requireAdmin } from "@/lib/session";
 import { adminDb } from "@/lib/firebase-admin";
 import { buildCdnUrl } from "@/lib/cloudflare";
+import { getClient } from "@/lib/db/clients";
 import { UploadZone } from "./UploadZone";
 import { InvitePanel } from "./InvitePanel";
 import { PhotoGrid } from "./PhotoGrid";
@@ -15,6 +16,7 @@ import { TitleEditor } from "./TitleEditor";
 import { ShootDateEditor } from "./ShootDateEditor";
 import { EventActions } from "./EventActions";
 import { DownloadPinEditor } from "./DownloadPinEditor";
+import { NotifyGalleryReadyButton } from "./NotifyGalleryReadyButton";
 import { formatDisplayDate } from "@/lib/date";
 import type { EventStatus } from "@/lib/db/events";
 import type { Metadata } from "next";
@@ -127,9 +129,29 @@ async function getEventData(eventId: string) {
   const eventData = eventDoc.data()!;
 
   // Parse shoot dates
-  const calendarDate = eventData.startDate 
+  const calendarDate = eventData.startDate
     ? new Date(eventData.startDate + (eventData.startTime ? `T${eventData.startTime}` : "T12:00:00"))
     : (eventData.createdAt?.toDate?.() ?? new Date());
+
+  // UX P0 (g) — Resolve linked Client display name for the header chip.
+  // Only renders when the event has a clientId; the "View project" link
+  // requires both clientId AND projectId.
+  const linkedClientId = (eventData.clientId as string | undefined) ?? null;
+  const linkedProjectId = (eventData.projectId as string | undefined) ?? null;
+  let linkedClientFirstName: string | null = null;
+  if (linkedClientId) {
+    try {
+      const linkedClient = await getClient(linkedClientId);
+      if (linkedClient) {
+        const fn = (linkedClient.firstName ?? "").trim();
+        linkedClientFirstName = fn.length > 0
+          ? fn
+          : (linkedClient.email ?? null);
+      }
+    } catch {
+      // Best-effort: leave linkedClientFirstName null on lookup failure.
+    }
+  }
 
   return {
     event: {
@@ -146,6 +168,9 @@ async function getEventData(eventId: string) {
       location: (eventData.location as string) || "",
       calendarDate: calendarDate.toISOString(),
       downloadPin: (eventData.downloadPin as string | undefined) ?? null,
+      clientId: linkedClientId,
+      projectId: linkedProjectId,
+      clientFirstName: linkedClientFirstName,
     },
     photos,
     clients,
@@ -175,6 +200,25 @@ export default async function EventDetailPage({ params }: Props) {
             <span style={{ color: "var(--charcoal)" }}>{event.title}</span>
           </div>
           <TitleEditor eventId={event.id} initialTitle={event.title} />
+          {/* UX P0 (g) — Project linkage chip. Shown only when the event has
+              been auto-created from a Project (clientId present). The "View
+              project" link requires both clientId AND projectId. */}
+          {event.clientId && event.clientFirstName ? (
+            <p style={{ fontSize: "0.8rem", color: "var(--charcoal-muted)", marginTop: "0.5rem" }}>
+              Linked to <span style={{ color: "var(--charcoal)" }}>{event.clientFirstName}</span>
+              {event.projectId ? (
+                <>
+                  {" — "}
+                  <Link
+                    href={`/admin/projects/${event.projectId}`}
+                    style={{ color: "var(--olive)", textDecoration: "none" }}
+                  >
+                    View project →
+                  </Link>
+                </>
+              ) : null}
+            </p>
+          ) : null}
           <ShootDateEditor
             eventId={event.id}
             initialStartDate={event.startDate}
@@ -192,6 +236,14 @@ export default async function EventDetailPage({ params }: Props) {
 
         {/* Action buttons */}
         <div style={{ display: "flex", gap: "0.75rem", flexShrink: 0, flexWrap: "wrap" }}>
+          {/* UX P0 (c) — Notify client when gallery is marked DELIVERED. */}
+          {event.status === "DELIVERED" && event.clientId && event.clientFirstName ? (
+            <NotifyGalleryReadyButton
+              eventId={event.id}
+              clientFirstName={event.clientFirstName}
+            />
+          ) : null}
+
           {/* Google Calendar button — client component */}
           <AddToCalendarButton eventTitle={event.title} eventDate={event.calendarDate} />
 

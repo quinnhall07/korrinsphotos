@@ -57,7 +57,8 @@ import { MasonryGrid, type MasonryPhoto } from "@/components/MasonryGrid";
 import { SlideshowOverlay } from "@/components/SlideshowOverlay";
 import type { ResolutionTier } from "@/components/Lightbox";
 import { toast } from "@/components/ui/Toaster";
-import { submitClientNps, toggleFavorite } from "./actions";
+import { formatDisplayDate } from "@/lib/date";
+import { finalizeFavorites, submitClientNps, toggleFavorite } from "./actions";
 
 export interface GalleryPhoto extends MasonryPhoto {
   favoritedBy: string[];
@@ -82,6 +83,10 @@ interface GalleryViewerProps {
   viewerClientId: string | null;
   /** Phase 2.6 — true when the event has a downloadPin set server-side. */
   downloadPinRequired: boolean;
+  /** UX audit E.P0 — project id for the finalize-favorites CTA (null if event isn't linked). */
+  projectId: string | null;
+  /** UX audit E.P0 — ISO-8601 stamp once the client has finalized picks. */
+  favoritesFinalizedAtIso: string | null;
 }
 
 const PIN_MAX_ATTEMPTS = 3;
@@ -97,6 +102,8 @@ export function GalleryViewer({
   canSubmitNps,
   viewerClientId,
   downloadPinRequired,
+  projectId,
+  favoritesFinalizedAtIso,
 }: GalleryViewerProps) {
   const router = useRouter();
   const [downloading, setDownloading] = useState(false);
@@ -113,6 +120,10 @@ export function GalleryViewer({
 
   // Phase 2.6 — Slideshow.
   const [slideshowOpen, setSlideshowOpen] = useState(false);
+
+  // UX audit E.P0 — finalize-favorites state.
+  const [finalizedAtIso, setFinalizedAtIso] = useState<string | null>(favoritesFinalizedAtIso);
+  const [finalizing, startFinalizeTransition] = useTransition();
 
   // Phase 2.6 — Download resolution + PIN gate.
   const [resolution, setResolution] = useState<ResolutionTier>("web");
@@ -295,6 +306,28 @@ export function GalleryViewer({
         rating >= 4
           ? "Thank you! You'll get a quick review prompt by email."
           : "Thank you for your feedback."
+      );
+      router.refresh();
+    });
+  }
+
+  function handleFinalizeFavorites() {
+    if (!projectId || finalizing || finalizedAtIso) return;
+    if (myPicksCount === 0) {
+      toast("Heart at least one photo before sending your picks.");
+      return;
+    }
+    startFinalizeTransition(async () => {
+      const result = await finalizeFavorites(eventId, projectId);
+      if (!result.success) {
+        toast(result.error ?? "Could not send your picks.");
+        return;
+      }
+      setFinalizedAtIso(new Date().toISOString());
+      toast(
+        result.alreadyFinalized
+          ? "Picks already sent — Korrin has them."
+          : "Picks sent — Korrin will be notified"
       );
       router.refresh();
     });
@@ -649,6 +682,78 @@ export function GalleryViewer({
                 label={`Just show me Korrin's favorites (${korrinPicksCount})`}
               />
             )}
+          </div>
+        )}
+
+        {/* UX audit E.P0 — Finalize picks CTA. Renders only when the event is
+            linked to a project AND the viewer is the project's client (we treat
+            having a viewerClientId + projectId as sufficient — server rejects
+            otherwise). Once finalized, swap to a locked confirmation chip. */}
+        {projectId && viewerClientId && photos.length > 0 && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "1rem 1.2rem",
+              border: "0.5px solid var(--border)",
+              background: "rgba(107,120,69,0.04)",
+              marginBottom: "2rem",
+              gap: "1rem",
+              flexWrap: "wrap",
+            }}
+          >
+            <div>
+              <p
+                style={{
+                  fontSize: "0.65rem",
+                  letterSpacing: "0.2em",
+                  textTransform: "uppercase",
+                  color: "var(--olive)",
+                  marginBottom: "0.35rem",
+                }}
+              >
+                Your picks
+              </p>
+              <p style={{ fontSize: "0.82rem", color: "var(--charcoal-light)", lineHeight: 1.6 }}>
+                {finalizedAtIso
+                  ? `Sent to Korrin on ${formatDisplayDate(finalizedAtIso) ?? "—"} (${myPicksCount} photo${myPicksCount === 1 ? "" : "s"}).`
+                  : `You've hearted ${myPicksCount} photo${myPicksCount === 1 ? "" : "s"}. When you're done, send your picks so Korrin can start editing.`}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleFinalizeFavorites}
+              disabled={Boolean(finalizedAtIso) || finalizing || myPicksCount === 0}
+              style={{
+                padding: "0.6rem 1.4rem",
+                fontSize: "0.68rem",
+                letterSpacing: "0.12em",
+                textTransform: "uppercase",
+                background: finalizedAtIso
+                  ? "transparent"
+                  : finalizing || myPicksCount === 0
+                    ? "var(--charcoal-muted)"
+                    : "var(--olive)",
+                color: finalizedAtIso ? "var(--charcoal-light)" : "var(--white)",
+                border: finalizedAtIso
+                  ? "0.5px solid var(--border-strong)"
+                  : "0.5px solid var(--olive)",
+                cursor:
+                  finalizedAtIso || finalizing || myPicksCount === 0
+                    ? "not-allowed"
+                    : "pointer",
+                fontFamily: "'Jost', sans-serif",
+                transition: "background 0.25s",
+                flexShrink: 0,
+              }}
+            >
+              {finalizedAtIso
+                ? `✓ Picks sent ${formatDisplayDate(finalizedAtIso) ?? ""}`.trim()
+                : finalizing
+                  ? "Sending…"
+                  : "Send my picks to Korrin"}
+            </button>
           </div>
         )}
 

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ProjectStatus } from "@/lib/db/projects";
+import type { LeadSource } from "@/lib/db/clients";
 import type { EditingSubStage } from "@/lib/editing-sla";
 import { computeEditingStatus, editingStatusColor } from "@/lib/editing-status";
 import {
@@ -30,6 +31,8 @@ type PipelineProject = {
   title: string;
   status: string;
   leadScore: number;
+  /** B.P0 (f) — first-touch source on the project (string for compat; matches LeadSource at runtime). */
+  leadSource: string;
   estimatedValue: number | null;
   createdAt: string;
   /** ISO timestamp of the most recent status change (or createdAt fallback). */
@@ -165,6 +168,21 @@ const DEFAULT_SAVED_VIEWS: SavedView[] = [
 ];
 
 const TERMINAL_STATUSES = new Set<string>(["COMPLETED", "LOST", "ARCHIVED"]);
+
+/**
+ * B.P0 (f) — selectable lead sources for the pipeline filter bar. Mirrors
+ * the `LeadSource` union from `lib/db/clients.ts`; kept locally so this
+ * client component doesn't have to import a runtime value from a server-only
+ * module. Update both lists together if the enum grows.
+ */
+const LEAD_SOURCE_OPTIONS: LeadSource[] = [
+  "WEBSITE",
+  "INSTAGRAM",
+  "GOOGLE",
+  "REFERRAL",
+  "DIRECT",
+  "OTHER",
+];
 
 function daysBetween(fromIso: string | null, now: number): number {
   if (!fromIso) return 0;
@@ -310,6 +328,14 @@ export function ProjectsPipelineClientPage({
   const [sortKey, setSortKey] = useState<SortKey>("leadScore");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
+  // B.P0 (f) — pipeline filter bar (text + lead source + value range).
+  // Composed on top of the saved-view filter so it's purely additive. No URL
+  // sync in MVP; sticky URL params are a P2 follow-up.
+  const [textFilter, setTextFilter] = useState<string>("");
+  const [leadSourceFilter, setLeadSourceFilter] = useState<string>("");
+  const [minValue, setMinValue] = useState<string>("");
+  const [maxValue, setMaxValue] = useState<string>("");
+
   // Hydrate kanban/table preference from localStorage (purely a UI affordance,
   // not a saved view) and load saved views from Firestore on mount.
   //
@@ -374,10 +400,47 @@ export function ProjectsPipelineClientPage({
     [savedViews, activeViewId]
   );
 
-  const filteredProjects = useMemo(
+  const viewFilteredProjects = useMemo(
     () => applyViewFilter(projects, activeView.filter, now),
     [projects, activeView, now]
   );
+
+  // B.P0 (f) — apply the in-memory filter bar (text + lead source + value range)
+  // on top of the saved-view filter. Purely additive — empty inputs no-op.
+  const filteredProjects = useMemo(() => {
+    const q = textFilter.trim().toLowerCase();
+    const minNum = minValue.trim() === "" ? null : Number(minValue);
+    const maxNum = maxValue.trim() === "" ? null : Number(maxValue);
+    const minOk = minNum !== null && Number.isFinite(minNum) ? minNum : null;
+    const maxOk = maxNum !== null && Number.isFinite(maxNum) ? maxNum : null;
+    if (!q && !leadSourceFilter && minOk === null && maxOk === null) {
+      return viewFilteredProjects;
+    }
+    return viewFilteredProjects.filter((p) => {
+      if (q) {
+        const haystack = `${p.firstName} ${p.lastName} ${p.email} ${p.title}`.toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+      if (leadSourceFilter && p.leadSource !== leadSourceFilter) return false;
+      const val = p.estimatedValue ?? 0;
+      if (minOk !== null && val < minOk) return false;
+      if (maxOk !== null && val > maxOk) return false;
+      return true;
+    });
+  }, [viewFilteredProjects, textFilter, leadSourceFilter, minValue, maxValue]);
+
+  const hasActiveBarFilter =
+    textFilter.trim() !== "" ||
+    leadSourceFilter !== "" ||
+    minValue.trim() !== "" ||
+    maxValue.trim() !== "";
+
+  function clearFilterBar() {
+    setTextFilter("");
+    setLeadSourceFilter("");
+    setMinValue("");
+    setMaxValue("");
+  }
 
   // Kanban column stats — recomputed against the visible (filtered) set so the
   // weighted value reflects the active view.
@@ -690,6 +753,147 @@ export function ProjectsPipelineClientPage({
             })}
           </div>
         </div>
+      </div>
+
+      {/* B.P0 (f) — Filter bar */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "0.75rem",
+          flexWrap: "wrap",
+          padding: "0.75rem 1rem",
+          marginBottom: "1rem",
+          border: "0.5px solid var(--border)",
+          background: "rgba(107,120,69,0.04)",
+        }}
+      >
+        <input
+          type="search"
+          value={textFilter}
+          onChange={(e) => setTextFilter(e.target.value)}
+          placeholder="Search client or title…"
+          style={{
+            fontFamily: "'Jost', sans-serif",
+            fontSize: "0.85rem",
+            padding: "0.4rem 0.6rem",
+            border: "0.5px solid var(--border-strong)",
+            background: "white",
+            color: "var(--charcoal)",
+            minWidth: "220px",
+            flex: "1 1 220px",
+          }}
+        />
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "0.4rem",
+            fontSize: "0.65rem",
+            letterSpacing: "0.14em",
+            textTransform: "uppercase",
+            color: "var(--charcoal-muted)",
+          }}
+        >
+          Source
+          <select
+            value={leadSourceFilter}
+            onChange={(e) => setLeadSourceFilter(e.target.value)}
+            style={{
+              fontFamily: "'Jost', sans-serif",
+              fontSize: "0.85rem",
+              padding: "0.4rem 0.6rem",
+              border: "0.5px solid var(--border-strong)",
+              background: "white",
+              color: "var(--charcoal)",
+              minWidth: "140px",
+            }}
+          >
+            <option value="">All sources</option>
+            {LEAD_SOURCE_OPTIONS.map((src) => (
+              <option key={src} value={src}>
+                {src}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "0.4rem",
+            fontSize: "0.65rem",
+            letterSpacing: "0.14em",
+            textTransform: "uppercase",
+            color: "var(--charcoal-muted)",
+          }}
+        >
+          Min $
+          <input
+            type="number"
+            inputMode="numeric"
+            value={minValue}
+            onChange={(e) => setMinValue(e.target.value)}
+            placeholder="0"
+            style={{
+              fontFamily: "'Jost', sans-serif",
+              fontSize: "0.85rem",
+              padding: "0.4rem 0.6rem",
+              border: "0.5px solid var(--border-strong)",
+              background: "white",
+              color: "var(--charcoal)",
+              width: "90px",
+            }}
+          />
+        </label>
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "0.4rem",
+            fontSize: "0.65rem",
+            letterSpacing: "0.14em",
+            textTransform: "uppercase",
+            color: "var(--charcoal-muted)",
+          }}
+        >
+          Max $
+          <input
+            type="number"
+            inputMode="numeric"
+            value={maxValue}
+            onChange={(e) => setMaxValue(e.target.value)}
+            placeholder="—"
+            style={{
+              fontFamily: "'Jost', sans-serif",
+              fontSize: "0.85rem",
+              padding: "0.4rem 0.6rem",
+              border: "0.5px solid var(--border-strong)",
+              background: "white",
+              color: "var(--charcoal)",
+              width: "90px",
+            }}
+          />
+        </label>
+        {hasActiveBarFilter && (
+          <button
+            type="button"
+            onClick={clearFilterBar}
+            style={{
+              fontFamily: "'Jost', sans-serif",
+              fontSize: "0.7rem",
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              padding: "0.4rem 0.8rem",
+              border: "0.5px solid var(--border-strong)",
+              background: "white",
+              color: "var(--charcoal)",
+              cursor: "pointer",
+            }}
+          >
+            Clear filters
+          </button>
+        )}
       </div>
 
       {/* Active filter / result summary */}

@@ -6,14 +6,29 @@
 //
 // Wrapped around children in app/admin/layout.tsx so the palette is admin-only;
 // public pages never load this code.
+//
+// Exposes an imperative `open()` / `close()` / `toggle()` API via context so
+// non-keyboard surfaces (e.g. the mobile header search icon) can trigger the
+// palette. The existing Cmd/Ctrl+K + Escape keybindings are preserved.
 
-import { useCallback, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { CommandPalette } from "./CommandPalette";
 
-export function CommandPaletteProvider({ children }: { children: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
+type CommandPaletteContextValue = {
+  isOpen: boolean;
+  open: () => void;
+  close: () => void;
+  toggle: () => void;
+};
 
-  const close = useCallback(() => setOpen(false), []);
+const CommandPaletteContext = createContext<CommandPaletteContextValue | null>(null);
+
+export function CommandPaletteProvider({ children }: { children: React.ReactNode }) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  const open = useCallback(() => setIsOpen(true), []);
+  const close = useCallback(() => setIsOpen(false), []);
+  const toggle = useCallback(() => setIsOpen((o) => !o), []);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -21,24 +36,41 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
       const isModK = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k";
       if (isModK) {
         e.preventDefault();
-        setOpen((o) => !o);
+        setIsOpen((o) => !o);
         return;
       }
       // Escape closes when open (handled here so we don't have to attach a
       // listener inside the modal that competes with the modal's own arrow
       // keys; this also keeps the close path consistent).
       if (e.key === "Escape") {
-        setOpen((o) => (o ? false : o));
+        setIsOpen((o) => (o ? false : o));
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  return (
-    <>
-      {children}
-      {open && <CommandPalette onClose={close} />}
-    </>
+  const value = useMemo<CommandPaletteContextValue>(
+    () => ({ isOpen, open, close, toggle }),
+    [isOpen, open, close, toggle]
   );
+
+  return (
+    <CommandPaletteContext.Provider value={value}>
+      {children}
+      {isOpen && <CommandPalette onClose={close} />}
+    </CommandPaletteContext.Provider>
+  );
+}
+
+/**
+ * Imperative handle for the global command palette.
+ * Must be used inside <CommandPaletteProvider>.
+ */
+export function useCommandPalette(): CommandPaletteContextValue {
+  const ctx = useContext(CommandPaletteContext);
+  if (!ctx) {
+    throw new Error("useCommandPalette must be used inside <CommandPaletteProvider>");
+  }
+  return ctx;
 }

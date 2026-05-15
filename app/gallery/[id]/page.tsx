@@ -90,6 +90,7 @@ export default async function GalleryEventPage({ params }: Props) {
   const projectId = (eventData.projectId as string | undefined) ?? null;
   let existingNps: 1 | 2 | 3 | 4 | 5 | null = null;
   let canSubmitNps = false;
+  let favoritesFinalizedAtIso: string | null = null;
   if (projectId) {
     const projectSnap = await adminDb.collection("projects").doc(projectId).get();
     if (projectSnap.exists) {
@@ -97,6 +98,11 @@ export default async function GalleryEventPage({ params }: Props) {
       const raw = p.clientNps as number | undefined;
       if (raw && raw >= 1 && raw <= 5) {
         existingNps = raw as 1 | 2 | 3 | 4 | 5;
+      }
+      const finalized = p.favoritesFinalizedAt as { toDate?: () => Date } | undefined;
+      const finalizedDate = finalized?.toDate?.();
+      if (finalizedDate instanceof Date) {
+        favoritesFinalizedAtIso = finalizedDate.toISOString();
       }
       // Owner check: signed-in email matches the project's client email.
       if (session.role === "ADMIN") {
@@ -137,6 +143,8 @@ export default async function GalleryEventPage({ params }: Props) {
       canSubmitNps={canSubmitNps}
       viewerClientId={viewerClientId}
       downloadPinRequired={downloadPinRequired}
+      projectId={projectId}
+      favoritesFinalizedAtIso={favoritesFinalizedAtIso}
     />
   );
 }
