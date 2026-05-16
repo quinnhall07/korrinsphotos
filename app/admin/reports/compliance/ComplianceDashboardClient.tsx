@@ -405,7 +405,18 @@ function DataRequestRow({
   return (
     <tr style={{ borderBottom: "0.5px solid var(--border)" }}>
       <td style={cell}>{DATA_REQUEST_TYPE_LABELS[req.type]}</td>
-      <td style={cell}>{req.subjectEmail}</td>
+      <td style={cell}>
+        {req.subjectClientId ? (
+          <Link
+            href={`/admin/clients/${req.subjectClientId}`}
+            style={{ color: "var(--olive)", textDecoration: "none" }}
+          >
+            {req.subjectEmail}
+          </Link>
+        ) : (
+          req.subjectEmail
+        )}
+      </td>
       <td style={cell}>{formatDate(req.submittedAt)}</td>
       <td style={{ ...cell, color: overdue ? "#B45309" : "var(--charcoal-light)" }}>
         {formatDate(req.dueBy)} {overdue ? `(${Math.abs(daysUntil(req.dueBy))}d overdue)` : ""}

@@ -46,6 +46,17 @@ interface SerializedDetailLocation {
   notes: string | null;
   tags: string[];
   sampleEvents: { id: string; title: string }[];
+  /**
+   * Wave B Feature 2 — every project that has shot at this location, hydrated
+   * from `sampleEventIds` via `listProjectsAtLocation`. Deduplicated per
+   * project. Render with links to /admin/projects/{id}.
+   */
+  projectsAtLocation: {
+    id: string;
+    title: string;
+    shootDate: string | null;
+    status: string;
+  }[];
 }
 
 export function LocationDetailClient({
@@ -213,6 +224,52 @@ function ReadView({
                 </span>
               ))}
             </div>
+          )}
+
+          <p style={{ ...eyebrow, marginTop: "1.5rem" }}>
+            Used on projects ({location.projectsAtLocation.length})
+          </p>
+          {location.projectsAtLocation.length === 0 ? (
+            <p style={muted}>
+              No projects linked here yet. Projects auto-link when an admin picks
+              this location in the workspace and the project moves to BOOKED.
+            </p>
+          ) : (
+            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+              {location.projectsAtLocation.map((p) => (
+                <li key={p.id} style={{ marginBottom: "0.5rem" }}>
+                  <Link
+                    href={`/admin/projects/${p.id}`}
+                    style={{
+                      fontSize: "0.85rem",
+                      color: "var(--charcoal)",
+                      textDecoration: "underline",
+                      textDecorationColor: "var(--border-strong)",
+                      textUnderlineOffset: "3px",
+                    }}
+                  >
+                    {p.title}
+                  </Link>
+                  <span
+                    style={{
+                      marginLeft: "0.5rem",
+                      fontSize: "0.7rem",
+                      color: "var(--charcoal-muted)",
+                      letterSpacing: "0.04em",
+                    }}
+                  >
+                    {p.shootDate
+                      ? new Date(p.shootDate).toLocaleDateString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                        })
+                      : "—"}
+                    {p.status ? ` · ${p.status.replace(/_/g, " ").toLowerCase()}` : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
           )}
 
           <p style={{ ...eyebrow, marginTop: "1.5rem" }}>

@@ -38,6 +38,23 @@ import {
   bumpRecurringNextPromptAt,
   type RecurringCadence,
 } from "@/lib/db/clients";
+import { getLocation } from "@/lib/db/locations";
+
+/**
+ * Wave B Feature 2 — patch payload for {@link updateProjectDetails}. Either
+ * `locationId` is provided (workspace location picker selected a scouted
+ * record) or it's omitted/null (free-text mode — caller supplies `label`
+ * directly). When `locationId` is set the server resolves the underlying
+ * `LocationDoc` and overwrites the denormalised `label / lat / lng`; callers
+ * cannot pass mismatched values.
+ */
+export interface ProjectShootLocationPatch {
+  locationId?: string | null;
+  label?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  notes?: string | null;
+}
 
 export async function updateProjectStatus(
   projectId: string,
@@ -77,6 +94,15 @@ export async function updateProjectStatus(
 
     revalidatePath("/admin/projects");
     revalidatePath(`/admin/projects/${projectId}`);
+    // Wave B Feature 2 — onProjectBooked may have appended this project's
+    // event to a linked location's sampleEventIds. Revalidate that detail
+    // page so the "Used on projects" list reflects the new visit. The
+    // Stripe-webhook path is a known v1 staleness — webhooks cannot
+    // revalidatePath cleanly.
+    const linkedLocationId: unknown = project?.shootLocation?.locationId;
+    if (typeof linkedLocationId === "string" && linkedLocationId.length > 0) {
+      revalidatePath(`/admin/locations/${linkedLocationId}`);
+    }
     return { success: true };
   } catch (err) {
     console.error("updateProjectStatus error:", err);
@@ -102,6 +128,15 @@ export async function updateProjectDetails(
      * surprises), an ISO datetime string, or `null` to clear the field.
      */
     followUpDate?: string | null;
+    /**
+     * Wave B Feature 2 — shoot location patch. `null` clears the field
+     * entirely. When `locationId` is provided the server looks up the
+     * LocationDoc and snapshots its name/lat/lng over whatever the caller
+     * passed for `label / lat / lng` (the picker is the source of truth in
+     * that case). Pass `locationId: null` (with explicit label/lat/lng) to
+     * keep free-text mode.
+     */
+    shootLocation?: ProjectShootLocationPatch | null;
   }
 ) {
   await requireAdmin();
@@ -138,11 +173,89 @@ export async function updateProjectDetails(
       }
     }
 
+    // Track the previous/next linked locationId so we can revalidate the
+    // location detail page (which renders "Used on projects") on both ends.
+    let prevLocationId: string | null = null;
+    let nextLocationId: string | null = null;
+
+    if ("shootLocation" in updates) {
+      const patch = updates.shootLocation;
+      if (patch === null) {
+        safe.shootLocation = null;
+      } else if (patch && typeof patch === "object") {
+        const locId =
+          typeof patch.locationId === "string" && patch.locationId.trim().length > 0
+            ? patch.locationId.trim()
+            : null;
+        nextLocationId = locId;
+
+        if (locId) {
+          // Picker path: snapshot label/lat/lng from the scouting record so
+          // the weather cron (which reads the denormalised lat/lng) stays
+          // accurate regardless of what the form payload contained.
+          const loc = await getLocation(locId);
+          if (!loc) {
+            return { success: false, error: "Selected location no longer exists." };
+          }
+          const next: Record<string, unknown> = {
+            locationId: locId,
+            label: loc.name,
+          };
+          if (typeof loc.latitude === "number") next.lat = loc.latitude;
+          if (typeof loc.longitude === "number") next.lng = loc.longitude;
+          if (typeof patch.notes === "string" && patch.notes.trim().length > 0) {
+            next.notes = patch.notes.trim();
+          }
+          safe.shootLocation = next;
+        } else {
+          // Free-text path: keep label/lat/lng as provided, never write
+          // `locationId`. Empty label collapses the whole field to null.
+          const label =
+            typeof patch.label === "string" ? patch.label.trim() : "";
+          if (!label) {
+            safe.shootLocation = null;
+          } else {
+            const next: Record<string, unknown> = { label };
+            if (typeof patch.lat === "number" && Number.isFinite(patch.lat)) {
+              next.lat = patch.lat;
+            }
+            if (typeof patch.lng === "number" && Number.isFinite(patch.lng)) {
+              next.lng = patch.lng;
+            }
+            if (typeof patch.notes === "string" && patch.notes.trim().length > 0) {
+              next.notes = patch.notes.trim();
+            }
+            safe.shootLocation = next;
+          }
+        }
+      }
+
+      // If we changed the FK, capture the prior value so the old location's
+      // detail page also revalidates. Best-effort — failure here doesn't
+      // stop the write.
+      try {
+        const prev = await adminDb.collection("projects").doc(projectId).get();
+        const prevRaw = prev.data()?.shootLocation;
+        if (prevRaw && typeof prevRaw.locationId === "string") {
+          prevLocationId = prevRaw.locationId;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     await adminDb.collection("projects").doc(projectId).update({
       ...safe,
       updatedAt: FieldValue.serverTimestamp()
     });
+    revalidatePath("/admin/projects");
     revalidatePath(`/admin/projects/${projectId}`);
+    if (prevLocationId) {
+      revalidatePath(`/admin/locations/${prevLocationId}`);
+    }
+    if (nextLocationId && nextLocationId !== prevLocationId) {
+      revalidatePath(`/admin/locations/${nextLocationId}`);
+    }
     return { success: true };
   } catch (err) {
     console.error(err);

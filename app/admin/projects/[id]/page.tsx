@@ -24,12 +24,22 @@ import { getStyleProfile } from "@/lib/db/style-profiles";
 import { STYLE_QUESTIONS } from "@/app/style/questions";
 import { formatDisplayDate } from "@/lib/date";
 import { getReplyTemplates } from "@/lib/db/admin-settings";
+import { listInboxItems } from "@/lib/db/inbox";
+import {
+  getLocation,
+  listLocationsForPicker,
+  LOCATION_TYPE_LABELS,
+  type LocationDoc,
+} from "@/lib/db/locations";
 import { ProjectWorkspaceClient } from "./ProjectWorkspaceClient";
 
 export const metadata: Metadata = { title: "Project Detail | Admin" };
 export const dynamic = "force-dynamic";
 
-type Props = { params: Promise<{ id: string }> };
+type Props = {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ inboxItem?: string }>;
+};
 
 /**
  * Next-best-action hint per status. Pure mapping. Kept local — Next.js 16
@@ -83,7 +93,13 @@ export type SerialProject = {
   title: string;
   shootDate: string | null;
   shootEndDate: string | null;
-  shootLocation: { label?: string | null; lat?: number | null; lng?: number | null; notes?: string | null } | null;
+  shootLocation: {
+    locationId?: string | null;
+    label?: string | null;
+    lat?: number | null;
+    lng?: number | null;
+    notes?: string | null;
+  } | null;
   packageName: string | null;
   packagePriceUsd: number | null;
   discountApplied: number | null;
@@ -286,6 +302,53 @@ export type SerialPressSubmission = {
   notes: string | null;
 };
 
+/** Wave B Feature 1 — open inbox rows pinned to this project. */
+export type SerialInboxItem = {
+  id: string;
+  type: string;
+  title: string;
+  body: string | null;
+  createdAtIso: string | null;
+  snoozedUntilIso: string | null;
+  read: boolean;
+};
+
+/** Wave B Feature 2 — combobox option for the Overview location picker. */
+export type SerialLocationPickerOption = {
+  id: string;
+  name: string;
+  type: string;
+  typeLabel: string;
+  city: string | null;
+};
+
+/**
+ * Wave B Feature 2 — when `project.shootLocation.locationId` points at a
+ * scouted location, the workspace receives the hydrated metadata so the
+ * Overview Location card can render best-light, permit, parking, accessibility,
+ * capacity, and rating. Falls back to null when the project uses free-text only
+ * (the inquiry / AI-draft path stamps `label` without picking a location).
+ */
+export type SerialLinkedLocation = {
+  id: string;
+  name: string;
+  type: string;
+  typeLabel: string;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  bestLightWindow: { startHour: number; endHour: number; notes?: string | null } | null;
+  parkingNotes: string | null;
+  permitRequired: boolean;
+  permitCost: number | null;
+  permitContact: string | null;
+  accessibilityNotes: string | null;
+  capacityMax: number | null;
+  rating: 1 | 2 | 3 | 4 | 5 | null;
+};
+
 export type SerialInvoice = {
   id: string;
   projectId: string;
@@ -381,9 +444,10 @@ function serialiseWeatherSnapshot(raw: any): SerialWeatherSnapshot | null {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default async function ProjectDetailPage({ params }: Props) {
+export default async function ProjectDetailPage({ params, searchParams }: Props) {
   const session = await requireAdmin();
   const { id } = await params;
+  const { inboxItem: initialInboxItemId } = await searchParams;
 
   const projectSnap = await adminDb.collection("projects").doc(id).get();
   if (!projectSnap.exists) notFound();
@@ -422,6 +486,10 @@ export default async function ProjectDetailPage({ params }: Props) {
     shootEndDate: ts(projectData.shootEndDate),
     shootLocation: projectData.shootLocation
       ? {
+          locationId:
+            typeof projectData.shootLocation.locationId === "string"
+              ? projectData.shootLocation.locationId
+              : null,
           label: projectData.shootLocation.label ?? null,
           lat: projectData.shootLocation.lat ?? null,
           lng: projectData.shootLocation.lng ?? null,
@@ -843,6 +911,88 @@ export default async function ProjectDetailPage({ params }: Props) {
     console.error("[ProjectDetailPage] Failed to load reply templates", err);
   }
 
+  // Wave B Feature 1 — inbox round-trip. Hydrate any open inbox rows pinned
+  // to this projectId so the header InboxPill can offer resolve / snooze /
+  // archive without round-tripping to /admin/inbox. Best-effort: any failure
+  // leaves the pill hidden.
+  let inboxItems: SerialInboxItem[] = [];
+  try {
+    // listInboxItems filters future-snoozed by default — the client therefore
+    // doesn't need Date.now() at render time to recompute "open" status.
+    const rows = await listInboxItems({ projectId: id });
+    inboxItems = rows.map((row) => ({
+      id: row.id,
+      type: row.type,
+      title: row.title,
+      body: row.body ?? null,
+      createdAtIso: ts(row.createdAt),
+      snoozedUntilIso: ts(row.snoozedUntil),
+      read: !!row.read,
+    }));
+  } catch (err) {
+    console.error("[ProjectDetailPage] Failed to load inbox items", err);
+  }
+
+  // Wave B Feature 2 — locations link.
+  // Picker options drive the workspace's Edit-mode combobox. Lean projection
+  // (id/name/type/city) avoids hauling notes/tags/bestLightWindow into the
+  // client bundle. Best-effort — empty array on failure leaves the picker
+  // with the "Use free-text instead" fallback only.
+  let locationPickerOptions: SerialLocationPickerOption[] = [];
+  try {
+    const rows = await listLocationsForPicker();
+    locationPickerOptions = rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      type: r.type,
+      typeLabel: LOCATION_TYPE_LABELS[r.type] ?? r.type,
+      city: typeof r.city === "string" && r.city.trim().length > 0 ? r.city : null,
+    }));
+  } catch (err) {
+    console.error("[ProjectDetailPage] Failed to load locations for picker", err);
+  }
+
+  // When the project's shootLocation carries a `locationId`, hydrate the
+  // scouting record so the Overview card can render permit / parking /
+  // accessibility / best-light metadata. Falls back to null on missing/
+  // deleted locations so the card gracefully reverts to the free-text display.
+  let linkedLocation: SerialLinkedLocation | null = null;
+  const linkedLocationId = project.shootLocation?.locationId ?? null;
+  if (linkedLocationId) {
+    try {
+      const loc: LocationDoc | null = await getLocation(linkedLocationId);
+      if (loc) {
+        linkedLocation = {
+          id: loc.id,
+          name: loc.name,
+          type: loc.type,
+          typeLabel: LOCATION_TYPE_LABELS[loc.type] ?? loc.type,
+          address: loc.address ?? null,
+          city: loc.city ?? null,
+          state: loc.state ?? null,
+          latitude: typeof loc.latitude === "number" ? loc.latitude : null,
+          longitude: typeof loc.longitude === "number" ? loc.longitude : null,
+          bestLightWindow: loc.bestLightWindow
+            ? {
+                startHour: loc.bestLightWindow.startHour,
+                endHour: loc.bestLightWindow.endHour,
+                notes: loc.bestLightWindow.notes ?? null,
+              }
+            : null,
+          parkingNotes: loc.parkingNotes ?? null,
+          permitRequired: !!loc.permitRequired,
+          permitCost: typeof loc.permitCost === "number" ? loc.permitCost : null,
+          permitContact: loc.permitContact ?? null,
+          accessibilityNotes: loc.accessibilityNotes ?? null,
+          capacityMax: typeof loc.capacityMax === "number" ? loc.capacityMax : null,
+          rating: loc.rating ?? null,
+        };
+      }
+    } catch (err) {
+      console.error("[ProjectDetailPage] Failed to load linked location", err);
+    }
+  }
+
   return (
     <>
       {styleProfile && (
@@ -873,6 +1023,14 @@ export default async function ProjectDetailPage({ params }: Props) {
         insurerDefaultAdditionalInsuredText={insurerDefaultAdditionalInsuredText}
         insurerEmailConfigured={insurerEmailConfigured}
         replyTemplates={replyTemplates}
+        inboxItems={inboxItems}
+        initialInboxItemId={
+          typeof initialInboxItemId === "string" && initialInboxItemId.trim().length > 0
+            ? initialInboxItemId
+            : null
+        }
+        linkedLocation={linkedLocation}
+        locationPickerOptions={locationPickerOptions}
       />
     </>
   );

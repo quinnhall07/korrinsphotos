@@ -7,6 +7,7 @@ import { applyReferralAttribution } from "./domain/referrals";
 import { generateAndUploadWelcomePacket } from "./domain/welcome-packet";
 import { draftJournalPostForProject } from "./domain/journal-drafter";
 import { addProjectMessage } from "./db/projects";
+import { recordVisit } from "./db/locations";
 import {
   getEffectiveAutomationConfig,
   isRecipeEnabled,
@@ -129,6 +130,25 @@ async function onProjectBooked(
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   });
+
+  // 1b. Wave B Feature 2 — if the project's shootLocation points at a scouted
+  // location, append the freshly-created event to that location's
+  // sampleEventIds and bump its visit metadata. `recordVisit` is idempotent
+  // (arrayUnion on eventId), so Stripe-webhook re-entries to BOOKED are safe.
+  // Wrapped in try/catch — a location-write failure must NEVER abort BOOKED.
+  const linkedLocationId: unknown = project?.shootLocation?.locationId;
+  if (typeof linkedLocationId === "string" && linkedLocationId.length > 0) {
+    try {
+      await recordVisit(linkedLocationId, eventRef.id);
+    } catch (err) {
+      console.error("[onProjectBooked] recordVisit failed", {
+        projectId,
+        locationId: linkedLocationId,
+        eventId: eventRef.id,
+        err,
+      });
+    }
+  }
 
   // 2. Auto-grant client portal access
   // Resolve (or provision) the Firebase Auth user for this client so the

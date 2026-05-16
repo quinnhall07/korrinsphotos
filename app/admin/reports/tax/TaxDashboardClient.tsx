@@ -7,6 +7,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer } from "recharts";
 import { toast } from "@/components/ui/Toaster";
 import type { ScheduleCLine } from "@/lib/db/expenses";
@@ -1242,6 +1243,7 @@ export function TaxDashboardClient({ data, depreciationMethodLabels }: Props) {
                   <th style={{ padding: "0.6rem 0.75rem", borderBottom: "0.5px solid var(--border)" }}>Category</th>
                   <th style={{ padding: "0.6rem 0.75rem", borderBottom: "0.5px solid var(--border)", textAlign: "right" }}>Miles</th>
                   <th style={{ padding: "0.6rem 0.75rem", borderBottom: "0.5px solid var(--border)", textAlign: "right" }}>Amount</th>
+                  <th style={{ padding: "0.6rem 0.75rem", borderBottom: "0.5px solid var(--border)" }}>Project</th>
                   <th style={{ padding: "0.6rem 0.75rem", borderBottom: "0.5px solid var(--border)" }} />
                 </tr>
               </thead>
@@ -1284,6 +1286,22 @@ export function TaxDashboardClient({ data, depreciationMethodLabels }: Props) {
                     </td>
                     <td style={{ padding: "0.6rem 0.75rem", borderBottom: "0.5px solid var(--border)", textAlign: "right" }}>
                       {formatUSDPrecise(e.amountCents)}
+                    </td>
+                    <td style={{ padding: "0.6rem 0.75rem", borderBottom: "0.5px solid var(--border)" }}>
+                      {e.projectId ? (
+                        <Link
+                          href={`/admin/projects/${e.projectId}`}
+                          style={{
+                            fontSize: "0.72rem",
+                            color: "var(--olive)",
+                            textDecoration: "none",
+                          }}
+                        >
+                          View →
+                        </Link>
+                      ) : (
+                        <span style={{ color: "var(--charcoal-muted)" }}>—</span>
+                      )}
                     </td>
                     <td style={{ padding: "0.6rem 0.75rem", borderBottom: "0.5px solid var(--border)" }}>
                       <button

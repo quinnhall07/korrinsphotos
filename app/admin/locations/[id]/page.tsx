@@ -7,7 +7,11 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { requireAdmin } from "@/lib/session";
 import { adminDb } from "@/lib/firebase-admin";
-import { getLocation, LOCATION_TYPE_LABELS } from "@/lib/db/locations";
+import {
+  getLocation,
+  listProjectsAtLocation,
+  LOCATION_TYPE_LABELS,
+} from "@/lib/db/locations";
 import { LocationDetailClient } from "./LocationDetailClient";
 import type { Metadata } from "next";
 
@@ -45,6 +49,21 @@ export default async function LocationDetailPage({ params }: Props) {
     })
   );
 
+  // Wave B Feature 2 — hydrate every project that has shot at this location.
+  // sampleEventIds are event ids; the helper resolves them to projectIds via
+  // events.projectId, deduplicating per project. Best-effort.
+  let projectsAtLocation: {
+    id: string;
+    title: string;
+    shootDate: string | null;
+    status: string;
+  }[] = [];
+  try {
+    projectsAtLocation = await listProjectsAtLocation(location.id, sampleEventIds);
+  } catch (err) {
+    console.error("[LocationDetailPage] Failed to load projects at location", err);
+  }
+
   const serialised = {
     id: location.id,
     name: location.name,
@@ -71,6 +90,7 @@ export default async function LocationDetailPage({ params }: Props) {
     sampleEvents: sampleEvents.filter(
       (e): e is { id: string; title: string } => e !== null
     ),
+    projectsAtLocation,
   };
 
   return (

@@ -13,6 +13,7 @@
 // Interaction: hover (tooltip), click (highlight subtree / dim the rest).
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import type { ReferralGraph, ReferralGraphNode } from "@/lib/domain/referral-graph";
 
 // ─── Formatting helpers ─────────────────────────────────────────────────────
@@ -310,9 +311,18 @@ function LeaderboardTable({
               >
                 {i + 1}
               </span>
-              <span style={{ color: "var(--charcoal)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <Link
+                href={`/admin/clients/${n.clientId}`}
+                style={{
+                  color: "var(--charcoal)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  textDecoration: "none",
+                }}
+              >
                 {n.name}
-              </span>
+              </Link>
               <span
                 style={{
                   fontFamily: "'Cormorant Garamond', serif",

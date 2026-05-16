@@ -112,3 +112,33 @@ export async function failEnrollment(
     updatedAt: FieldValue.serverTimestamp(),
   });
 }
+
+/**
+ * Lists every enrollment for a given client. ACTIVE first, then by
+ * updatedAt desc. In-memory sort keeps the read cheap (no composite index
+ * beyond Firestore's auto-indexed single-field clientId query).
+ */
+export async function listEnrollmentsByClient(
+  clientId: string
+): Promise<SequenceEnrollmentDoc[]> {
+  const snap = await sequenceEnrollmentsCol()
+    .where("clientId", "==", clientId)
+    .get();
+  const rows = snap.docs.map(
+    (d) => ({ id: d.id, ...d.data() } as SequenceEnrollmentDoc)
+  );
+  const statusOrder: Record<EnrollmentStatus, number> = {
+    ACTIVE: 0,
+    FAILED: 1,
+    COMPLETED: 2,
+    CANCELED: 3,
+  };
+  rows.sort((a, b) => {
+    const so = statusOrder[a.status] - statusOrder[b.status];
+    if (so !== 0) return so;
+    const am = a.updatedAt?.toMillis?.() ?? 0;
+    const bm = b.updatedAt?.toMillis?.() ?? 0;
+    return bm - am;
+  });
+  return rows;
+}

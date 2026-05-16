@@ -27,16 +27,22 @@ import {
 
 type ActionResult = { success: boolean; error?: string };
 
-function revalidate() {
+function revalidate(projectId?: string) {
   revalidatePath("/admin/inbox");
   revalidatePath("/admin");
+  if (projectId) {
+    revalidatePath(`/admin/projects/${projectId}`);
+  }
 }
 
-export async function markInboxRead(id: string): Promise<ActionResult> {
+export async function markInboxRead(
+  id: string,
+  revalidateProjectId?: string
+): Promise<ActionResult> {
   await requireAdmin();
   try {
     await markRead(id);
-    revalidate();
+    revalidate(revalidateProjectId);
     return { success: true };
   } catch (err) {
     console.error("markInboxRead error:", err);
@@ -56,11 +62,14 @@ export async function markInboxUnread(id: string): Promise<ActionResult> {
   }
 }
 
-export async function archiveInboxItem(id: string): Promise<ActionResult> {
+export async function archiveInboxItem(
+  id: string,
+  revalidateProjectId?: string
+): Promise<ActionResult> {
   await requireAdmin();
   try {
     await archiveItem(id);
-    revalidate();
+    revalidate(revalidateProjectId);
     return { success: true };
   } catch (err) {
     console.error("archiveInboxItem error:", err);
@@ -94,14 +103,15 @@ export async function unsnoozeInboxItem(id: string): Promise<ActionResult> {
 
 export async function snoozeInboxItem(
   id: string,
-  hours: number = 24
+  hours: number = 24,
+  revalidateProjectId?: string
 ): Promise<ActionResult> {
   await requireAdmin();
   try {
     const safeHours = Number.isFinite(hours) && hours > 0 ? hours : 24;
     const until = new Date(Date.now() + safeHours * 60 * 60 * 1000);
     await snoozeItem(id, until);
-    revalidate();
+    revalidate(revalidateProjectId);
     return { success: true };
   } catch (err) {
     console.error("snoozeInboxItem error:", err);

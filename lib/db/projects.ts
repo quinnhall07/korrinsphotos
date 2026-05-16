@@ -37,6 +37,17 @@ export {
 import type { EditingSubStage } from "@/lib/editing-sla";
 
 export interface Location {
+  /**
+   * Wave B Feature 2 — optional FK to a scouted `locations/{id}` doc. When
+   * set, the workspace surfaces the scouting metadata (best-light window,
+   * permit, parking, accessibility, capacity, rating) and the location detail
+   * page lists this project under "Used on projects". `label / lat / lng`
+   * stay denormalised so the weather snapshot cron (lib/domain/weather-snapshots.ts)
+   * keeps working without a second read. Known gotcha: editing the linked
+   * LocationDoc later does NOT auto-update this project's denormalised
+   * lat/lng — acceptable for v1.
+   */
+  locationId?: string;
   label: string;
   lat?: number;
   lng?: number;

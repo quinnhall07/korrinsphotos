@@ -46,6 +46,11 @@ import {
   reorderTimelineBlocksAction,
 } from "../timeline-actions";
 import { sendQuestionnaireForProjectAction } from "@/app/admin/questionnaires/templates/actions";
+import {
+  markInboxRead,
+  snoozeInboxItem,
+  archiveInboxItem,
+} from "@/app/admin/inbox/actions";
 // AI components — supplied by Agent 5 (AI features) in the same merge.
 // Imported eagerly so the parent's npm build wires the dependency edge.
 // TODO(agent-5): confirm export paths once Agent 5 lands.
@@ -65,6 +70,9 @@ import type {
   SerialPressSubmission,
   SerialTimelineBlock,
   SerialDayOfRoomVendorOption,
+  SerialInboxItem,
+  SerialLinkedLocation,
+  SerialLocationPickerOption,
 } from "./page";
 import {
   initializeGearLog,
@@ -304,6 +312,15 @@ interface Props {
   insurerEmailConfigured: boolean;
   /** Wave 12 — admin's saved reply templates. */
   replyTemplates: ReplyTemplateSnippet[];
+  /** Wave B Feature 1 — open inbox rows pinned to this project. */
+  inboxItems: SerialInboxItem[];
+  /** Wave B Feature 1 — populated when arriving via /admin/projects/{id}?inboxItem=...
+   *  Opens the popover and scrolls/highlights the matching row. */
+  initialInboxItemId: string | null;
+  /** Wave B Feature 2 — hydrated scouting record when shootLocation.locationId set. */
+  linkedLocation: SerialLinkedLocation | null;
+  /** Wave B Feature 2 — combobox options for the location picker. */
+  locationPickerOptions: SerialLocationPickerOption[];
 }
 
 /**
@@ -339,11 +356,38 @@ export function ProjectWorkspaceClient({
   insurerDefaultAdditionalInsuredText,
   insurerEmailConfigured,
   replyTemplates,
+  inboxItems,
+  initialInboxItemId,
+  linkedLocation,
+  locationPickerOptions,
 }: Props) {
   const [tab, setTab] = useState<TabId>("overview");
   const [statusModalOpen, setStatusModalOpen] = useState(false);
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+
+  // Wave B Feature 1 — InboxPill state. Initialise from the URL param at
+  // construction time (lazy initialiser) so we don't fire setState inside an
+  // effect — the eslint react-hooks/set-state-in-effect rule flags that
+  // pattern and the brief forbids new lint warnings.
+  const hasMatchingInbox =
+    !!initialInboxItemId &&
+    inboxItems.some((i) => i.id === initialInboxItemId);
+  const [inboxPopoverOpen, setInboxPopoverOpen] = useState<boolean>(
+    () => hasMatchingInbox
+  );
+  const [highlightedInboxId] = useState<string | null>(() =>
+    hasMatchingInbox ? initialInboxItemId : null
+  );
+
+  // Server-side `listInboxItems` already drops future-snoozed rows, so the
+  // client just needs the read-flag check. useMemo guards against sibling
+  // re-renders triggering an avoidable filter pass.
+  const openInboxItems = useMemo(
+    () => inboxItems.filter((it) => !it.read),
+    [inboxItems]
+  );
+  const openInboxCount = openInboxItems.length;
 
   const initials = `${client.firstName?.[0] ?? ""}${client.lastName?.[0] ?? ""}`.toUpperCase();
 
@@ -440,16 +484,32 @@ export function ProjectWorkspaceClient({
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: "0.5rem", flexShrink: 0 }}>
+        <div style={{ display: "flex", gap: "0.5rem", flexShrink: 0, position: "relative" }}>
           <button style={BTN_GHOST} onClick={() => setStatusModalOpen(true)} disabled={isPending}>
             Advance Status
           </button>
           <button style={BTN_PRIMARY} onClick={() => setTab("messages")}>
             Send Email
           </button>
+          {openInboxCount > 0 && (
+            <InboxPill
+              count={openInboxCount}
+              open={inboxPopoverOpen}
+              onToggle={() => setInboxPopoverOpen((v) => !v)}
+            />
+          )}
           <button style={BTN_GHOST} onClick={handleArchive} disabled={isPending}>
             Archive
           </button>
+          {inboxPopoverOpen && (
+            <InboxPopover
+              projectId={project.id}
+              items={openInboxItems}
+              highlightedId={highlightedInboxId}
+              onClose={() => setInboxPopoverOpen(false)}
+              onAfterAction={() => router.refresh()}
+            />
+          )}
         </div>
       </header>
 
@@ -475,6 +535,8 @@ export function ProjectWorkspaceClient({
               gearLog={gearLog}
               dayOfTimeline={dayOfTimeline}
               onNavigateTab={setTab}
+              linkedLocation={linkedLocation}
+              locationPickerOptions={locationPickerOptions}
             />
           )}
           {tab === "messages" && (
@@ -861,6 +923,8 @@ function OverviewTab({
   gearLog,
   dayOfTimeline,
   onNavigateTab,
+  linkedLocation,
+  locationPickerOptions,
 }: {
   project: SerialProject;
   client: SerialClient;
@@ -871,6 +935,8 @@ function OverviewTab({
   gearLog: SerialGearLogEntry[];
   dayOfTimeline: SerialTimelineBlock[];
   onNavigateTab: (tab: TabId) => void;
+  linkedLocation: SerialLinkedLocation | null;
+  locationPickerOptions: SerialLocationPickerOption[];
 }) {
   // Phase 4.6 surface metrics for the badge row.
   const reviewSentCount = reviewRequests.filter(
@@ -977,7 +1043,7 @@ function OverviewTab({
         followUpDate={project.followUpDate}
       />
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem", marginBottom: "1.5rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "1.5rem", marginBottom: "1.5rem" }}>
         <div>
           <p style={{ ...EYEBROW, margin: "0 0 0.5rem 0" }}>Package</p>
           <p style={{ margin: 0, fontSize: "0.95rem" }}>
@@ -1000,11 +1066,15 @@ function OverviewTab({
             {project.shootEndDate ? ` → ${fmtDate(project.shootEndDate)}` : ""}
           </p>
         </div>
-        <div>
-          <p style={{ ...EYEBROW, margin: "0 0 0.5rem 0" }}>Location</p>
-          <p style={{ margin: 0, fontSize: "0.95rem" }}>{project.shootLocation?.label ?? "—"}</p>
-        </div>
       </div>
+
+      {/* Wave B Feature 2 — Location card (linked scouting record OR free-text). */}
+      <LocationCard
+        projectId={project.id}
+        shootLocation={project.shootLocation}
+        linkedLocation={linkedLocation}
+        options={locationPickerOptions}
+      />
 
       {/* Phase 3.6 — weather + golden-hour snapshot. Renders when the
           project has a shoot date (so admins can pre-flag indoor), when a
@@ -6014,3 +6084,882 @@ function StatusModal({
     </div>
   );
 }
+
+// ─── Wave B Feature 1 — Inbox round-trip ─────────────────────────────────────
+
+function InboxPill({
+  count,
+  open,
+  onToggle,
+}: {
+  count: number;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const olive = count > 0;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={open}
+      aria-label={`${count} open inbox ${count === 1 ? "item" : "items"} for this project`}
+      style={{
+        padding: "0.6rem 0.95rem",
+        fontSize: "0.7rem",
+        letterSpacing: "0.12em",
+        textTransform: "uppercase",
+        background: olive ? "var(--olive)" : "var(--white)",
+        color: olive ? "var(--white)" : "var(--charcoal)",
+        border: olive ? "0.5px solid var(--olive)" : "0.5px solid var(--border-strong)",
+        cursor: "pointer",
+        fontFamily: "'Jost', sans-serif",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "0.4rem",
+      }}
+    >
+      <span>Inbox</span>
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minWidth: "1.3rem",
+          padding: "0 0.4rem",
+          height: "1.3rem",
+          background: olive ? "rgba(255,255,255,0.18)" : "var(--olive-dim)",
+          color: olive ? "var(--white)" : "var(--olive)",
+          fontFamily: "'Jost', sans-serif",
+          fontSize: "0.7rem",
+          fontWeight: 500,
+        }}
+      >
+        {count}
+      </span>
+    </button>
+  );
+}
+
+function InboxPopover({
+  projectId,
+  items,
+  highlightedId,
+  onClose,
+  onAfterAction,
+}: {
+  projectId: string;
+  items: SerialInboxItem[];
+  highlightedId: string | null;
+  onClose: () => void;
+  onAfterAction: () => void;
+}) {
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [, startTransition] = useTransition();
+
+  function run(
+    id: string,
+    label: string,
+    fn: () => Promise<{ success: boolean; error?: string }>
+  ) {
+    setPendingId(id);
+    startTransition(async () => {
+      const res = await fn();
+      setPendingId(null);
+      if (res.success) {
+        toast(label);
+        onAfterAction();
+      } else {
+        toast(res.error ?? "Failed");
+      }
+    });
+  }
+
+  return (
+    <>
+      {/* Backdrop — closes the popover on outside click without dimming the page. */}
+      <div
+        onClick={onClose}
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "transparent",
+          zIndex: 49,
+        }}
+      />
+      <div
+        role="dialog"
+        aria-label="Open inbox items for this project"
+        style={{
+          position: "absolute",
+          top: "calc(100% + 0.6rem)",
+          right: 0,
+          width: "min(420px, 92vw)",
+          maxHeight: "70vh",
+          overflowY: "auto",
+          background: "var(--white)",
+          border: "0.5px solid var(--border-strong)",
+          boxShadow: "0 12px 36px rgba(42,42,40,0.16)",
+          zIndex: 50,
+        }}
+      >
+        <header
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "0.85rem 1rem",
+            borderBottom: "0.5px solid var(--border)",
+          }}
+        >
+          <p style={{ ...EYEBROW, margin: 0 }}>Inbox · this project</p>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close inbox popover"
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--charcoal-muted)",
+              cursor: "pointer",
+              fontSize: "1.1rem",
+              lineHeight: 1,
+              padding: "0.1rem 0.3rem",
+            }}
+          >
+            ×
+          </button>
+        </header>
+
+        {items.length === 0 ? (
+          <p
+            style={{
+              padding: "1rem",
+              fontSize: "0.85rem",
+              color: "var(--charcoal-muted)",
+              margin: 0,
+            }}
+          >
+            No open inbox items for this project.
+          </p>
+        ) : (
+          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {items.map((item) => {
+              const isHighlighted = item.id === highlightedId;
+              const isPending = pendingId === item.id;
+              return (
+                <li
+                  key={item.id}
+                  data-inbox-row={item.id}
+                  ref={
+                    isHighlighted
+                      ? (el) => {
+                          // Scroll once on mount; subsequent rerenders pass
+                          // the same node and scrollIntoView is a no-op.
+                          el?.scrollIntoView({ block: "nearest" });
+                        }
+                      : undefined
+                  }
+                  style={{
+                    padding: "0.9rem 1rem",
+                    borderBottom: "0.5px solid var(--border)",
+                    outline: isHighlighted ? "2px solid var(--olive)" : undefined,
+                    outlineOffset: isHighlighted ? "-2px" : undefined,
+                    opacity: isPending ? 0.6 : 1,
+                  }}
+                >
+                  <p
+                    style={{
+                      margin: "0 0 0.25rem 0",
+                      fontSize: "0.88rem",
+                      color: "var(--charcoal)",
+                      fontWeight: 500,
+                    }}
+                  >
+                    {item.title}
+                  </p>
+                  {item.body && (
+                    <p
+                      style={{
+                        margin: "0 0 0.4rem 0",
+                        fontSize: "0.8rem",
+                        color: "var(--charcoal-light)",
+                        lineHeight: 1.45,
+                        display: "-webkit-box",
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: "vertical",
+                        overflow: "hidden",
+                      }}
+                    >
+                      {item.body}
+                    </p>
+                  )}
+                  <p
+                    style={{
+                      margin: "0 0 0.55rem 0",
+                      fontSize: "0.7rem",
+                      color: "var(--charcoal-muted)",
+                      letterSpacing: "0.04em",
+                    }}
+                  >
+                    {formatRelativeTime(item.createdAtIso)}
+                    {item.snoozedUntilIso ? " · snoozed" : ""}
+                  </p>
+                  <div style={{ display: "flex", gap: "0.4rem" }}>
+                    <button
+                      type="button"
+                      disabled={isPending}
+                      onClick={() =>
+                        run(item.id, "Marked resolved", () =>
+                          markInboxRead(item.id, projectId)
+                        )
+                      }
+                      style={inboxIconBtn}
+                      aria-label="Resolve"
+                      title="Mark resolved"
+                    >
+                      ✓
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isPending}
+                      onClick={() =>
+                        run(item.id, "Snoozed 24h", () =>
+                          snoozeInboxItem(item.id, 24, projectId)
+                        )
+                      }
+                      style={inboxIconBtn}
+                      aria-label="Snooze 1 day"
+                      title="Snooze 1 day"
+                    >
+                      ⏱
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isPending}
+                      onClick={() =>
+                        run(item.id, "Archived", () =>
+                          archiveInboxItem(item.id, projectId)
+                        )
+                      }
+                      style={inboxIconBtn}
+                      aria-label="Archive"
+                      title="Archive"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </>
+  );
+}
+
+const inboxIconBtn: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: "1.75rem",
+  height: "1.75rem",
+  padding: 0,
+  fontSize: "0.85rem",
+  background: "var(--white)",
+  border: "0.5px solid var(--border-strong)",
+  color: "var(--charcoal)",
+  cursor: "pointer",
+  fontFamily: "'Jost', sans-serif",
+};
+
+/** Lightweight relative-time formatter; falls back to absolute date >7d. */
+function formatRelativeTime(iso: string | null): string {
+  if (!iso) return "—";
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return "—";
+  const diff = Date.now() - ms;
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return "just now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day}d ago`;
+  return new Date(ms).toLocaleDateString();
+}
+
+// ─── Wave B Feature 2 — Location card (read + edit) ──────────────────────────
+
+function LocationCard({
+  projectId,
+  shootLocation,
+  linkedLocation,
+  options,
+}: {
+  projectId: string;
+  shootLocation: SerialProject["shootLocation"];
+  linkedLocation: SerialLinkedLocation | null;
+  options: SerialLocationPickerOption[];
+}) {
+  const [editing, setEditing] = useState(false);
+
+  return (
+    <section
+      style={{
+        background: "var(--white)",
+        border: "0.5px solid var(--border)",
+        padding: "1.25rem 1.4rem",
+        marginBottom: "1.5rem",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: "0.85rem",
+        }}
+      >
+        <p style={{ ...EYEBROW, margin: 0 }}>Location</p>
+        {!editing && (
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            style={{
+              ...BTN_GHOST,
+              padding: "0.45rem 0.85rem",
+              fontSize: "0.65rem",
+            }}
+          >
+            Edit
+          </button>
+        )}
+      </div>
+
+      {editing ? (
+        <LocationEditView
+          projectId={projectId}
+          shootLocation={shootLocation}
+          linkedLocation={linkedLocation}
+          options={options}
+          onCancel={() => setEditing(false)}
+        />
+      ) : (
+        <LocationReadView
+          shootLocation={shootLocation}
+          linkedLocation={linkedLocation}
+        />
+      )}
+    </section>
+  );
+}
+
+function LocationReadView({
+  shootLocation,
+  linkedLocation,
+}: {
+  shootLocation: SerialProject["shootLocation"];
+  linkedLocation: SerialLinkedLocation | null;
+}) {
+  if (!shootLocation || (!shootLocation.label && !linkedLocation)) {
+    return (
+      <p style={{ margin: 0, fontSize: "0.85rem", color: "var(--charcoal-muted)" }}>
+        No location set yet.
+      </p>
+    );
+  }
+
+  if (!linkedLocation) {
+    return (
+      <div>
+        <p
+          style={{
+            margin: "0 0 0.35rem 0",
+            fontSize: "1rem",
+            color: "var(--charcoal)",
+          }}
+        >
+          {shootLocation.label ?? "—"}
+        </p>
+        <p
+          style={{
+            margin: 0,
+            fontSize: "0.75rem",
+            color: "var(--charcoal-muted)",
+            letterSpacing: "0.04em",
+          }}
+        >
+          Free-text · no scouted location linked
+        </p>
+        {shootLocation.notes && (
+          <p
+            style={{
+              marginTop: "0.5rem",
+              fontSize: "0.85rem",
+              color: "var(--charcoal-light)",
+              lineHeight: 1.55,
+            }}
+          >
+            {shootLocation.notes}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  const lightWindow = linkedLocation.bestLightWindow
+    ? `${formatHour12(linkedLocation.bestLightWindow.startHour)} – ${formatHour12(
+        linkedLocation.bestLightWindow.endHour
+      )}`
+    : null;
+  const cityLine = [linkedLocation.city, linkedLocation.state]
+    .filter(Boolean)
+    .join(", ");
+
+  return (
+    <div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          gap: "0.55rem",
+          marginBottom: "0.35rem",
+          flexWrap: "wrap",
+        }}
+      >
+        <Link
+          href={`/admin/locations/${linkedLocation.id}`}
+          style={{
+            fontSize: "1rem",
+            color: "var(--charcoal)",
+            textDecoration: "underline",
+            textDecorationColor: "var(--border-strong)",
+            textUnderlineOffset: "3px",
+          }}
+        >
+          {linkedLocation.name}
+        </Link>
+        <span
+          style={{
+            fontSize: "0.7rem",
+            color: "var(--charcoal-muted)",
+            letterSpacing: "0.04em",
+          }}
+        >
+          {linkedLocation.typeLabel}
+          {cityLine ? ` · ${cityLine}` : ""}
+        </span>
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "0.4rem",
+          marginBottom: "0.7rem",
+        }}
+      >
+        {linkedLocation.permitRequired && (
+          <span style={permitChipStyle}>Permit required</span>
+        )}
+        {lightWindow && (
+          <span style={metaChipStyle}>Best light: {lightWindow}</span>
+        )}
+        {linkedLocation.capacityMax !== null && (
+          <span style={metaChipStyle}>
+            Capacity ≤ {linkedLocation.capacityMax}
+          </span>
+        )}
+        {linkedLocation.rating !== null && (
+          <span style={metaChipStyle}>{linkedLocation.rating}/5</span>
+        )}
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(7rem, 9rem) 1fr",
+          rowGap: "0.4rem",
+          columnGap: "0.85rem",
+          fontSize: "0.82rem",
+        }}
+      >
+        <LabelCell>Parking</LabelCell>
+        <ValueCell>{linkedLocation.parkingNotes ?? "—"}</ValueCell>
+        <LabelCell>Accessibility</LabelCell>
+        <ValueCell>{linkedLocation.accessibilityNotes ?? "—"}</ValueCell>
+        {linkedLocation.address && (
+          <>
+            <LabelCell>Address</LabelCell>
+            <ValueCell>{linkedLocation.address}</ValueCell>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LabelCell({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      style={{
+        fontSize: "0.65rem",
+        letterSpacing: "0.14em",
+        textTransform: "uppercase",
+        color: "var(--charcoal-muted)",
+        alignSelf: "start",
+        paddingTop: "0.1rem",
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function ValueCell({ children }: { children: React.ReactNode }) {
+  return (
+    <span style={{ color: "var(--charcoal)", lineHeight: 1.45 }}>{children}</span>
+  );
+}
+
+function LocationEditView({
+  projectId,
+  shootLocation,
+  linkedLocation,
+  options,
+  onCancel,
+}: {
+  projectId: string;
+  shootLocation: SerialProject["shootLocation"];
+  linkedLocation: SerialLinkedLocation | null;
+  options: SerialLocationPickerOption[];
+  onCancel: () => void;
+}) {
+  const router = useRouter();
+  const [, startTransition] = useTransition();
+  const [saving, setSaving] = useState(false);
+
+  // Mode: picker (locationId selected) vs free-text.
+  const [mode, setMode] = useState<"picker" | "free">(
+    shootLocation?.locationId || linkedLocation ? "picker" : "free"
+  );
+  const [selectedId, setSelectedId] = useState<string | null>(
+    shootLocation?.locationId ?? linkedLocation?.id ?? null
+  );
+  const [query, setQuery] = useState(
+    linkedLocation?.name ?? shootLocation?.label ?? ""
+  );
+
+  // Free-text fields
+  const [label, setLabel] = useState(shootLocation?.label ?? "");
+  const [lat, setLat] = useState<string>(
+    typeof shootLocation?.lat === "number" ? String(shootLocation.lat) : ""
+  );
+  const [lng, setLng] = useState<string>(
+    typeof shootLocation?.lng === "number" ? String(shootLocation.lng) : ""
+  );
+  const [notes, setNotes] = useState(shootLocation?.notes ?? "");
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options.slice(0, 20);
+    return options
+      .filter(
+        (o) =>
+          o.name.toLowerCase().includes(q) ||
+          (o.city ?? "").toLowerCase().includes(q) ||
+          o.typeLabel.toLowerCase().includes(q)
+      )
+      .slice(0, 20);
+  }, [options, query]);
+
+  function handleSave() {
+    setSaving(true);
+    startTransition(async () => {
+      let payload:
+        | {
+            shootLocation:
+              | {
+                  locationId?: string | null;
+                  label?: string | null;
+                  lat?: number | null;
+                  lng?: number | null;
+                  notes?: string | null;
+                }
+              | null;
+          };
+
+      if (mode === "picker") {
+        if (!selectedId) {
+          toast("Pick a location or switch to free-text.");
+          setSaving(false);
+          return;
+        }
+        payload = {
+          shootLocation: {
+            locationId: selectedId,
+            notes: notes.trim() || null,
+          },
+        };
+      } else {
+        const labelTrim = label.trim();
+        if (!labelTrim) {
+          payload = { shootLocation: null };
+        } else {
+          const latNum = lat.trim() ? parseFloat(lat) : NaN;
+          const lngNum = lng.trim() ? parseFloat(lng) : NaN;
+          payload = {
+            shootLocation: {
+              locationId: null,
+              label: labelTrim,
+              lat: Number.isFinite(latNum) ? latNum : null,
+              lng: Number.isFinite(lngNum) ? lngNum : null,
+              notes: notes.trim() || null,
+            },
+          };
+        }
+      }
+
+      const res = await updateProjectDetails(projectId, payload);
+      setSaving(false);
+      if (res.success) {
+        toast("Location updated");
+        onCancel();
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to update location");
+      }
+    });
+  }
+
+  return (
+    <div>
+      <div
+        style={{
+          display: "flex",
+          gap: "0.4rem",
+          marginBottom: "0.85rem",
+          fontSize: "0.7rem",
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setMode("picker")}
+          style={mode === "picker" ? modeBtnActive : modeBtn}
+        >
+          Scouted location
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setMode("free");
+            setSelectedId(null);
+          }}
+          style={mode === "free" ? modeBtnActive : modeBtn}
+        >
+          Use free-text instead
+        </button>
+      </div>
+
+      {mode === "picker" ? (
+        <div>
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Type to search scouted locations…"
+            style={pickerInputStyle}
+          />
+          {options.length === 0 ? (
+            <p
+              style={{
+                margin: "0.6rem 0 0 0",
+                fontSize: "0.8rem",
+                color: "var(--charcoal-muted)",
+              }}
+            >
+              No scouted locations yet.{" "}
+              <Link
+                href="/admin/locations"
+                style={{ color: "var(--olive)", textDecoration: "underline" }}
+              >
+                Add one
+              </Link>
+              .
+            </p>
+          ) : (
+            <ul
+              style={{
+                listStyle: "none",
+                padding: 0,
+                margin: "0.5rem 0 0 0",
+                maxHeight: "12rem",
+                overflowY: "auto",
+                border: "0.5px solid var(--border)",
+              }}
+            >
+              {filtered.map((opt) => {
+                const sel = selectedId === opt.id;
+                return (
+                  <li key={opt.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedId(opt.id);
+                        setQuery(opt.name);
+                      }}
+                      style={{
+                        width: "100%",
+                        textAlign: "left",
+                        padding: "0.55rem 0.75rem",
+                        background: sel ? "var(--olive-dim)" : "transparent",
+                        border: "none",
+                        borderBottom: "0.5px solid var(--border)",
+                        cursor: "pointer",
+                        fontFamily: "'Jost', sans-serif",
+                        fontSize: "0.85rem",
+                        color: "var(--charcoal)",
+                      }}
+                    >
+                      <span style={{ fontWeight: sel ? 500 : 400 }}>{opt.name}</span>
+                      <span
+                        style={{
+                          marginLeft: "0.4rem",
+                          fontSize: "0.7rem",
+                          color: "var(--charcoal-muted)",
+                        }}
+                      >
+                        {opt.typeLabel}
+                        {opt.city ? ` · ${opt.city}` : ""}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      ) : (
+        <div style={{ display: "grid", gap: "0.6rem" }}>
+          <input
+            type="text"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="Location label (e.g. Bride's home)"
+            style={pickerInputStyle}
+          />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
+            <input
+              type="text"
+              value={lat}
+              onChange={(e) => setLat(e.target.value)}
+              placeholder="Latitude"
+              inputMode="decimal"
+              style={pickerInputStyle}
+            />
+            <input
+              type="text"
+              value={lng}
+              onChange={(e) => setLng(e.target.value)}
+              placeholder="Longitude"
+              inputMode="decimal"
+              style={pickerInputStyle}
+            />
+          </div>
+        </div>
+      )}
+
+      <textarea
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        placeholder="Per-shoot location notes (optional)"
+        rows={2}
+        style={{ ...pickerInputStyle, marginTop: "0.6rem", resize: "vertical" }}
+      />
+
+      <div
+        style={{
+          display: "flex",
+          gap: "0.5rem",
+          justifyContent: "flex-end",
+          marginTop: "0.85rem",
+        }}
+      >
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={saving}
+          style={{ ...BTN_GHOST, padding: "0.55rem 1.1rem", fontSize: "0.7rem" }}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          style={{ ...BTN_PRIMARY, padding: "0.55rem 1.4rem", fontSize: "0.7rem" }}
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function formatHour12(h: number): string {
+  if (!Number.isFinite(h)) return "—";
+  const hour = ((h % 24) + 24) % 24;
+  const period = hour >= 12 ? "PM" : "AM";
+  const display = hour % 12 === 0 ? 12 : hour % 12;
+  return `${display}:00 ${period}`;
+}
+
+const permitChipStyle: React.CSSProperties = {
+  fontSize: "0.65rem",
+  letterSpacing: "0.12em",
+  textTransform: "uppercase",
+  background: "var(--olive-dim)",
+  color: "var(--olive)",
+  border: "0.5px solid var(--olive)",
+  padding: "0.2rem 0.55rem",
+};
+
+const metaChipStyle: React.CSSProperties = {
+  fontSize: "0.7rem",
+  color: "var(--charcoal-light)",
+  border: "0.5px solid var(--border-strong)",
+  padding: "0.2rem 0.55rem",
+  background: "var(--white)",
+};
+
+const modeBtn: React.CSSProperties = {
+  padding: "0.4rem 0.7rem",
+  fontSize: "0.65rem",
+  letterSpacing: "0.12em",
+  textTransform: "uppercase",
+  background: "var(--white)",
+  color: "var(--charcoal-light)",
+  border: "0.5px solid var(--border)",
+  cursor: "pointer",
+  fontFamily: "'Jost', sans-serif",
+};
+
+const modeBtnActive: React.CSSProperties = {
+  ...modeBtn,
+  background: "var(--charcoal)",
+  color: "var(--white)",
+  border: "0.5px solid var(--charcoal)",
+};
+
+const pickerInputStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "0.55rem 0.7rem",
+  fontSize: "0.85rem",
+  border: "0.5px solid var(--border)",
+  background: "var(--white)",
+  color: "var(--charcoal)",
+  fontFamily: "'Jost', sans-serif",
+  outline: "none",
+};

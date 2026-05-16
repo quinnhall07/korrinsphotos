@@ -8,6 +8,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { toast } from "@/components/ui/Toaster";
 import {
   markFilingFiledAction,
@@ -235,6 +236,20 @@ export function SalesTaxClient({
                     <td style={td}>{fmtUsd(f.taxableSalesCents)}</td>
                     <td style={td}>{fmtUsd(f.taxOwedCents)}</td>
                     <td style={td}>
+                      <Link
+                        href={`/admin/reports/sales-tax?from=${f.periodStartIso.slice(0, 10)}&to=${f.periodEndIso.slice(0, 10)}`}
+                        style={{
+                          fontSize: "0.7rem",
+                          padding: "0.3rem 0.6rem",
+                          background: "var(--white)",
+                          border: "0.5px solid var(--border-strong)",
+                          color: "var(--charcoal)",
+                          textDecoration: "none",
+                          marginRight: "0.4rem",
+                        }}
+                      >
+                        View ledger
+                      </Link>
                       <button
                         onClick={() => onMarkFiled(f.id)}
                         disabled={pending}
@@ -335,6 +350,20 @@ export function SalesTaxClient({
                     <td style={td}>{fmtUsd(f.taxOwedCents)}</td>
                     <td style={td}>{f.status}</td>
                     <td style={td}>
+                      <Link
+                        href={`/admin/reports/sales-tax?from=${f.periodStartIso.slice(0, 10)}&to=${f.periodEndIso.slice(0, 10)}`}
+                        style={{
+                          fontSize: "0.7rem",
+                          padding: "0.3rem 0.6rem",
+                          background: "var(--white)",
+                          border: "0.5px solid var(--border-strong)",
+                          color: "var(--charcoal)",
+                          textDecoration: "none",
+                          marginRight: "0.4rem",
+                        }}
+                      >
+                        View ledger
+                      </Link>
                       <button
                         onClick={() => onMarkFiled(f.id)}
                         disabled={pending}

@@ -8,6 +8,7 @@
 // histogram) and supports light interactivity for sorting the cohort grid.
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { formatDisplayDate } from "@/lib/date";
 
 export interface CohortRow {
@@ -172,12 +173,13 @@ export function First100ClientPage(props: First100Props) {
                 <Th width={70}>Projects</Th>
                 <Th width={210}>Pipeline</Th>
                 <Th onClick={() => onSort("lifetimeValueCents")} active={sortKey === "lifetimeValueCents"} dir={sortDir} width={110} align="right">LTV</Th>
+                <Th width={70} align="right">Open</Th>
               </tr>
             </thead>
             <tbody>
               {sortedRows.length === 0 && (
                 <tr>
-                  <td colSpan={7} style={{ padding: "2rem", textAlign: "center", color: "var(--charcoal-muted)" }}>
+                  <td colSpan={8} style={{ padding: "2rem", textAlign: "center", color: "var(--charcoal-muted)" }}>
                     No clients in the cohort yet — the dashboard will fill in as the first inquiries land.
                   </td>
                 </tr>
@@ -211,6 +213,20 @@ export function First100ClientPage(props: First100Props) {
                   </td>
                   <td style={{ ...cellStyle(), textAlign: "right", fontFamily: "'Cormorant Garamond', serif", fontSize: "1rem" }}>
                     {formatUsd(row.lifetimeValueCents)}
+                  </td>
+                  <td style={{ ...cellStyle(), textAlign: "right" }}>
+                    <Link
+                      href={`/admin/clients/${row.clientId}`}
+                      style={{
+                        fontSize: "0.7rem",
+                        letterSpacing: "0.1em",
+                        textTransform: "uppercase",
+                        color: "var(--olive)",
+                        textDecoration: "none",
+                      }}
+                    >
+                      Open →
+                    </Link>
                   </td>
                 </tr>
               ))}
@@ -451,7 +467,12 @@ function ReferrerBars({ rows }: { rows: TopReferrer[] }) {
         return (
           <div key={r.clientId} style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem" }}>
-              <span style={{ color: "var(--charcoal)" }}>{r.fullName}</span>
+              <Link
+                href={`/admin/clients/${r.clientId}`}
+                style={{ color: "var(--charcoal)", textDecoration: "none" }}
+              >
+                {r.fullName}
+              </Link>
               <span style={{ color: "var(--charcoal-muted)" }}>{r.referralCount}</span>
             </div>
             <div

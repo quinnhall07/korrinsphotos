@@ -20,6 +20,16 @@ import {
 } from "@/lib/db/clients";
 import { getProjectsByClientId, projectMessagesCol, type ProjectDoc, type ProjectStatus } from "@/lib/db/projects";
 import { invoicesCol, type InvoiceDoc, type InvoiceStatus } from "@/lib/db/invoices";
+import {
+  listDownloadsForClient,
+  type LeadMagnetDownloadDoc,
+} from "@/lib/db/lead-magnet-downloads";
+import {
+  listEnrollmentsByClient,
+  type SequenceEnrollmentDoc,
+} from "@/lib/db/sequence-enrollments";
+import { getLeadMagnet } from "@/lib/db/lead-magnets";
+import { getSequence } from "@/lib/db/sequences";
 import { formatDateTime, formatDisplayDate } from "@/lib/date";
 import { EditClientForm } from "./EditClientForm";
 
@@ -46,6 +56,10 @@ const STATUS_BADGE: Record<string, React.CSSProperties> = {
   DRAFT: { background: "#E5E7EB", color: "#374151" },
   OVERDUE: { background: "#FEE2E2", color: "#991B1B" },
   VOID: { background: "#E5E7EB", color: "#6B7280" },
+  ACTIVE: { background: "#D1FAE5", color: "#065F46" },
+  COMPLETED: { background: "#E0E7FF", color: "#3730A3" },
+  CANCELED: { background: "#E5E7EB", color: "#6B7280" },
+  FAILED: { background: "#FEE2E2", color: "#991B1B" },
 };
 
 export default async function ClientDetailPage(props: {
@@ -57,10 +71,42 @@ export default async function ClientDetailPage(props: {
   const client = await getClient(id);
   if (!client) notFound();
 
-  // Fan-out: projects + invoices in parallel.
-  const [projects, invoicesSnap] = await Promise.all([
+  // Fan-out: projects + invoices + acquisition reads in parallel.
+  const [projects, invoicesSnap, downloads, enrollments] = await Promise.all([
     getProjectsByClientId(id),
     invoicesCol().where("clientId", "==", id).get(),
+    listDownloadsForClient(id).catch(() => [] as LeadMagnetDownloadDoc[]),
+    listEnrollmentsByClient(id).catch(() => [] as SequenceEnrollmentDoc[]),
+  ]);
+
+  // Resolve magnet titles + sequence names for the Acquisition section. The
+  // sets are small (per-client downloads + enrollments) so a parallel fan-out
+  // is cheap; missing docs (deleted post-enrollment) are tolerated.
+  const magnetIds = Array.from(
+    new Set(downloads.map((d) => d.leadMagnetId).filter(Boolean))
+  );
+  const sequenceIds = Array.from(
+    new Set(enrollments.map((e) => e.sequenceId).filter(Boolean))
+  );
+  const [magnetTitles, sequenceNames] = await Promise.all([
+    Promise.all(magnetIds.map((mid) => getLeadMagnet(mid).catch(() => null))).then(
+      (arr) => {
+        const m = new Map<string, string>();
+        arr.forEach((doc, i) => {
+          if (doc) m.set(magnetIds[i], doc.title);
+        });
+        return m;
+      }
+    ),
+    Promise.all(sequenceIds.map((sid) => getSequence(sid).catch(() => null))).then(
+      (arr) => {
+        const m = new Map<string, string>();
+        arr.forEach((doc, i) => {
+          if (doc) m.set(sequenceIds[i], doc.name);
+        });
+        return m;
+      }
+    ),
   ]);
 
   const invoices: InvoiceDoc[] = invoicesSnap.docs.map(
@@ -118,6 +164,21 @@ export default async function ClientDetailPage(props: {
   let referrer: ClientDoc | null = null;
   if (client.referredBy) {
     referrer = await getClientByReferralCode(client.referredBy).catch(() => null);
+  }
+
+  // Time-to-first-inquiry: delta between firstTouchAt and the earliest
+  // project createdAt. Rendered as "Xd Yh" or "Yh" (or "—" if either anchor
+  // is missing or the project predates the touch).
+  const firstTouchMs = client.firstTouchAt?.toMillis?.() ?? 0;
+  const firstProjectMs = projects.length > 0
+    ? Math.min(...projects.map((p) => p.createdAt?.toMillis?.() ?? Number.POSITIVE_INFINITY))
+    : 0;
+  let timeToFirstInquiry = "—";
+  if (firstTouchMs > 0 && Number.isFinite(firstProjectMs) && firstProjectMs > firstTouchMs) {
+    const delta = firstProjectMs - firstTouchMs;
+    const days = Math.floor(delta / (24 * 60 * 60 * 1000));
+    const hours = Math.floor((delta % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+    timeToFirstInquiry = days > 0 ? `${days}d ${hours}h` : `${hours}h`;
   }
 
   const fullName = `${client.firstName ?? ""} ${client.lastName ?? ""}`.trim() || "—";
@@ -317,6 +378,242 @@ export default async function ClientDetailPage(props: {
                   <td style={tdStyle}>{formatDisplayDate(p.createdAt) ?? "—"}</td>
                 </tr>
               ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Acquisition */}
+      <section style={{ marginBottom: "1.5rem" }}>
+        <SectionHeader
+          title="Acquisition"
+          subtitle={`${downloads.length} download${downloads.length === 1 ? "" : "s"} · ${enrollments.length} enrollment${enrollments.length === 1 ? "" : "s"}`}
+        />
+
+        {/* First-touch detail */}
+        <div
+          style={{
+            border: "0.5px solid var(--border)",
+            background: "var(--white)",
+            padding: "1.25rem 1.5rem",
+            marginBottom: "1rem",
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+            gap: "1rem",
+          }}
+        >
+          <Meta label="Source" value={client.firstTouchSource ?? "—"} />
+          <Meta label="Medium" value={client.firstTouchMedium ?? "—"} />
+          <Meta label="Campaign" value={client.firstTouchCampaign ?? "—"} />
+          <div title={client.firstTouchLandingUrl ?? undefined}>
+            <p
+              style={{
+                fontSize: "0.6rem",
+                letterSpacing: "0.18em",
+                textTransform: "uppercase",
+                color: "var(--charcoal-muted)",
+                marginBottom: "0.3rem",
+              }}
+            >
+              Landing URL
+            </p>
+            <p
+              style={{
+                fontSize: "0.85rem",
+                color: "var(--charcoal)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {client.firstTouchLandingUrl ?? "—"}
+            </p>
+          </div>
+          <Meta
+            label="First touch"
+            value={formatDateTime(client.firstTouchAt) ?? "—"}
+          />
+          <Meta label="Time to first inquiry" value={timeToFirstInquiry} />
+        </div>
+
+        {/* Lead magnet downloads */}
+        <div
+          style={{
+            border: "0.5px solid var(--border)",
+            background: "var(--white)",
+            marginBottom: "1rem",
+          }}
+        >
+          <p
+            style={{
+              padding: "0.85rem 1rem",
+              fontSize: "0.62rem",
+              letterSpacing: "0.18em",
+              textTransform: "uppercase",
+              color: "var(--charcoal-muted)",
+              borderBottom: "0.5px solid var(--border-strong)",
+              margin: 0,
+            }}
+          >
+            Lead magnet downloads
+          </p>
+          <table
+            style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              fontSize: "0.85rem",
+            }}
+          >
+            <thead>
+              <tr>
+                {["Magnet", "Downloaded", "Source", "Medium", "Campaign"].map((h) => (
+                  <th key={h} style={thStyle}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {downloads.length === 0 && (
+                <tr>
+                  <td colSpan={5} style={emptyCellStyle}>
+                    No lead-magnet downloads recorded for this client.
+                  </td>
+                </tr>
+              )}
+              {downloads.map((d) => {
+                const title =
+                  magnetTitles.get(d.leadMagnetId) ?? d.leadMagnetSlug ?? "—";
+                return (
+                  <tr key={d.id}>
+                    <td style={tdStyle}>
+                      <Link
+                        href={`/admin/lead-magnets/${d.leadMagnetId}`}
+                        style={{
+                          color: "var(--charcoal)",
+                          textDecoration: "none",
+                          fontWeight: 500,
+                        }}
+                      >
+                        {title}
+                      </Link>
+                    </td>
+                    <td style={tdStyle}>
+                      {formatDateTime(d.createdAt) ?? "—"}
+                    </td>
+                    <td style={tdStyle}>{d.firstTouchSource ?? "—"}</td>
+                    <td style={tdStyle}>{d.firstTouchMedium ?? "—"}</td>
+                    <td style={tdStyle}>{d.firstTouchCampaign ?? "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Sequence enrollments */}
+        <div
+          style={{
+            border: "0.5px solid var(--border)",
+            background: "var(--white)",
+          }}
+        >
+          <p
+            style={{
+              padding: "0.85rem 1rem",
+              fontSize: "0.62rem",
+              letterSpacing: "0.18em",
+              textTransform: "uppercase",
+              color: "var(--charcoal-muted)",
+              borderBottom: "0.5px solid var(--border-strong)",
+              margin: 0,
+            }}
+          >
+            Sequence enrollments
+          </p>
+          <table
+            style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              fontSize: "0.85rem",
+            }}
+          >
+            <thead>
+              <tr>
+                {["Sequence", "Status", "Step", "Next run", "Project"].map((h) => (
+                  <th key={h} style={thStyle}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {enrollments.length === 0 && (
+                <tr>
+                  <td colSpan={5} style={emptyCellStyle}>
+                    No active or past sequence enrollments.
+                  </td>
+                </tr>
+              )}
+              {enrollments.map((e) => {
+                const name =
+                  sequenceNames.get(e.sequenceId) ??
+                  `${e.sequenceId.slice(0, 8)}…`;
+                return (
+                  <tr key={e.id}>
+                    <td style={tdStyle}>
+                      <Link
+                        href={`/admin/sequences/${e.sequenceId}`}
+                        style={{
+                          color: "var(--charcoal)",
+                          textDecoration: "none",
+                          fontWeight: 500,
+                        }}
+                      >
+                        {name}
+                      </Link>
+                      {e.lastError && (
+                        <div
+                          style={{
+                            fontSize: "0.7rem",
+                            color: "var(--charcoal-muted)",
+                            marginTop: "0.2rem",
+                          }}
+                        >
+                          {e.lastError}
+                        </div>
+                      )}
+                    </td>
+                    <td style={tdStyle}>
+                      <Badge
+                        label={
+                          e.status.charAt(0) +
+                          e.status.slice(1).toLowerCase()
+                        }
+                        variant={e.status}
+                      />
+                    </td>
+                    <td style={tdStyle}>{e.currentStep + 1}</td>
+                    <td style={tdStyle}>{formatDateTime(e.nextRunAt) ?? "—"}</td>
+                    <td style={tdStyle}>
+                      {e.projectId ? (
+                        <Link
+                          href={`/admin/projects/${e.projectId}`}
+                          style={{
+                            fontSize: "0.78rem",
+                            color: "var(--olive)",
+                            textDecoration: "none",
+                          }}
+                        >
+                          View →
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

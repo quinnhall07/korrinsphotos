@@ -6,6 +6,7 @@
 // to `lib/domain/lead-magnets > gateLeadMagnetDownload`.
 
 import { cookies, headers } from "next/headers";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import {
   gateLeadMagnetDownload,
@@ -67,6 +68,12 @@ export async function gateAction(
       ip,
       userAgent,
     });
+    try {
+      revalidatePath("/admin/clients");
+      revalidatePath(`/admin/lead-magnets/${magnet.id}`);
+    } catch {
+      // best-effort
+    }
     return {
       success: true,
       downloadUrl,

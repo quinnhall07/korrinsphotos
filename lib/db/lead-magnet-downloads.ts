@@ -63,3 +63,21 @@ export async function countDownloadsForMagnet(
     .get();
   return snap.data().count;
 }
+
+/**
+ * Lists every recorded download for a given client, newest first.
+ * Requires composite index: `clientId asc + createdAt desc`.
+ */
+export async function listDownloadsForClient(
+  clientId: string,
+  limit: number = 50
+): Promise<LeadMagnetDownloadDoc[]> {
+  const snap = await leadMagnetDownloadsCol()
+    .where("clientId", "==", clientId)
+    .orderBy("createdAt", "desc")
+    .limit(limit)
+    .get();
+  return snap.docs.map(
+    (d) => ({ id: d.id, ...d.data() } as LeadMagnetDownloadDoc)
+  );
+}

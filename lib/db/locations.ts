@@ -80,6 +80,101 @@ export async function listLocations(): Promise<LocationDoc[]> {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() } as LocationDoc));
 }
 
+/**
+ * Wave B Feature 2 — lean projection for the project workspace location
+ * picker combobox. Avoids dragging notes / tags / bestLightWindow into the
+ * client bundle when all the typeahead needs is the display label.
+ */
+export async function listLocationsForPicker(): Promise<
+  Pick<LocationDoc, "id" | "name" | "type" | "city">[]
+> {
+  const snap = await locationsCol().orderBy("name", "asc").get();
+  return snap.docs.map((d) => {
+    const data = d.data();
+    return {
+      id: d.id,
+      name: typeof data.name === "string" ? data.name : "",
+      type: (data.type as LocationType) ?? "OTHER",
+      city: typeof data.city === "string" ? data.city : undefined,
+    };
+  });
+}
+
+/**
+ * Wave B Feature 2 — hydrate the events in `sampleEventIds` into lightweight
+ * project rows for the location detail page's "Used on projects" section.
+ *
+ * `recordVisit` writes the *event* id into `sampleEventIds`. To get from
+ * event → project we read each event doc (best-effort) and follow its
+ * `projectId` pointer. Returns `[]` when the location has no recorded visits
+ * or when every lookup fails.
+ */
+export async function listProjectsAtLocation(
+  _locationId: string,
+  eventIds: string[]
+): Promise<{ id: string; title: string; shootDate: string | null; status: string }[]> {
+  if (!Array.isArray(eventIds) || eventIds.length === 0) return [];
+
+  // Hard-cap the fan-out; if a location has hundreds of recorded shoots the
+  // detail page should not pay for all of them in a single render.
+  const slice = eventIds.slice(0, 50);
+
+  const eventDocs = await Promise.all(
+    slice.map(async (eventId) => {
+      try {
+        const snap = await adminDb.collection("events").doc(eventId).get();
+        if (!snap.exists) return null;
+        const data = snap.data() ?? {};
+        const projectId =
+          typeof data.projectId === "string" ? data.projectId : null;
+        return projectId ? { eventId, projectId } : null;
+      } catch {
+        return null;
+      }
+    })
+  );
+
+  const seen = new Set<string>();
+  const rows: { id: string; title: string; shootDate: string | null; status: string }[] = [];
+
+  for (const row of eventDocs) {
+    if (!row) continue;
+    if (seen.has(row.projectId)) continue;
+    seen.add(row.projectId);
+
+    try {
+      const snap = await adminDb.collection("projects").doc(row.projectId).get();
+      if (!snap.exists) continue;
+      const data = snap.data() ?? {};
+      const shootDate = data.shootDate;
+      let shootDateIso: string | null = null;
+      if (shootDate) {
+        try {
+          shootDateIso =
+            typeof shootDate?.toDate === "function"
+              ? shootDate.toDate().toISOString()
+              : typeof shootDate === "string"
+                ? shootDate
+                : null;
+        } catch {
+          shootDateIso = null;
+        }
+      }
+
+      rows.push({
+        id: row.projectId,
+        title: typeof data.title === "string" ? data.title : "Untitled project",
+        shootDate: shootDateIso,
+        status: typeof data.status === "string" ? data.status : "",
+      });
+    } catch {
+      // Skip; surface what we have.
+    }
+  }
+
+  return rows;
+}
+
 export async function createLocation(
   data: Omit<LocationDoc, "id" | "createdAt" | "updatedAt">
 ): Promise<LocationDoc> {

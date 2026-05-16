@@ -73,6 +73,12 @@ export async function listInboxItems(
     archivedOnly?: boolean;
     /** When true, include archived rows alongside active ones (rare). */
     includeArchived?: boolean;
+    /**
+     * When set, narrow the result to inbox rows whose `projectId` matches.
+     * Filtered in-memory (same 500-row read horizon) so this doesn't require
+     * a composite index. Used by the project workspace InboxPill.
+     */
+    projectId?: string;
   } = {}
 ): Promise<InboxItemDoc[]> {
   const {
@@ -80,6 +86,7 @@ export async function listInboxItems(
     includeSnoozed = false,
     archivedOnly = false,
     includeArchived = false,
+    projectId,
   } = opts;
 
   // Fetch broadly (single orderBy) and filter in-memory to avoid composite-index
@@ -90,6 +97,7 @@ export async function listInboxItems(
   const all = snap.docs.map((d) => ({ id: d.id, ...d.data() } as InboxItemDoc));
 
   return all.filter((item) => {
+    if (projectId && item.projectId !== projectId) return false;
     const isArchived = !!item.archivedAt;
     if (archivedOnly) return isArchived;
     if (!includeArchived && isArchived) return false;
