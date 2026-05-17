@@ -10,13 +10,21 @@ import Link from "next/link";
 import { deleteEvent } from "./actions";
 import { toast } from "@/components/ui/Toaster";
 
-type EventStatus = "draft" | "scheduled" | "delivered" | "archived";
+// Mirrors EventStatus in lib/db/events.ts. Duplicated here because this is a
+// "use client" file and cannot import the server-only db module.
+type EventStatus =
+  | "UPCOMING"
+  | "ACTIVE"
+  | "COMPLETED"
+  | "DELIVERED"
+  | "ARCHIVED";
 
 const STATUS_BADGES: Record<EventStatus, { bg: string; color: string; label: string }> = {
-  draft: { bg: "rgba(42,42,40,0.08)", color: "var(--charcoal-muted)", label: "Draft" },
-  scheduled: { bg: "#DBEAFE", color: "#1D4ED8", label: "Scheduled" },
-  delivered: { bg: "#D1FAE5", color: "#065F46", label: "Delivered" },
-  archived: { bg: "#FEF3C7", color: "#92400E", label: "Archived" },
+  UPCOMING: { bg: "#DBEAFE", color: "#1D4ED8", label: "Upcoming" },
+  ACTIVE: { bg: "#FEF3C7", color: "#92400E", label: "Active" },
+  COMPLETED: { bg: "#D1FAE5", color: "#065F46", label: "Completed" },
+  DELIVERED: { bg: "#E8EBD8", color: "#3F5311", label: "Delivered" },
+  ARCHIVED: { bg: "#E5E7EB", color: "#4B5563", label: "Archived" },
 };
 
 export interface SerializedEventRow {
@@ -139,7 +147,7 @@ export function EventsTable({ events }: EventsTableProps) {
               </tr>
             )}
             {filtered.map((ev) => {
-              const badge = STATUS_BADGES[ev.status] ?? STATUS_BADGES.draft;
+              const badge = STATUS_BADGES[ev.status] ?? STATUS_BADGES.UPCOMING;
               return (
                 <tr key={ev.id}>
                   <td style={tdStyle}>

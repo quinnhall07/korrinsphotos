@@ -6,15 +6,13 @@
 
 import { useState } from "react";
 import { MasonryGrid, type MasonryPhoto } from "@/components/MasonryGrid";
+import { PORTFOLIO_CATEGORIES, type PortfolioCategory } from "./categories";
 
-type Category = "all" | "wedding" | "portrait" | "editorial" | "landscape";
+type Category = "all" | PortfolioCategory;
 
 const TABS: { label: string; value: Category }[] = [
   { label: "All Work", value: "all" },
-  { label: "Weddings", value: "wedding" },
-  { label: "Portraits", value: "portrait" },
-  { label: "Editorial", value: "editorial" },
-  { label: "Landscape", value: "landscape" },
+  ...PORTFOLIO_CATEGORIES.map((c) => ({ label: c.label, value: c.value })),
 ];
 
 export function PortfolioClient({ photos }: { photos: MasonryPhoto[] }) {

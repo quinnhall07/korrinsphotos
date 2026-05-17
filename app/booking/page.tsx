@@ -1,9 +1,17 @@
 // app/booking/page.tsx
-// Booking inquiry page. The form submits via a Next.js Server Action that
-// writes directly to the BookingInquiry table — no API route needed.
+// Booking inquiry page. The form is a 3-step Client Component that submits
+// via the `submitBooking` Server Action (no API route involved).
+//
+// Accepts these query params, all optional, all forwarded to the form:
+//   - `?package=mini|story|day` — from /investment (resolves to sessionType).
+//   - `?sessionType=<Wedding|Portrait|…>` — direct sessionType override (e.g.
+//     from a /c/<slug> campaign CTA).
+//   - `?campaign=<slug>` — informational only; the server reads the cookie
+//     written by `/c/[slug]/page.tsx` for attribution.
 
 import type { Metadata } from "next";
-import { BookingForm } from "./BookingForm";
+import { BookingFormSteps } from "./BookingFormSteps";
+import { findPackageById, type BookingSessionType } from "@/app/investment/packages";
 
 export const metadata: Metadata = {
   title: "Booking",
@@ -11,7 +19,36 @@ export const metadata: Metadata = {
     "Book a photography session — weddings, portraits, editorial, and more.",
 };
 
-export default function BookingPage() {
+const BOOKING_SESSION_TYPES: readonly BookingSessionType[] = [
+  "Wedding",
+  "Portrait",
+  "Editorial",
+  "Family",
+  "Engagement",
+  "Commercial",
+];
+
+function normaliseSessionType(raw: string | undefined): BookingSessionType | null {
+  if (!raw) return null;
+  const match = BOOKING_SESSION_TYPES.find(
+    (t) => t.toLowerCase() === raw.trim().toLowerCase()
+  );
+  return match ?? null;
+}
+
+export default async function BookingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ package?: string; sessionType?: string; campaign?: string }>;
+}) {
+  const { package: packageParam, sessionType: sessionTypeParam } = await searchParams;
+  // `?package=` wins (it's the older entry point and already maps reliably);
+  // `?sessionType=` is a campaign-level direct override.
+  const initialSessionType =
+    findPackageById(packageParam)?.sessionType ??
+    normaliseSessionType(sessionTypeParam) ??
+    null;
+
   return (
     <div style={{ paddingTop: "72px" }} className="page-fade-in">
       <div
@@ -83,7 +120,7 @@ export default function BookingPage() {
             discuss availability and details.
           </p>
 
-          <BookingForm />
+          <BookingFormSteps initialSessionType={initialSessionType} />
         </div>
       </div>
     </div>

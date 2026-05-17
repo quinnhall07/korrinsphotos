@@ -7,6 +7,7 @@ import Link from "next/link";
 import { requireAdmin } from "@/lib/session";
 import { adminDb } from "@/lib/firebase-admin";
 import { buildCdnUrl } from "@/lib/cloudflare";
+import { getClient } from "@/lib/db/clients";
 import { UploadZone } from "./UploadZone";
 import { InvitePanel } from "./InvitePanel";
 import { PhotoGrid } from "./PhotoGrid";
@@ -14,9 +15,27 @@ import { AddToCalendarButton } from "./AddToCalendarButton";
 import { TitleEditor } from "./TitleEditor";
 import { ShootDateEditor } from "./ShootDateEditor";
 import { EventActions } from "./EventActions";
+import { DownloadPinEditor } from "./DownloadPinEditor";
+import { NotifyGalleryReadyButton } from "./NotifyGalleryReadyButton";
+import { formatDisplayDate } from "@/lib/date";
+import type { EventStatus } from "@/lib/db/events";
 import type { Metadata } from "next";
 
 export const dynamic = "force-dynamic";
+
+const VALID_EVENT_STATUSES: ReadonlySet<EventStatus> = new Set([
+  "UPCOMING",
+  "ACTIVE",
+  "COMPLETED",
+  "DELIVERED",
+  "ARCHIVED",
+]);
+
+function coerceEventStatus(raw: unknown): EventStatus {
+  return typeof raw === "string" && VALID_EVENT_STATUSES.has(raw as EventStatus)
+    ? (raw as EventStatus)
+    : "UPCOMING";
+}
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -39,6 +58,8 @@ type Photo = {
   label: string | null;
   cloudflareImageId: string;
   r2Key: string | null;
+  favoritedBy: string[];
+  tags: string[];
 };
 
 async function getEventData(eventId: string) {
@@ -58,6 +79,8 @@ async function getEventData(eventId: string) {
       label: data.label ?? null,
       cloudflareImageId: data.cloudflareImageId as string,
       r2Key: data.r2Key ?? null,
+      favoritedBy: (data.favoritedBy as string[] | undefined) ?? [],
+      tags: (data.tags as string[] | undefined) ?? [],
     };
   });
 
@@ -68,34 +91,90 @@ async function getEventData(eventId: string) {
       return {
         userId: data.userId as string,
         email: (userDoc.data()?.email as string) ?? "unknown",
-        invitedAt: data.createdAt?.toDate
-          ? data.createdAt.toDate().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-          : "—",
+        invitedAt: formatDisplayDate(data.createdAt) ?? "—",
       };
+    })
+  );
+
+  // Phase 2.5 — resolve every clientId surfaced by `photos[].favoritedBy`
+  // into a display label so the favorites modal can render real names. The
+  // `admin:<uid>` namespace (used when an admin previews-as-client) falls
+  // back to a generic label so we don't hit Firestore for non-existent docs.
+  const allClientIds = new Set<string>();
+  for (const p of photos) {
+    for (const cid of p.favoritedBy) allClientIds.add(cid);
+  }
+  const clientLabels: Record<string, string> = {};
+  await Promise.all(
+    Array.from(allClientIds).map(async (cid) => {
+      if (cid.startsWith("admin:")) {
+        clientLabels[cid] = "Admin preview";
+        return;
+      }
+      try {
+        const snap = await adminDb.collection("clients").doc(cid).get();
+        if (snap.exists) {
+          const d = snap.data()!;
+          const name = `${(d.firstName as string) ?? ""} ${(d.lastName as string) ?? ""}`.trim();
+          clientLabels[cid] = name || (d.email as string) || cid;
+        } else {
+          clientLabels[cid] = cid;
+        }
+      } catch {
+        clientLabels[cid] = cid;
+      }
     })
   );
 
   const eventData = eventDoc.data()!;
 
   // Parse shoot dates
-  const shootDate = eventData.shootDate?.toDate?.() ?? null;
-  const shootEndDate = eventData.shootEndDate?.toDate?.() ?? null;
-  const calendarDate = shootDate ?? eventData.createdAt?.toDate?.() ?? new Date();
+  const calendarDate = eventData.startDate
+    ? new Date(eventData.startDate + (eventData.startTime ? `T${eventData.startTime}` : "T12:00:00"))
+    : (eventData.createdAt?.toDate?.() ?? new Date());
+
+  // UX P0 (g) — Resolve linked Client display name for the header chip.
+  // Only renders when the event has a clientId; the "View project" link
+  // requires both clientId AND projectId.
+  const linkedClientId = (eventData.clientId as string | undefined) ?? null;
+  const linkedProjectId = (eventData.projectId as string | undefined) ?? null;
+  let linkedClientFirstName: string | null = null;
+  if (linkedClientId) {
+    try {
+      const linkedClient = await getClient(linkedClientId);
+      if (linkedClient) {
+        const fn = (linkedClient.firstName ?? "").trim();
+        linkedClientFirstName = fn.length > 0
+          ? fn
+          : (linkedClient.email ?? null);
+      }
+    } catch {
+      // Best-effort: leave linkedClientFirstName null on lookup failure.
+    }
+  }
 
   return {
     event: {
       id: eventId,
       title: eventData.title as string,
+      status: coerceEventStatus(eventData.status),
       createdAt: eventData.createdAt?.toDate?.() ?? new Date(),
-      createdAtFormatted: eventData.createdAt?.toDate?.()?.toLocaleDateString("en-US", {
-        month: "long", day: "numeric", year: "numeric",
-      }) ?? "—",
-      shootDate: shootDate ? shootDate.toISOString().slice(0, 10) : "",
-      shootEndDate: shootEndDate ? shootEndDate.toISOString().slice(0, 10) : "",
+      createdAtFormatted: formatDisplayDate(eventData.createdAt) ?? "—",
+      startDate: (eventData.startDate as string) || "",
+      endDate: (eventData.endDate as string) || "",
+      startTime: (eventData.startTime as string) || "",
+      endTime: (eventData.endTime as string) || "",
+      isMultiDay: (eventData.isMultiDay as boolean) || false,
+      location: (eventData.location as string) || "",
       calendarDate: calendarDate.toISOString(),
+      downloadPin: (eventData.downloadPin as string | undefined) ?? null,
+      clientId: linkedClientId,
+      projectId: linkedProjectId,
+      clientFirstName: linkedClientFirstName,
     },
     photos,
     clients,
+    clientLabels,
   };
 }
 
@@ -106,7 +185,7 @@ export default async function EventDetailPage({ params }: Props) {
   const data = await getEventData(id);
   if (!data) notFound();
 
-  const { event, photos, clients } = data;
+  const { event, photos, clients, clientLabels } = data;
 
   return (
     <div className="page-fade-in">
@@ -121,10 +200,34 @@ export default async function EventDetailPage({ params }: Props) {
             <span style={{ color: "var(--charcoal)" }}>{event.title}</span>
           </div>
           <TitleEditor eventId={event.id} initialTitle={event.title} />
+          {/* UX P0 (g) — Project linkage chip. Shown only when the event has
+              been auto-created from a Project (clientId present). The "View
+              project" link requires both clientId AND projectId. */}
+          {event.clientId && event.clientFirstName ? (
+            <p style={{ fontSize: "0.8rem", color: "var(--charcoal-muted)", marginTop: "0.5rem" }}>
+              Linked to <span style={{ color: "var(--charcoal)" }}>{event.clientFirstName}</span>
+              {event.projectId ? (
+                <>
+                  {" — "}
+                  <Link
+                    href={`/admin/projects/${event.projectId}`}
+                    style={{ color: "var(--olive)", textDecoration: "none" }}
+                  >
+                    View project →
+                  </Link>
+                </>
+              ) : null}
+            </p>
+          ) : null}
           <ShootDateEditor
             eventId={event.id}
-            initialShootDate={event.shootDate}
-            initialShootEndDate={event.shootEndDate}
+            initialStartDate={event.startDate}
+            initialEndDate={event.endDate}
+            initialStartTime={event.startTime}
+            initialEndTime={event.endTime}
+            initialIsMultiDay={event.isMultiDay}
+            initialLocation={event.location}
+            initialStatus={event.status}
           />
           <p style={{ fontSize: "0.8rem", color: "var(--charcoal-muted)", marginTop: "0.5rem" }}>
             {photos.length} photo{photos.length !== 1 ? "s" : ""} · {clients.length} client{clients.length !== 1 ? "s" : ""} · Created {event.createdAtFormatted}
@@ -133,8 +236,32 @@ export default async function EventDetailPage({ params }: Props) {
 
         {/* Action buttons */}
         <div style={{ display: "flex", gap: "0.75rem", flexShrink: 0, flexWrap: "wrap" }}>
+          {/* UX P0 (c) — Notify client when gallery is marked DELIVERED. */}
+          {event.status === "DELIVERED" && event.clientId && event.clientFirstName ? (
+            <NotifyGalleryReadyButton
+              eventId={event.id}
+              clientFirstName={event.clientFirstName}
+            />
+          ) : null}
+
           {/* Google Calendar button — client component */}
           <AddToCalendarButton eventTitle={event.title} eventDate={event.calendarDate} />
+
+          <Link
+            href={`/admin/events/${event.id}/analytics`}
+            style={{
+              display: "inline-block",
+              padding: "0.6rem 1.4rem",
+              fontSize: "0.68rem",
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+              color: "var(--charcoal)",
+              border: "0.5px solid var(--border-strong)",
+              textDecoration: "none",
+            }}
+          >
+            View analytics
+          </Link>
 
           <Link
             href={`/admin/events/${event.id}/gallery`}
@@ -186,6 +313,9 @@ export default async function EventDetailPage({ params }: Props) {
         </div>
       </div>
 
+      {/* Phase 2.6 — Download PIN gate */}
+      <DownloadPinEditor eventId={event.id} initialPin={event.downloadPin} />
+
       {/* Client access panel */}
       <InvitePanel eventId={event.id} clients={clients} />
 
@@ -198,7 +328,7 @@ export default async function EventDetailPage({ params }: Props) {
             </span>
           </div>
           <div style={{ padding: "1rem" }}>
-            <PhotoGrid eventId={event.id} photos={photos} />
+            <PhotoGrid eventId={event.id} photos={photos} clientLabels={clientLabels} />
           </div>
         </div>
       )}

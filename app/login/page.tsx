@@ -7,6 +7,7 @@
 //   CLIENT → /gallery
 
 import type { Metadata } from "next";
+import Link              from "next/link";
 import { redirect }      from "next/navigation";
 import { getSessionUser } from "@/lib/session";
 import { adminDb }        from "@/lib/firebase-admin";
@@ -30,7 +31,7 @@ export default async function LoginPage({
     try {
       const userDoc = await adminDb.collection("users").doc(session.uid).get();
       const role = userDoc.exists ? (userDoc.data()?.role as string) : null;
-      redirect(role === "ADMIN" ? "/admin" : "/gallery");
+      redirect(role === "ADMIN" ? "/admin" : "/portal/router");
     } catch {
       // Firestore unavailable — fall back to JWT claim
       redirect(session["role"] === "ADMIN" ? "/admin" : "/gallery");
@@ -149,9 +150,9 @@ export default async function LoginPage({
               >
                 Are you the photographer?
               </p>
-              <a href="/admin" style={devLink}>Admin Access</a>
+              <Link href="/admin" style={devLink}>Admin Access</Link>
               &nbsp;
-              <a href="/gallery" style={devLink}>Demo Client View</a>
+              <Link href="/gallery" style={devLink}>Demo Client View</Link>
             </div>
           )}
         </div>

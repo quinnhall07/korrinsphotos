@@ -4,6 +4,7 @@ node_modules/
 # Next.js build output
 .next/
 out/
+tsconfig.tsbuildinfo
 
 # Environment variables
 .env
@@ -26,3 +27,7 @@ Thumbs.db
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Claude Code local settings
+.claude/local/
+.claude/settings.local.json

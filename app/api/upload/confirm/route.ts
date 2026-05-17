@@ -4,7 +4,8 @@
 
 import { NextRequest, NextResponse }          from "next/server";
 import { getSessionUser }                         from "@/lib/session";
-import { uploadToCloudflareImages }           from "@/lib/cloudflare";
+import { uploadToCloudflareImages }           from "@/lib/storage/images";
+import { generatePresignedGetUrl }            from "@/lib/storage/r2";
 import { adminDb }                            from "@/lib/firebase-admin";
 import { FieldValue }                         from "firebase-admin/firestore";
 import { z }                                  from "zod";
@@ -30,11 +31,16 @@ export async function POST(req: NextRequest) {
 
   const { key, eventId, label, category } = parsed.data;
 
-  const r2ObjectUrl = `https://${process.env.CLOUDFLARE_R2_BUCKET_NAME}.${process.env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com/${key}`;
+  // Presigned GET URL works on both public and private R2 buckets and avoids env coupling
+  // to the bucket's public-access configuration. 60s TTL is plenty for Cloudflare Images
+  // to fetch the object server-side via upload-from-URL.
+  const r2ObjectUrl = await generatePresignedGetUrl(key, 60);
 
   const { imageId, deliveryUrl } = await uploadToCloudflareImages(r2ObjectUrl, { eventId, label: label ?? "" });
 
   // Write photo as a subcollection document under the event
+  // r2Key is persisted so the object can be cleaned up on photo/event delete
+  // (parity with the multipart pipeline's `storageKey`).
   const photoRef = await adminDb
     .collection("events")
     .doc(eventId)
@@ -42,6 +48,7 @@ export async function POST(req: NextRequest) {
     .add({
       cloudflareUrl:     deliveryUrl,
       cloudflareImageId: imageId,
+      r2Key:             key,
       label:             label ?? null,
       category:          category ?? null,
       uploadedAt:        FieldValue.serverTimestamp(),

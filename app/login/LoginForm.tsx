@@ -17,12 +17,15 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   fetchSignInMethodsForEmail,
+  sendPasswordResetEmail,
   type AuthProvider,
 } from "firebase/auth";
 import { firebaseAuth, requireFirebaseAuth } from "@/lib/firebase";
 import { useAuth } from "@/components/AuthProvider";
 
 const googleProvider = new GoogleAuthProvider();
+googleProvider.addScope("email");
+googleProvider.addScope("profile");
 const microsoftProvider = new OAuthProvider("microsoft.com");
 microsoftProvider.addScope("email");
 microsoftProvider.addScope("profile");
@@ -118,9 +121,42 @@ export function LoginForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [activeProvider, setActiveProvider] = useState<string | null>(null);
 
-  // Role-aware redirect helper
+  const [resetSent, setResetSent] = useState(false);
+  const [resetSending, setResetSending] = useState(false);
+
+  // Role-aware redirect helper.
+  // CLIENT users land on /portal/router which auto-routes to their single
+  // project (or a chooser if multiple) — the portal is the canonical client
+  // home, not the raw gallery index.
   function redirectForRole(role: string) {
-    router.push(role === "ADMIN" ? "/admin" : "/gallery");
+    router.push(role === "ADMIN" ? "/admin" : "/portal/router");
+  }
+
+  // Email a password-reset link via Firebase.
+  async function handleForgotPassword() {
+    setGlobalError(null);
+    setEmailError(null);
+    if (!email) {
+      setEmailError("Enter your email above first, then click Forgot password.");
+      return;
+    }
+    setResetSending(true);
+    try {
+      const auth = requireFirebaseAuth();
+      await sendPasswordResetEmail(auth, email);
+      setResetSent(true);
+    } catch (err: unknown) {
+      const code = (err as { code?: string }).code;
+      // Don't leak whether the email exists; show the same success message
+      // for security parity unless the email itself is invalid.
+      if (code === "auth/invalid-email") {
+        setEmailError("Please enter a valid email address.");
+      } else {
+        setResetSent(true);
+      }
+    } finally {
+      setResetSending(false);
+    }
   }
 
   // ── OAuth (Google / Microsoft) ─────────────────────────────────────────────
@@ -377,6 +413,35 @@ export function LoginForm() {
 
         {passwordError && (
           <p style={{ color: "#B45309", fontSize: "0.75rem", marginBottom: "0.75rem" }}>{passwordError}</p>
+        )}
+
+        {!isSignUp && !resetSent && (
+          <div style={{ textAlign: "right", marginBottom: "0.85rem" }}>
+            <button
+              type="button"
+              onClick={handleForgotPassword}
+              disabled={isLoading || resetSending}
+              style={{
+                background: "transparent",
+                border: "none",
+                padding: 0,
+                fontFamily: "'Jost', sans-serif",
+                fontSize: "0.74rem",
+                color: "var(--olive)",
+                cursor: isLoading || resetSending ? "not-allowed" : "pointer",
+                textDecoration: "underline",
+                letterSpacing: "0.04em",
+              }}
+            >
+              {resetSending ? "Sending…" : "Forgot password?"}
+            </button>
+          </div>
+        )}
+
+        {resetSent && (
+          <div style={{ padding: "0.65rem 0.85rem", background: "var(--olive-dim)", borderLeft: "2px solid var(--olive)", fontSize: "0.78rem", color: "var(--charcoal)", marginBottom: "0.85rem", lineHeight: 1.55 }}>
+            If an account exists for that email, a reset link is on the way. Check your inbox (and spam folder).
+          </div>
         )}
 
         {globalError && (

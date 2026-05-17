@@ -8,8 +8,8 @@ import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { adminDb } from "@/lib/firebase-admin";
 import { buildCdnUrl } from "@/lib/cloudflare";
-import { GalleryViewer } from "./GalleryViewer";
-import type { MasonryPhoto } from "@/components/MasonryGrid";
+import { getClientByEmail } from "@/lib/db/clients";
+import { GalleryViewer, type GalleryPhoto } from "./GalleryViewer";
 import type { Metadata } from "next";
 
 export const dynamic = "force-dynamic";
@@ -23,22 +23,32 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return { title, description: `Private photo gallery — ${title}` };
 }
 
-async function getEventPhotos(eventId: string): Promise<MasonryPhoto[]> {
+async function getEventPhotos(eventId: string): Promise<GalleryPhoto[]> {
   const snap = await adminDb
     .collection("events")
     .doc(eventId)
     .collection("photos")
+    .where("galleryReady", "==", true)
     .orderBy("uploadedAt", "asc")
     .get();
 
   return snap.docs.map((doc) => {
     const data = doc.data();
+    const cloudflareImageId = data.cloudflareImageId as string | undefined;
     return {
       id: doc.id,
-      src: buildCdnUrl(data.cloudflareImageId, "gallery"),
-      thumbnailSrc: buildCdnUrl(data.cloudflareImageId, "thumbnail"),
+      src: cloudflareImageId ? buildCdnUrl(cloudflareImageId, "gallery") : "",
+      thumbnailSrc: cloudflareImageId
+        ? buildCdnUrl(cloudflareImageId, "thumbnail")
+        : undefined,
       label: data.label ?? undefined,
       category: data.category ?? undefined,
+      favoritedBy: (data.favoritedBy as string[] | undefined) ?? [],
+      tags: (data.tags as string[] | undefined) ?? [],
+      cloudflareImageId: cloudflareImageId ?? null,
+      // Phase 2.6 — surface whether an R2 original exists (per-photo
+      // download menu uses this to enable/disable the "Original" option).
+      hasOriginal: Boolean(data.r2Key || data.storageKey),
     };
   });
 }
@@ -62,6 +72,62 @@ export default async function GalleryEventPage({ params }: Props) {
   const eventData = eventDoc.data()!;
   const photos = await getEventPhotos(id);
 
+  // Phase 2.5 — resolve session.email → clientId so the viewer can mark
+  // hearts as active for the signed-in client. Admins share an "admin:<uid>"
+  // namespace so admin-preview favorites don't pollute a real client's list.
+  let viewerClientId: string | null = null;
+  if (session.role === "ADMIN") {
+    viewerClientId = `admin:${session.uid}`;
+  } else if (session.email) {
+    const client = await getClientByEmail(session.email);
+    viewerClientId = client?.id ?? null;
+  }
+
+  // Phase 2.11 NPS surface: only ADMIN previews and the actual project
+  // owner should see the rating widget. We pull the existing rating (if
+  // any) here so the viewer can decide whether to render or hide the UI.
+  const eventStatus = (eventData.status as string | undefined) ?? null;
+  const projectId = (eventData.projectId as string | undefined) ?? null;
+  let existingNps: 1 | 2 | 3 | 4 | 5 | null = null;
+  let canSubmitNps = false;
+  let favoritesFinalizedAtIso: string | null = null;
+  if (projectId) {
+    const projectSnap = await adminDb.collection("projects").doc(projectId).get();
+    if (projectSnap.exists) {
+      const p = projectSnap.data()!;
+      const raw = p.clientNps as number | undefined;
+      if (raw && raw >= 1 && raw <= 5) {
+        existingNps = raw as 1 | 2 | 3 | 4 | 5;
+      }
+      const finalized = p.favoritesFinalizedAt as { toDate?: () => Date } | undefined;
+      const finalizedDate = finalized?.toDate?.();
+      if (finalizedDate instanceof Date) {
+        favoritesFinalizedAtIso = finalizedDate.toISOString();
+      }
+      // Owner check: signed-in email matches the project's client email.
+      if (session.role === "ADMIN") {
+        canSubmitNps = true;
+      } else {
+        const clientId = p.clientId as string | undefined;
+        if (clientId) {
+          const clientSnap = await adminDb.collection("clients").doc(clientId).get();
+          const clientEmail = (clientSnap.data()?.email as string | undefined) ?? "";
+          if (
+            session.email &&
+            clientEmail.toLowerCase() === session.email.toLowerCase()
+          ) {
+            canSubmitNps = true;
+          }
+        }
+      }
+    }
+  }
+
+  // Phase 2.6 — Surface whether this event is gated by a download PIN. We
+  // intentionally do NOT ship the PIN value to the client; the API verifies
+  // the supplied PIN server-side.
+  const downloadPinRequired = Boolean(eventData.downloadPin);
+
   return (
     <GalleryViewer
       eventId={id}
@@ -72,6 +138,13 @@ export default async function GalleryEventPage({ params }: Props) {
         year: "numeric",
       }) ?? ""}
       photos={photos}
+      eventStatus={eventStatus}
+      existingNps={existingNps}
+      canSubmitNps={canSubmitNps}
+      viewerClientId={viewerClientId}
+      downloadPinRequired={downloadPinRequired}
+      projectId={projectId}
+      favoritesFinalizedAtIso={favoritesFinalizedAtIso}
     />
   );
 }

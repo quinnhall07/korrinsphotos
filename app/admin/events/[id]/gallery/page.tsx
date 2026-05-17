@@ -29,6 +29,7 @@ type GalleryPhoto = {
   label: string | null;
   cloudflareImageId: string;
   galleryReady: boolean;
+  isKorrinsPick: boolean;
 };
 
 async function getGalleryData(eventId: string) {
@@ -41,6 +42,7 @@ async function getGalleryData(eventId: string) {
 
   const photos: GalleryPhoto[] = photosSnap.docs.map((doc) => {
     const data = doc.data();
+    const tags = (data.tags as string[] | undefined) ?? [];
     return {
       id: doc.id,
       thumbnailSrc: buildCdnUrl(data.cloudflareImageId, "thumbnail"),
@@ -48,6 +50,7 @@ async function getGalleryData(eventId: string) {
       label: data.label ?? null,
       cloudflareImageId: data.cloudflareImageId as string,
       galleryReady: data.galleryReady === true,
+      isKorrinsPick: tags.includes("korrinsPick"),
     };
   });
 

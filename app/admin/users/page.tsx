@@ -1,13 +1,19 @@
 // app/admin/users/page.tsx
-// User management — lists all users from Firestore with roles and event access counts.
+// User management — paginated list (50/page) of users from Firestore with
+// roles, gallery-access counts, and an in-page search filter.
 
+import Link from "next/link";
 import { requireAdmin } from "@/lib/session";
 import { adminDb } from "@/lib/firebase-admin";
+import { listUsersPaginated, type UserDoc } from "@/lib/db/users";
 import { RemoveUserButton } from "./RemoveUserButton";
+import { SearchBar } from "./SearchBar";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "Users | Admin" };
 export const dynamic = "force-dynamic";
+
+const PAGE_SIZE = 50;
 
 type UserRow = {
   uid: string;
@@ -17,62 +23,64 @@ type UserRow = {
   createdAt: string;
 };
 
-// AFTER
-async function getUsers(): Promise<UserRow[]> {
-  // Fetch all users without orderBy so documents missing createdAt
-  // are not silently excluded by Firestore (which omits docs that
-  // lack the field used in orderBy). Sort in memory instead.
-  const snap = await adminDb.collection("users").get();
-
-  const rows = await Promise.all(
-    snap.docs.map(async (doc) => {
-      const data = doc.data();
-      const accessSnap = await adminDb
-        .collection("eventAccess")
-        .where("userId", "==", doc.id)
-        .count()
-        .get();
-
-      const createdAtDate: Date | null = data.createdAt?.toDate?.() ?? null;
-
-      return {
-        uid: doc.id,
-        email: data.email as string,
-        role: data.role as string,
-        eventCount: accessSnap.data().count,
-        createdAt: createdAtDate
-          ? createdAtDate.toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          })
-          : "—",
-        _createdAtMs: createdAtDate?.getTime() ?? 0,
-      };
-    })
-  );
-
-  // Sort oldest-first in memory; users without createdAt sort to the top
-  return rows
-    .sort((a, b) => a._createdAtMs - b._createdAtMs)
-    .map(({ _createdAtMs: _, ...row }) => row);
-}
-
 const ROLE_STYLES: Record<string, React.CSSProperties> = {
   ADMIN: { background: "#D1FAE5", color: "#065F46" },
   CLIENT: { background: "#E0E7FF", color: "#3730A3" },
 };
 
-export default async function UsersPage() {
+async function decorateRow(user: UserDoc): Promise<UserRow> {
+  const accessSnap = await adminDb
+    .collection("eventAccess")
+    .where("userId", "==", user.uid)
+    .count()
+    .get();
+
+  const createdAtDate: Date | null = user.createdAt?.toDate?.() ?? null;
+
+  return {
+    uid: user.uid,
+    email: user.email,
+    role: user.role,
+    eventCount: accessSnap.data().count,
+    createdAt: createdAtDate
+      ? createdAtDate.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })
+      : "—",
+  };
+}
+
+function buildHref(params: { cursor?: string | null; q?: string }): string {
+  const sp = new URLSearchParams();
+  if (params.cursor) sp.set("cursor", params.cursor);
+  if (params.q) sp.set("q", params.q);
+  const qs = sp.toString();
+  return qs ? `/admin/users?${qs}` : "/admin/users";
+}
+
+export default async function UsersPage(props: {
+  searchParams: Promise<{ cursor?: string; q?: string }>;
+}) {
   const session = await requireAdmin();
+  const { cursor, q } = await props.searchParams;
+  const search = q?.trim() ?? "";
 
   let users: UserRow[] = [];
+  let nextCursor: string | null = null;
   let error: string | null = null;
 
   try {
-    users = await getUsers();
+    const page = await listUsersPaginated({
+      pageSize: PAGE_SIZE,
+      cursor: cursor ?? null,
+      search: search || undefined,
+    });
+    nextCursor = page.nextCursor;
+    users = await Promise.all(page.users.map(decorateRow));
   } catch (err: unknown) {
-    console.error("getUsers error:", err);
+    console.error("listUsersPaginated error:", err);
     error = err instanceof Error ? err.message : "Failed to load users from Firestore.";
   }
 
@@ -104,6 +112,9 @@ export default async function UsersPage() {
       </div>
     );
   }
+
+  const isPaginating = Boolean(cursor);
+
   return (
     <div className="page-fade-in">
       <div
@@ -143,9 +154,14 @@ export default async function UsersPage() {
             textAlign: "right",
           }}
         >
-          <span>{users.length} total user{users.length !== 1 ? "s" : ""}</span>
+          <span>
+            Showing {users.length} user{users.length !== 1 ? "s" : ""}
+            {search ? ` matching "${search}"` : ""}
+          </span>
         </div>
       </div>
+
+      <SearchBar initialValue={search} />
 
       <div style={{ border: "0.5px solid var(--border)", background: "var(--white)" }}>
         <table
@@ -184,7 +200,7 @@ export default async function UsersPage() {
                     fontSize: "0.88rem",
                   }}
                 >
-                  No users yet.
+                  {search ? `No users match "${search}".` : "No users yet."}
                 </td>
               </tr>
             )}
@@ -224,6 +240,68 @@ export default async function UsersPage() {
           </tbody>
         </table>
       </div>
+
+      {/*
+        Forward-only pagination. Tradeoff: keeping a serialised cursor stack in
+        the URL doubles every navigation's complexity and breaks under deep
+        history; "Back to start" + Next is a clean v1.
+      */}
+      <nav
+        aria-label="Pagination"
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginTop: "1.25rem",
+          fontSize: "0.78rem",
+          color: "var(--charcoal-muted)",
+        }}
+      >
+        <div>
+          {isPaginating ? (
+            <Link
+              href={buildHref({ q: search })}
+              style={{
+                padding: "0.5rem 1rem",
+                fontSize: "0.65rem",
+                letterSpacing: "0.14em",
+                textTransform: "uppercase",
+                color: "var(--charcoal)",
+                border: "0.5px solid var(--border-strong)",
+                background: "transparent",
+                textDecoration: "none",
+                display: "inline-block",
+              }}
+            >
+              ← Back to start
+            </Link>
+          ) : (
+            <span style={{ opacity: 0.5 }}>Page 1</span>
+          )}
+        </div>
+        <div>
+          {nextCursor ? (
+            <Link
+              href={buildHref({ cursor: nextCursor, q: search })}
+              style={{
+                padding: "0.5rem 1rem",
+                fontSize: "0.65rem",
+                letterSpacing: "0.14em",
+                textTransform: "uppercase",
+                color: "var(--white)",
+                background: "var(--olive)",
+                border: "0.5px solid var(--olive)",
+                textDecoration: "none",
+                display: "inline-block",
+              }}
+            >
+              Next →
+            </Link>
+          ) : (
+            <span style={{ opacity: 0.5 }}>End of list</span>
+          )}
+        </div>
+      </nav>
     </div>
   );
 }

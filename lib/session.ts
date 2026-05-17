@@ -56,11 +56,6 @@ export async function clearSession(): Promise<void> {
   cookieStore.delete(SESSION_COOKIE_NAME);
 }
 
-// ─── Role helpers ─────────────────────────────────────────────────────────────
-export function isAdmin(decoded: DecodedIdToken): boolean {
-  return decoded["role"] === "ADMIN";
-}
-
 // ─── Route Protection ────────────────────────────────────────────────────────
 
 /**

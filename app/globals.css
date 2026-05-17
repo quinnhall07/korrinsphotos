@@ -232,3 +232,33 @@ textarea.form-input {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
+
+/* ─── Booking Form (multi-step) ──────────────────────────────────────────── */
+.booking-tile-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.85rem;
+}
+
+.booking-tile-grid-mood {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.85rem;
+}
+
+@media (max-width: 960px) {
+  .booking-tile-grid-3,
+  .booking-tile-grid-mood {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .booking-tile-grid-3,
+  .booking-tile-grid-mood {
+    grid-template-columns: 1fr;
+  }
+  .booking-name-row {
+    grid-template-columns: 1fr !important;
+  }
+}
