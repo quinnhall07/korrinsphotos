@@ -1,25 +1,24 @@
 // app/page.tsx
-// Home page — fetches curated portfolio photos from Firestore.
+// Home page — renders blocks from siteContent/home if an admin has published a draft.
+// Until then, renders the original hand-crafted home page exactly as it was before the
+// site editor existed (HeroSlideshow + auto-fetched MasonryGrid + stats + dark CTA).
 
-import Link               from "next/link";
-import { adminDb }        from "@/lib/firebase-admin";
+import Link from "next/link";
+import { adminDb } from "@/lib/firebase-admin";
 import { MasonryGrid, type MasonryPhoto } from "@/components/MasonryGrid";
-import { HeroSlideshow }  from "@/components/HeroSlideshow";
-import { Footer }         from "@/components/Footer";
-import { buildCdnUrl }    from "@/lib/cloudflare";
+import { HeroSlideshow } from "@/components/HeroSlideshow";
+import { Footer } from "@/components/Footer";
+import { buildCdnUrl } from "@/lib/cloudflare";
+import { loadPublishedSections } from "@/lib/db/site-content";
+import { renderSections } from "@/lib/site-content/render";
 
 export const revalidate = 3600;
 
 async function getCuratedPhotos(): Promise<MasonryPhoto[]> {
-  // Query all events' photos where category is set (public portfolio photos)
-  // In Firestore, portfolio photos are stored as subcollections.
-  // For a simple home feed, we query a flat /portfolioPhotos collection
-  // that mirrors the subcollection (maintained by the upload confirm route).
-  // Alternatively, use a collectionGroup query:
   const snapshot = await adminDb
     .collectionGroup("photos")
     .where("category", "!=", null)
-    .orderBy("category") // required before a second orderBy when using != filter
+    .orderBy("category")
     .orderBy("uploadedAt", "desc")
     .limit(9)
     .get();
@@ -36,20 +35,33 @@ async function getCuratedPhotos(): Promise<MasonryPhoto[]> {
   });
 }
 
-// Dev placeholders — shown before any photos are uploaded
+// Dev placeholders — shown before any photos are uploaded.
 const DEV_PHOTOS: MasonryPhoto[] = [
-  { id: "1",  src: "https://picsum.photos/seed/photo11/600/280", label: "Golden Hour", category: "wedding" },
-  { id: "2",  src: "https://picsum.photos/seed/photo22/600/340", label: "Portrait",    category: "portrait" },
-  { id: "3",  src: "https://picsum.photos/seed/photo33/600/260", label: "Editorial",   category: "editorial" },
-  { id: "4",  src: "https://picsum.photos/seed/photo44/600/420", label: "Landscape",   category: "landscape" },
-  { id: "5",  src: "https://picsum.photos/seed/photo55/600/300", label: "Wedding",     category: "wedding" },
-  { id: "6",  src: "https://picsum.photos/seed/photo66/600/380", label: "Portrait",    category: "portrait" },
-  { id: "7",  src: "https://picsum.photos/seed/photo77/600/250", label: "Editorial",   category: "editorial" },
-  { id: "8",  src: "https://picsum.photos/seed/photo88/600/350", label: "Landscape",   category: "landscape" },
-  { id: "9",  src: "https://picsum.photos/seed/photo99/600/290", label: "Wedding",     category: "wedding" },
+  { id: "1", src: "https://picsum.photos/seed/photo11/600/280", label: "Golden Hour", category: "wedding" },
+  { id: "2", src: "https://picsum.photos/seed/photo22/600/340", label: "Portrait",    category: "portrait" },
+  { id: "3", src: "https://picsum.photos/seed/photo33/600/260", label: "Editorial",   category: "editorial" },
+  { id: "4", src: "https://picsum.photos/seed/photo44/600/420", label: "Landscape",   category: "landscape" },
+  { id: "5", src: "https://picsum.photos/seed/photo55/600/300", label: "Wedding",     category: "wedding" },
+  { id: "6", src: "https://picsum.photos/seed/photo66/600/380", label: "Portrait",    category: "portrait" },
+  { id: "7", src: "https://picsum.photos/seed/photo77/600/250", label: "Editorial",   category: "editorial" },
+  { id: "8", src: "https://picsum.photos/seed/photo88/600/350", label: "Landscape",   category: "landscape" },
+  { id: "9", src: "https://picsum.photos/seed/photo99/600/290", label: "Wedding",     category: "wedding" },
 ];
 
 export default async function HomePage() {
+  const published = await loadPublishedSections("home").catch(() => null);
+
+  if (published) {
+    // Admin has published via the site editor — render their blocks.
+    return (
+      <div style={{ paddingTop: "72px" }} className="page-fade-in">
+        {renderSections(published)}
+        <Footer />
+      </div>
+    );
+  }
+
+  // No published draft yet — original hand-crafted home page.
   let photos = DEV_PHOTOS;
   try {
     const dbPhotos = await getCuratedPhotos();
