@@ -339,3 +339,32 @@ Defaults files live in `lib/site-content/defaults/{home,investment,portfolio,abo
 - Whether to retitle Investment → Pricing.
 - "Tools for your craft" (Korrin's note about a non-Lightroom-preset section) — what would actually go here?
 - "Korrin should have access to booking from admin?" — answer: no, hide the "Book a Session" CTA when admin is signed in.
+
+---
+
+## Shipped this session (2026-05-21)
+
+Commits land on `claude/site-editor-review-hPlf6` (merged from `claude/site-editor`).
+
+| # | Commit | What |
+|---|---|---|
+| 1 | `aee798b` | Review notes — this file, captured before any code changes. |
+| 2 | merge | Pulled in the existing site-editor scaffolding from `origin/claude/site-editor`. |
+| 3 | `d546f84` | **Inbox soft-delete + Archived tab.** `archiveItem()` stamps `archivedAt` instead of deleting; new Open/Archived filter tabs on `/admin/inbox`; Restore + Delete permanently buttons in the detail pane. |
+| 4 | `187d244` | **Booking + login quick fixes.** Booking down to 3 steps. Session-type tile grid → dropdown. New vocab Portrait/Family/Greek-life event (legacy types still accepted). Mood quiz removed; both checkboxes (`readyToCommit`, `readProcessPage`) removed. SMS-consent checkbox under phone. Referral options now Instagram/TikTok/Google/Friend or Family/Other + optional `referredByEmail` (auto-resolves to a clientId). Process-page link opens in new tab. Login: show/hide password toggle. |
+| 5 | `e5a5ae5` | **Site editor Phase 1.** 3-column visual editor (section list / iframe preview / form). Iframe in `?frame=1` mode injects a postMessage bridge that highlights and selects sections on click. 4 new structured section types: `PROCESS_STEPS`, `PACKAGE_CARDS`, `TESTIMONIAL`, `SLIDESHOW`, `STATS`. Page registry expanded: Home / Investment / Portfolio / About / Footer. Defaults files seeded from existing static layouts. `/investment`, `/portfolio`, new `/about`, and the catch-all `app/[slug]/page.tsx` for admin-created custom pages — slug-based with reserved-name guard. "+ New page" button on `/admin/site`. |
+| 6 | `8a94bcc` | **Portfolio category remap + CMS-driven Footer.** New canonical categories: portraits/landscapes/nature/edits. Legacy values still work via `normaliseStoredCategory`. Migration script at `scripts/2026-05-remap-portfolio-categories.ts` with `--apply` / `--dry-run`. `<Footer />` is now async and reads `siteContent/footer` first. |
+| 7 | `aec9d2e` | **Admin sidebar tooltips + light reorg.** Every nav entry has a `tooltip` field surfaced via the native title attribute. Studio Hours + Quiet Season removed from the sidebar (pages still reachable by URL). Gear Templates renamed to Kits everywhere user-facing. Tax (settings) renamed to "Tax setup" to disambiguate from the Tax & Expenses report. |
+| 8 | `7b18f4c` | **Portal empty state.** `/portal/router` now renders an explainer card when the signed-in user has no client doc or no projects (previously silent redirect to `/` — felt broken). |
+| 9 | (this commit) | **Referral recipe copy fix.** `lib/automations/recipes.ts` no longer claims "$150 referral email" — Korrin's tier rewards are $50 / $100 per `REFERRAL_TIER_REWARDS`. |
+
+## Not shipped — needs repro or operator decision
+
+- **"Detail drawer doesn't work — error" (Quinn/Rowan)** — Project workspace queries are already defensively wrapped in try/catch, so the error must be elsewhere. Need a stack trace.
+- **"Kanban table doesn't ___" (Quinn/Rowan)** — sentence was cut off; need the rest of the note.
+- **"Last page on booking automatically skips"** — was reported against the 4-step form; the rewrite to 3 steps may have unintentionally fixed it. Verify in browser.
+- **Brand name + Investment→Pricing rename** — waiting on operator decisions.
+- **The Moment 4th package** — needs price + includes.
+- **Stats default copy** — Home page Stats default uses honest placeholders ("Booking summer 2026" etc). Real numbers go in via the site editor when Korrin is ready.
+- **Migration: run the portfolio category remap script in production** with `--apply` once Korrin confirms.
+- **Investment legacy session types** — `app/investment/packages.ts` still uses Wedding/Engagement vocab. Once Korrin edits via the CMS, her overrides take precedence. The static seed defers updating until then.

@@ -57,7 +57,7 @@ export const AUTOMATION_RECIPES: AutomationRecipe[] = [
     key: "referral_send_after_delivery",
     label: "Referral ask after gallery delivery",
     description:
-      "Queues the $150 referral email N days after a project enters GALLERY_DELIVERED. The cron worker picks it up and sends via the mail/ queue.",
+      "Emails the client a referral ask N days after their gallery is delivered. The tiered reward structure pays out automatically when their friends book — Tier 1 = $50 credit, Tier 2 = $100 credit (see lib/db/clients.ts > REFERRAL_TIER_REWARDS).",
     defaultEnabled: true,
     params: [
       { name: "delay_days", type: "days", default: 7, label: "Delay (days)" },
