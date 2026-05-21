@@ -3,7 +3,7 @@
 // Ingests the R2 object into Cloudflare Images and writes a siteAssets/{id} doc.
 
 import { NextRequest, NextResponse } from "next/server";
-import { getSessionUser } from "@/lib/session";
+import { getSessionOrNull } from "@/lib/session";
 import { uploadToCloudflareImages } from "@/lib/storage/images";
 import { generatePresignedGetUrl } from "@/lib/storage/r2";
 import { createSiteAsset } from "@/lib/db/site-assets";
@@ -12,11 +12,11 @@ import { z } from "zod";
 const ConfirmSchema = z.object({
   key: z.string().min(1),
   label: z.string().min(1).max(120),
-  altText: z.string().min(1).max(240),
+  altText: z.string().max(240).optional().default(""),
 });
 
 export async function POST(req: NextRequest) {
-  const session = await getSessionUser();
+  const session = await getSessionOrNull();
   if (!session || session.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

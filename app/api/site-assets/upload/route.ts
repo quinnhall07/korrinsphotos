@@ -3,7 +3,7 @@
 // Mirrors /api/upload but writes to the global siteAssets/ R2 prefix.
 
 import { NextRequest, NextResponse } from "next/server";
-import { getSessionUser } from "@/lib/session";
+import { getSessionOrNull } from "@/lib/session";
 import { generatePresignedUploadUrl } from "@/lib/storage/r2";
 import { z } from "zod";
 import { randomUUID } from "crypto";
@@ -14,7 +14,7 @@ const PresignSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const session = await getSessionUser();
+  const session = await getSessionOrNull();
   if (!session || session.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

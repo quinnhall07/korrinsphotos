@@ -48,10 +48,6 @@ export function PhotoPicker({ open, onClose, onSelect, initialData }: Props) {
   if (!open) return null;
 
   const handleUpload = async (file: File) => {
-    if (!label.trim() || !altText.trim()) {
-      toast("Label and alt text are required for site uploads.");
-      return;
-    }
     setUploading(true);
     try {
       const allowed = ["image/jpeg", "image/png", "image/webp", "image/heic"];
@@ -59,12 +55,20 @@ export function PhotoPicker({ open, onClose, onSelect, initialData }: Props) {
         toast("Only JPEG, PNG, WebP, or HEIC are allowed.");
         return;
       }
+      // Label defaults to the file name (sans extension) so an upload never
+      // gets blocked on a required field. Alt text is recommended but
+      // optional — empty is allowed.
+      const effectiveLabel = label.trim() || file.name.replace(/\.[^.]+$/, "") || "Untitled image";
+
       const presignRes = await fetch("/api/site-assets/upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fileName: file.name, contentType: file.type }),
       });
-      if (!presignRes.ok) throw new Error("Presign failed");
+      if (!presignRes.ok) {
+        const { error } = await presignRes.json().catch(() => ({ error: "" }));
+        throw new Error(error || "Presign failed");
+      }
       const { presignedUrl, key } = await presignRes.json();
 
       const putRes = await fetch(presignedUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type } });
@@ -73,9 +77,12 @@ export function PhotoPicker({ open, onClose, onSelect, initialData }: Props) {
       const confirmRes = await fetch("/api/site-assets/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key, label: label.trim(), altText: altText.trim() }),
+        body: JSON.stringify({ key, label: effectiveLabel, altText: altText.trim() }),
       });
-      if (!confirmRes.ok) throw new Error("Confirm failed");
+      if (!confirmRes.ok) {
+        const { error } = await confirmRes.json().catch(() => ({ error: "" }));
+        throw new Error(error || "Confirm failed");
+      }
       const { asset } = await confirmRes.json();
 
       toast("Uploaded.");
@@ -219,7 +226,7 @@ export function PhotoPicker({ open, onClose, onSelect, initialData }: Props) {
 
         {tab === "UPLOAD" && (
           <div style={{ maxWidth: "32rem" }}>
-            <Field label="Label (admin reference)">
+            <Field label="Label (optional — defaults to the file name)">
               <input
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
@@ -228,7 +235,7 @@ export function PhotoPicker({ open, onClose, onSelect, initialData }: Props) {
                 style={inputStyle}
               />
             </Field>
-            <Field label="Alt text (visible to screen readers + SEO)">
+            <Field label="Alt text (optional — recommended for SEO + screen readers)">
               <input
                 value={altText}
                 onChange={(e) => setAltText(e.target.value)}
@@ -241,7 +248,7 @@ export function PhotoPicker({ open, onClose, onSelect, initialData }: Props) {
               <input
                 type="file"
                 accept="image/jpeg,image/png,image/webp,image/heic"
-                disabled={uploading || !label.trim() || !altText.trim()}
+                disabled={uploading}
                 onChange={(e) => {
                   const f = e.target.files?.[0];
                   if (f) void handleUpload(f);
@@ -249,9 +256,9 @@ export function PhotoPicker({ open, onClose, onSelect, initialData }: Props) {
                 style={{ fontSize: "0.85rem" }}
               />
             </Field>
-            {uploading && (
-              <p style={{ fontSize: "0.78rem", color: "var(--charcoal-muted)" }}>Uploading…</p>
-            )}
+            <p style={{ fontSize: "0.72rem", color: "var(--charcoal-muted)", marginTop: "0.25rem" }}>
+              {uploading ? "Uploading…" : "Choose a file to upload it straight into your site library."}
+            </p>
           </div>
         )}
       </div>
