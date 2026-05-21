@@ -102,3 +102,33 @@ export async function requireSession(): Promise<DecodedIdToken> {
 
   return decoded;
 }
+
+/**
+ * Non-redirecting session read for public routes.
+ *
+ * Used by public pages (e.g. `/`, `/investment`) that want to show an
+ * "Edit this page" affordance for admins without ever redirecting an
+ * anonymous visitor. Mirrors `requireAdmin()`'s claim → Firestore fallback,
+ * but returns `null` on any miss instead of redirecting.
+ */
+export async function getSessionOrNull(): Promise<{ uid: string; role: "ADMIN" | "CLIENT" } | null> {
+  const decoded = await getSessionUser();
+  if (!decoded) return null;
+
+  const claimRole = (decoded as DecodedIdToken & { role?: unknown }).role;
+  if (claimRole === "ADMIN" || claimRole === "CLIENT") {
+    return { uid: decoded.uid, role: claimRole };
+  }
+
+  // Legacy session — claim not yet applied. Fall back to Firestore.
+  try {
+    const userDoc = await adminDb.collection("users").doc(decoded.uid).get();
+    const role = userDoc.data()?.role;
+    if (role === "ADMIN" || role === "CLIENT") {
+      return { uid: decoded.uid, role };
+    }
+  } catch (err) {
+    console.error("[getSessionOrNull] Firestore role lookup failed:", err);
+  }
+  return { uid: decoded.uid, role: "CLIENT" };
+}

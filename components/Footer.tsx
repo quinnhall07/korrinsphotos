@@ -8,11 +8,20 @@
 // page legible during local dev without env vars.
 
 import Link from "next/link";
+import { cache } from "react";
 import { loadPublishedSections } from "@/lib/db/site-content";
 import { renderSections } from "@/lib/site-content/render";
 
+// `cache()` dedupes the Firestore read across multiple `<Footer />` calls in
+// the same request — important because every public page renders the footer
+// once, and any other CMS-driven page reads `siteContent/footer` on its own
+// render path.
+const loadFooterSectionsCached = cache(async () => {
+  return loadPublishedSections("footer").catch(() => null);
+});
+
 export async function Footer() {
-  const published = await loadPublishedSections("footer").catch(() => null);
+  const published = await loadFooterSectionsCached();
   if (published && published.length > 0) {
     return (
       <footer style={{ borderTop: "0.5px solid var(--border)" }}>

@@ -502,31 +502,33 @@ function StatsBlock({ section }: { section: Extract<Section, { type: "STATS" }> 
   );
 }
 
-export function renderSections(sections: Section[]): React.ReactNode {
-  return sections.map((s) => {
-    switch (s.type) {
-      case "HERO":
-        return <HeroBlock key={s.id} section={s} />;
-      case "PHOTO_GRID":
-        return <PhotoGridBlock key={s.id} section={s} />;
-      case "RICH_TEXT":
-        return <RichTextBlock key={s.id} section={s} />;
-      case "CTA_BANNER":
-        return <CtaBannerBlock key={s.id} section={s} />;
-      case "PROCESS_STEPS":
-        return <ProcessStepsBlock key={s.id} section={s} />;
-      case "PACKAGE_CARDS":
-        return <PackageCardsBlock key={s.id} section={s} />;
-      case "TESTIMONIAL":
-        return <TestimonialBlock key={s.id} section={s} />;
-      case "SLIDESHOW":
-        return <SlideshowBlock key={s.id} section={s} />;
-      case "STATS":
-        return <StatsBlock key={s.id} section={s} />;
-      default: {
-        const exhaustive: never = s;
-        return exhaustive;
-      }
+export function renderSection(section: Section): React.ReactNode {
+  switch (section.type) {
+    case "HERO":
+      return <HeroBlock key={section.id} section={section} />;
+    case "PHOTO_GRID":
+      return <PhotoGridBlock key={section.id} section={section} />;
+    case "RICH_TEXT":
+      return <RichTextBlock key={section.id} section={section} />;
+    case "CTA_BANNER":
+      return <CtaBannerBlock key={section.id} section={section} />;
+    case "PROCESS_STEPS":
+      return <ProcessStepsBlock key={section.id} section={section} />;
+    case "PACKAGE_CARDS":
+      return <PackageCardsBlock key={section.id} section={section} />;
+    case "TESTIMONIAL":
+      return <TestimonialBlock key={section.id} section={section} />;
+    case "SLIDESHOW":
+      return <SlideshowBlock key={section.id} section={section} />;
+    case "STATS":
+      return <StatsBlock key={section.id} section={section} />;
+    default: {
+      const exhaustive: never = section;
+      return exhaustive;
     }
-  });
+  }
+}
+
+export function renderSections(sections: Section[]): React.ReactNode {
+  return sections.map((s) => renderSection(s));
 }

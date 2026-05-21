@@ -15,14 +15,22 @@ import {
   buildServiceSchema,
 } from "@/lib/seo/schema";
 import { INVESTMENT_PACKAGES } from "./packages";
-import { loadPublishedSections } from "@/lib/db/site-content";
-import { renderSections } from "@/lib/site-content/render";
+import { loadPublishedSections, loadDraftSections } from "@/lib/db/site-content";
+import { getSessionOrNull } from "@/lib/session";
+import { listSiteAssets, listProjectPhotos } from "@/lib/db/site-assets";
+import { SectionsCanvas } from "@/components/site-editor/SectionsCanvas";
+import { FloatingEditPill } from "@/components/site-editor/FloatingEditPill";
+import { INVESTMENT_DEFAULTS } from "@/lib/site-content/defaults/investment";
+
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Investment | Korrin's Photos",
   description:
     "Investment guide for Korrin's Photography — portrait, engagement, and wedding packages. A long-term decision in light, intention, and craft.",
 };
+
+type Props = { searchParams?: Promise<{ edit?: string }> };
 
 /* ─── Static page data ────────────────────────────────────────────────── */
 
@@ -64,20 +72,50 @@ function formatUsd(amount: number): string {
 
 /* ─── Page ────────────────────────────────────────────────────────────── */
 
-export default async function InvestmentPage() {
-  // CMS path — once an admin publishes a draft, this supersedes the
-  // hand-coded layout below. Anything else falls through to the original
-  // editorial render so the page keeps working on a fresh deployment.
+export default async function InvestmentPage({ searchParams }: Props) {
+  const sp = (await searchParams) ?? {};
+  const editParam = sp.edit === "1";
+  const session = await getSessionOrNull();
+  const isAdmin = session?.role === "ADMIN";
+
+  const draft = isAdmin && editParam ? await loadDraftSections("investment").catch(() => null) : null;
   const published = await loadPublishedSections("investment").catch(() => null);
-  if (published && published.length > 0) {
+  const sections = draft ?? published;
+
+  if ((sections && sections.length > 0) || (isAdmin && editParam)) {
     const cmsJsonLd = buildBreadcrumbSchema([
       { name: "Home",       url: "/" },
       { name: "Investment", url: "/investment" },
     ]);
+    const pickerData = isAdmin
+      ? {
+          siteAssets: (await listSiteAssets()).map((a) => ({
+            id: a.id,
+            cloudflareImageId: a.cloudflareImageId,
+            label: a.label,
+            altText: a.altText,
+          })),
+          projectPhotos: (await listProjectPhotos()).map((p) => ({
+            photoId: p.photoId,
+            eventId: p.eventId,
+            cloudflareImageId: p.cloudflareImageId,
+            label: p.label,
+            category: p.category,
+          })),
+        }
+      : { siteAssets: [], projectPhotos: [] };
+
     return (
       <div style={{ paddingTop: "72px" }} className="page-fade-in">
         <JsonLd data={cmsJsonLd as unknown as Parameters<typeof JsonLd>[0]["data"]} />
-        {renderSections(published)}
+        <SectionsCanvas
+          pageId="investment"
+          pageLabel="Investment / Pricing"
+          initialSections={(sections && sections.length > 0) ? sections : INVESTMENT_DEFAULTS}
+          isAdmin={isAdmin}
+          editParam={editParam}
+          pickerData={pickerData}
+        />
         <Footer />
       </div>
     );
@@ -570,6 +608,7 @@ export default async function InvestmentPage() {
       </section>
 
       <Footer />
+      {isAdmin && <FloatingEditPill pageLabel="Investment" />}
     </div>
   );
 }

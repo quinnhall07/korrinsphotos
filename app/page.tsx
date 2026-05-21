@@ -9,10 +9,18 @@ import { MasonryGrid, type MasonryPhoto } from "@/components/MasonryGrid";
 import { HeroSlideshow } from "@/components/HeroSlideshow";
 import { Footer } from "@/components/Footer";
 import { buildCdnUrl } from "@/lib/cloudflare";
-import { loadPublishedSections } from "@/lib/db/site-content";
-import { renderSections } from "@/lib/site-content/render";
+import { loadPublishedSections, loadDraftSections } from "@/lib/db/site-content";
+import { getSessionOrNull } from "@/lib/session";
+import { listSiteAssets, listProjectPhotos } from "@/lib/db/site-assets";
+import { SectionsCanvas } from "@/components/site-editor/SectionsCanvas";
+import { FloatingEditPill } from "@/components/site-editor/FloatingEditPill";
+import { HOME_DEFAULTS } from "@/lib/site-content/defaults/home";
 
-export const revalidate = 3600;
+// Admins use ?edit=1 to enter the on-page editor, so the home page must be
+// dynamic. (The page used to ISR at 1h; we trade that for live admin editing.)
+export const dynamic = "force-dynamic";
+
+type Props = { searchParams?: Promise<{ edit?: string }> };
 
 async function getCuratedPhotos(): Promise<MasonryPhoto[]> {
   const snapshot = await adminDb
@@ -48,20 +56,55 @@ const DEV_PHOTOS: MasonryPhoto[] = [
   { id: "9", src: "https://picsum.photos/seed/photo99/600/290", label: "Wedding",     category: "wedding" },
 ];
 
-export default async function HomePage() {
-  const published = await loadPublishedSections("home").catch(() => null);
+export default async function HomePage({ searchParams }: Props) {
+  const sp = (await searchParams) ?? {};
+  const editParam = sp.edit === "1";
 
-  if (published) {
-    // Admin has published via the site editor — render their blocks.
+  const session = await getSessionOrNull();
+  const isAdmin = session?.role === "ADMIN";
+
+  // In edit mode, prefer the draft so unsaved-but-saved sections are shown.
+  // Otherwise show whatever is published — falling through to defaults when
+  // the admin hasn't authored anything yet.
+  const draft = isAdmin && editParam ? await loadDraftSections("home").catch(() => null) : null;
+  const published = await loadPublishedSections("home").catch(() => null);
+  const sections = draft ?? published;
+
+  if (sections || (isAdmin && editParam)) {
+    const pickerData = isAdmin
+      ? {
+          siteAssets: (await listSiteAssets()).map((a) => ({
+            id: a.id,
+            cloudflareImageId: a.cloudflareImageId,
+            label: a.label,
+            altText: a.altText,
+          })),
+          projectPhotos: (await listProjectPhotos()).map((p) => ({
+            photoId: p.photoId,
+            eventId: p.eventId,
+            cloudflareImageId: p.cloudflareImageId,
+            label: p.label,
+            category: p.category,
+          })),
+        }
+      : { siteAssets: [], projectPhotos: [] };
+
     return (
       <div style={{ paddingTop: "72px" }} className="page-fade-in">
-        {renderSections(published)}
+        <SectionsCanvas
+          pageId="home"
+          pageLabel="Home"
+          initialSections={sections ?? HOME_DEFAULTS}
+          isAdmin={isAdmin}
+          editParam={editParam}
+          pickerData={pickerData}
+        />
         <Footer />
       </div>
     );
   }
 
-  // No published draft yet — original hand-crafted home page.
+  // No published draft yet AND not an admin in edit mode — original hand-crafted home page.
   let photos = DEV_PHOTOS;
   try {
     const dbPhotos = await getCuratedPhotos();
@@ -121,6 +164,7 @@ export default async function HomePage() {
       </section>
 
       <Footer />
+      {isAdmin && <FloatingEditPill pageLabel="Home" />}
     </div>
   );
 }

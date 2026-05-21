@@ -13,10 +13,11 @@ import {
   publishDraft as dbPublishDraft,
   restoreRevisionToDraft,
   getSiteContent,
+  listRevisions as dbListRevisions,
 } from "@/lib/db/site-content";
 import { logActivity } from "@/lib/db/activity";
 import { getPageDefinition } from "@/lib/site-content/page-registry";
-import { isReservedSlug } from "@/app/[slug]/page";
+import { isReservedSlug } from "@/lib/site-content/slugs";
 import type { Section, SectionType } from "@/lib/site-content/types";
 
 // Custom pages (no registry entry) accept any registered section type.
@@ -215,7 +216,8 @@ export async function saveDraftAction(
   }).catch(() => {});
 
   revalidatePath(`/admin/site/${pageId}`);
-  revalidatePath(`/admin/site/${pageId}/preview`);
+  const refreshHref = publicPathFor(pageId);
+  if (refreshHref) revalidatePath(refreshHref);
   return { success: true };
 }
 
@@ -232,7 +234,8 @@ export async function discardDraftAction(pageId: string): Promise<ActionResult> 
   }).catch(() => {});
 
   revalidatePath(`/admin/site/${pageId}`);
-  revalidatePath(`/admin/site/${pageId}/preview`);
+  const refreshHref = publicPathFor(pageId);
+  if (refreshHref) revalidatePath(refreshHref);
   return { success: true };
 }
 
@@ -255,17 +258,55 @@ export async function publishDraftAction(
     }).catch(() => {});
 
     revalidatePath(`/admin/site/${pageId}`);
-    revalidatePath(`/admin/site/${pageId}/preview`);
-    revalidatePath(`/admin/site/${pageId}/revisions`);
+    revalidatePath("/admin/site");
     const publicHref = publicPathFor(pageId);
     if (publicHref) revalidatePath(publicHref);
     // Catch-all custom pages live at `/{slug}`.
     if (!getPageDefinition(pageId)) revalidatePath(`/${pageId}`);
+    // Footer is global — invalidate the home page (a stand-in for "any
+    // public page that includes <Footer/>") so the new copy paints on next
+    // navigation.
+    if (pageId === "footer") revalidatePath("/");
 
     return { success: true };
   } catch (err) {
     console.error("[site-editor] publish:", err);
     return { success: false, error: "Publish failed." };
+  }
+}
+
+export type RevisionSummary = {
+  id: string;
+  publishedAtIso: string | null;
+  publishedByUid: string;
+  noteSummary: string | null;
+  sectionCount: number;
+};
+
+/**
+ * Lightweight revision-list reader for the on-page editor's modal.
+ *
+ * Returns serializable plain objects (no Firestore Timestamps), so the modal
+ * can render without needing the firebase-admin import on the client.
+ */
+export async function listRevisionsAction(pageId: string): Promise<{ success: true; revisions: RevisionSummary[] } | { success: false; error: string }> {
+  await requireAdmin();
+  if (!(await pageExists(pageId))) return { success: false, error: "Unknown page." };
+  try {
+    const revisions = await dbListRevisions(pageId);
+    return {
+      success: true,
+      revisions: revisions.map((r) => ({
+        id: r.id,
+        publishedAtIso: r.publishedAt ? r.publishedAt.toDate().toISOString() : null,
+        publishedByUid: r.publishedByUid,
+        noteSummary: r.noteSummary,
+        sectionCount: r.sections.length,
+      })),
+    };
+  } catch (err) {
+    console.error("[site-editor] listRevisionsAction:", err);
+    return { success: false, error: "Failed to load revisions." };
   }
 }
 
@@ -287,8 +328,8 @@ export async function restoreRevisionAction(
     }).catch(() => {});
 
     revalidatePath(`/admin/site/${pageId}`);
-    revalidatePath(`/admin/site/${pageId}/preview`);
-    revalidatePath(`/admin/site/${pageId}/revisions`);
+    const refreshHref = publicPathFor(pageId);
+    if (refreshHref) revalidatePath(refreshHref);
     return { success: true };
   } catch (err) {
     console.error("[site-editor] restore:", err);
@@ -355,4 +396,42 @@ export async function createCustomPageAction(
 
   revalidatePath("/admin/site");
   return { success: true, slug };
+}
+
+/**
+ * Delete an admin-created custom page entirely (doc + revisions).
+ *
+ * Refuses to delete built-in pages (Home / Investment / Portfolio / About /
+ * Footer) — those are part of the public surface and have hand-coded
+ * fallbacks. For custom pages, deletes the `siteContent/{slug}` doc and its
+ * revisions subcollection.
+ */
+export async function deleteCustomPageAction(slug: string): Promise<ActionResult> {
+  const session = await requireAdmin();
+  if (getPageDefinition(slug)) {
+    return { success: false, error: "Built-in pages cannot be deleted." };
+  }
+  if (isReservedSlug(slug)) {
+    return { success: false, error: "That slug is reserved." };
+  }
+  const existing = await getSiteContent(slug);
+  if (!existing) return { success: false, error: "Page not found." };
+
+  const ref = (await import("@/lib/db/site-content")).siteContentCol().doc(slug);
+  const revsSnap = await ref.collection("revisions").get();
+  const { adminDb } = await import("@/lib/firebase-admin");
+  const batch = adminDb.batch();
+  revsSnap.docs.forEach((d) => batch.delete(d.ref));
+  batch.delete(ref);
+  await batch.commit();
+
+  await logActivity("SITE_PAGE_DELETED", `Deleted page /${slug}.`, {
+    surface: "site-editor",
+    pageId: slug,
+    actorUid: session.uid,
+  }).catch(() => {});
+
+  revalidatePath("/admin/site");
+  revalidatePath(`/${slug}`);
+  return { success: true };
 }

@@ -14,7 +14,8 @@ export type ActivityAction =
   | "SITE_DRAFT_DISCARDED"
   | "SITE_PUBLISHED"
   | "SITE_REVISION_RESTORED"
-  | "SITE_PAGE_CREATED";
+  | "SITE_PAGE_CREATED"
+  | "SITE_PAGE_DELETED";
 
 export interface ActivityDoc {
   id: string;

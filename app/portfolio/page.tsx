@@ -10,15 +10,20 @@ import { PortfolioClient } from "./PortfolioClient";
 import { Footer }          from "@/components/Footer";
 import type { MasonryPhoto } from "@/components/MasonryGrid";
 import type { Metadata }     from "next";
-import { loadPublishedSections } from "@/lib/db/site-content";
-import { renderSections } from "@/lib/site-content/render";
+import { loadPublishedSections, loadDraftSections } from "@/lib/db/site-content";
+import { getSessionOrNull } from "@/lib/session";
+import { listSiteAssets, listProjectPhotos } from "@/lib/db/site-assets";
+import { SectionsCanvas } from "@/components/site-editor/SectionsCanvas";
+import { FloatingEditPill } from "@/components/site-editor/FloatingEditPill";
 
 export const metadata: Metadata = {
   title:       "Portfolio",
   description: "The full collection — weddings, portraits, editorial, and landscape work by Korrin.",
 };
 
-export const revalidate = 3600;
+export const dynamic = "force-dynamic";
+
+type Props = { searchParams?: Promise<{ edit?: string }> };
 
 async function getAllPortfolioPhotos(): Promise<MasonryPhoto[]> {
   const snapshot = await adminDb
@@ -61,7 +66,12 @@ const DEV_PHOTOS: MasonryPhoto[] = [
   { id: "18", src: "https://picsum.photos/seed/photo10/600/290", label: "Portrait",    category: "portrait" },
 ];
 
-export default async function PortfolioPage() {
+export default async function PortfolioPage({ searchParams }: Props) {
+  const sp = (await searchParams) ?? {};
+  const editParam = sp.edit === "1";
+  const session = await getSessionOrNull();
+  const isAdmin = session?.role === "ADMIN";
+
   let photos = DEV_PHOTOS;
   try {
     const dbPhotos = await getAllPortfolioPhotos();
@@ -70,12 +80,40 @@ export default async function PortfolioPage() {
     // Firestore not yet configured — use dev placeholders
   }
 
-  const cmsSections = await loadPublishedSections("portfolio").catch(() => null);
+  const draft = isAdmin && editParam ? await loadDraftSections("portfolio").catch(() => null) : null;
+  const published = await loadPublishedSections("portfolio").catch(() => null);
+  const sections = draft ?? published;
+
+  const renderCanvas = (sections && sections.length > 0) || (isAdmin && editParam);
+  const pickerData = isAdmin
+    ? {
+        siteAssets: (await listSiteAssets()).map((a) => ({
+          id: a.id,
+          cloudflareImageId: a.cloudflareImageId,
+          label: a.label,
+          altText: a.altText,
+        })),
+        projectPhotos: (await listProjectPhotos()).map((p) => ({
+          photoId: p.photoId,
+          eventId: p.eventId,
+          cloudflareImageId: p.cloudflareImageId,
+          label: p.label,
+          category: p.category,
+        })),
+      }
+    : { siteAssets: [], projectPhotos: [] };
 
   return (
     <div style={{ paddingTop: "72px" }} className="page-fade-in">
-      {cmsSections && cmsSections.length > 0 ? (
-        renderSections(cmsSections)
+      {renderCanvas ? (
+        <SectionsCanvas
+          pageId="portfolio"
+          pageLabel="Portfolio"
+          initialSections={sections && sections.length > 0 ? sections : []}
+          isAdmin={isAdmin}
+          editParam={editParam}
+          pickerData={pickerData}
+        />
       ) : (
         <div style={{ padding: "4rem 4rem 3rem", borderBottom: "0.5px solid var(--border)", marginBottom: "3rem" }}>
           <p style={{ fontSize: "0.65rem", letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--olive)", marginBottom: "1rem" }}>
@@ -89,6 +127,7 @@ export default async function PortfolioPage() {
 
       <PortfolioClient photos={photos} />
       <Footer />
+      {isAdmin && !editParam && <FloatingEditPill pageLabel="Portfolio" />}
     </div>
   );
 }

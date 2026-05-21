@@ -18,48 +18,18 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Footer } from "@/components/Footer";
-import { loadPublishedSections } from "@/lib/db/site-content";
-import { renderSections } from "@/lib/site-content/render";
+import { loadPublishedSections, loadDraftSections } from "@/lib/db/site-content";
+import { isReservedSlug } from "@/lib/site-content/slugs";
+import { getSessionOrNull } from "@/lib/session";
+import { listSiteAssets, listProjectPhotos } from "@/lib/db/site-assets";
+import { SectionsCanvas } from "@/components/site-editor/SectionsCanvas";
 
 export const dynamic = "force-dynamic";
 
-// Slugs the admin can NEVER claim. Anything that maps to an existing
-// app/ directory or special slot belongs here. Keep alphabetised.
-const RESERVED_SLUGS = new Set<string>([
-  "admin",
-  "api",
-  "booking",
-  "c",
-  "day-of-room",
-  "favicon.ico",
-  "gallery",
-  "investment",
-  "journal",
-  "locations",
-  "login",
-  "magnet",
-  "portal",
-  "portfolio",
-  "questionnaire",
-  "r",
-  "settings",
-  "shop",
-  "sign-contract",
-  "sitemap.xml",
-  "style",
-  "t",
-  "welcome-packet",
-  // Editable built-ins handled by their own routes
-  "about",
-  "home",
-  "footer",
-]);
-
-export function isReservedSlug(slug: string): boolean {
-  return RESERVED_SLUGS.has(slug.toLowerCase());
-}
-
-type Props = { params: Promise<{ slug: string }> };
+type Props = {
+  params: Promise<{ slug: string }>;
+  searchParams?: Promise<{ edit?: string }>;
+};
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
@@ -69,15 +39,51 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return { title: slug.charAt(0).toUpperCase() + slug.slice(1) };
 }
 
-export default async function CustomPage({ params }: Props) {
+export default async function CustomPage({ params, searchParams }: Props) {
   const { slug } = await params;
   if (isReservedSlug(slug)) notFound();
-  const published = await loadPublishedSections(slug);
-  if (!published) notFound();
+  const sp = (await searchParams) ?? {};
+  const editParam = sp.edit === "1";
+
+  const session = await getSessionOrNull();
+  const isAdmin = session?.role === "ADMIN";
+
+  // Admins in edit mode see the draft (so unpublished sections are editable
+  // before they go live). Otherwise the public catch-all only renders
+  // published docs — draft-only pages stay invisible to visitors.
+  const draft = isAdmin && editParam ? await loadDraftSections(slug).catch(() => null) : null;
+  const published = await loadPublishedSections(slug).catch(() => null);
+  const sections = draft ?? published;
+  if (!sections && !(isAdmin && editParam)) notFound();
+
+  const pickerData = isAdmin
+    ? {
+        siteAssets: (await listSiteAssets()).map((a) => ({
+          id: a.id,
+          cloudflareImageId: a.cloudflareImageId,
+          label: a.label,
+          altText: a.altText,
+        })),
+        projectPhotos: (await listProjectPhotos()).map((p) => ({
+          photoId: p.photoId,
+          eventId: p.eventId,
+          cloudflareImageId: p.cloudflareImageId,
+          label: p.label,
+          category: p.category,
+        })),
+      }
+    : { siteAssets: [], projectPhotos: [] };
 
   return (
     <div style={{ paddingTop: "72px" }} className="page-fade-in">
-      {renderSections(published)}
+      <SectionsCanvas
+        pageId={slug}
+        pageLabel={slug.charAt(0).toUpperCase() + slug.slice(1)}
+        initialSections={sections ?? []}
+        isAdmin={isAdmin}
+        editParam={editParam}
+        pickerData={pickerData}
+      />
       <Footer />
     </div>
   );
