@@ -117,6 +117,7 @@ export function LoginForm() {
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [activeProvider, setActiveProvider] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   // Role-aware redirect helper
   function redirectForRole(role: string) {
@@ -346,11 +347,30 @@ export function LoginForm() {
         </div>
 
         <div style={{ marginBottom: "1rem" }}>
-          <label style={{ display: "block", fontSize: "0.68rem", letterSpacing: "0.14em", textTransform: "uppercase" as const, color: "var(--charcoal-muted)", marginBottom: "0.5rem" }}>
-            Password
-          </label>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "0.5rem" }}>
+            <label style={{ fontSize: "0.68rem", letterSpacing: "0.14em", textTransform: "uppercase" as const, color: "var(--charcoal-muted)" }}>
+              Password
+            </label>
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              style={{
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                fontSize: "0.7rem",
+                letterSpacing: "0.04em",
+                color: "var(--olive)",
+                padding: 0,
+                fontFamily: "'Jost', sans-serif",
+              }}
+              aria-pressed={showPassword}
+            >
+              {showPassword ? "Hide" : "Show"}
+            </button>
+          </div>
           <input
-            type="password"
+            type={showPassword ? "text" : "password"}
             value={password}
             onChange={(e) => { setPassword(e.target.value); setPasswordError(null); }}
             placeholder={isSignUp ? "Create a password (6+ characters)" : "Your password"}
@@ -365,7 +385,7 @@ export function LoginForm() {
               Confirm Password
             </label>
             <input
-              type="password"
+              type={showPassword ? "text" : "password"}
               value={confirmPassword}
               onChange={(e) => { setConfirmPassword(e.target.value); setPasswordError(null); }}
               placeholder="Repeat your password"

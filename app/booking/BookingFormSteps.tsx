@@ -30,47 +30,35 @@ import { submitBooking } from "./actions";
 
 type SessionType =
   | "Portrait"
-  | "Engagement"
-  | "Wedding"
   | "Family"
-  | "Editorial"
-  | "Commercial";
-
-type LocationLabel =
-  | "Cary / Raleigh-Durham area"
-  | "North Carolina"
-  | "I'll travel — somewhere else";
-
-type MoodTag =
-  | "light-airy"
-  | "dark-moody"
-  | "editorial"
-  | "documentary"
-  | "bold-cinematic";
+  | "Greek-life event";
 
 type ReferralSource =
-  | "Website"
   | "Instagram"
+  | "TikTok"
   | "Google"
-  | "Referral"
+  | "Friend or Family"
   | "Other";
 
-type StepNum = 1 | 2 | 3 | 4;
+// Step 2 (mood + soft-commit checkbox + read-process-page checkbox) was
+// removed in the May 2026 redesign — Korrin asked for no moods, Quinn +
+// Rowan both flagged the checkboxes as noise. The wizard is now 3 steps:
+// session/location → details → review.
+type StepNum = 1 | 2 | 3;
 
 interface Draft {
   sessionType: SessionType | "";
   preferredMonth: string;          // "" | "not-sure" | "YYYY-MM"
-  readyToCommit: boolean;          // soft commitment checkbox (Step 1)
-  locationLabel: LocationLabel | "";
+  locationLabel: string;           // free-form city / area
   locationDetail: string;
-  moodTag: MoodTag | "";
   message: string;
   firstName: string;
   lastName: string;
   email: string;
   phone: string;
+  smsConsent: boolean;             // "Can we contact you?" checkbox
   referralSource: ReferralSource;
-  readProcessPage: boolean;
+  referredByEmail: string;         // optional — visitor types the email of who referred them
 }
 
 const DRAFT_KEY = "korrin-booking-draft";
@@ -78,98 +66,30 @@ const DRAFT_KEY = "korrin-booking-draft";
 const EMPTY_DRAFT: Draft = {
   sessionType: "",
   preferredMonth: "not-sure",
-  readyToCommit: false,
   locationLabel: "",
   locationDetail: "",
-  moodTag: "",
   message: "",
   firstName: "",
   lastName: "",
   email: "",
   phone: "",
-  referralSource: "Website",
-  readProcessPage: false,
+  smsConsent: false,
+  referralSource: "Instagram",
+  referredByEmail: "",
 };
 
 const STEP_TITLES: Record<StepNum, string> = {
   1: "What kind of session?",
-  2: "Where and what vibe?",
-  3: "Your details",
-  4: "Review and send",
+  2: "Your details",
+  3: "Review and send",
 };
 
 // ─── Static data ───────────────────────────────────────────────────────────
 
-const SESSION_TILES: {
-  value: SessionType;
-  eyebrow: string;
-  title: string;
-  subtext: string;
-}[] = [
-  {
-    value: "Portrait",
-    eyebrow: "Solo",
-    title: "Portrait",
-    subtext: "1–2 hour studio or location session",
-  },
-  {
-    value: "Engagement",
-    eyebrow: "Two of you",
-    title: "Engagement",
-    subtext: "Golden-hour story, 1.5 hours",
-  },
-  {
-    value: "Wedding",
-    eyebrow: "The day",
-    title: "Wedding",
-    subtext: "Full-day editorial coverage",
-  },
-  {
-    value: "Family",
-    eyebrow: "Together",
-    title: "Family",
-    subtext: "Outdoor or in-home, relaxed pace",
-  },
-  {
-    value: "Editorial",
-    eyebrow: "Concept",
-    title: "Editorial",
-    subtext: "Magazine-style narrative shoot",
-  },
-  {
-    value: "Commercial",
-    eyebrow: "Brand",
-    title: "Commercial",
-    subtext: "Product, lifestyle, or campaign",
-  },
-];
-
-const MOOD_TILES: { value: MoodTag; title: string; subtext: string }[] = [
-  {
-    value: "light-airy",
-    title: "Light & Airy",
-    subtext: "Soft, sunlit, romantic",
-  },
-  {
-    value: "dark-moody",
-    title: "Dark & Moody",
-    subtext: "Rich shadows, painterly tone",
-  },
-  {
-    value: "editorial",
-    title: "Editorial / Magazine",
-    subtext: "Styled, intentional, refined",
-  },
-  {
-    value: "documentary",
-    title: "Documentary / Candid",
-    subtext: "Unposed, real moments",
-  },
-  {
-    value: "bold-cinematic",
-    title: "Bold & Cinematic",
-    subtext: "Filmic, high-contrast, dramatic",
-  },
+const SESSION_OPTIONS: { value: SessionType; label: string }[] = [
+  { value: "Portrait",         label: "Portrait (senior, branding, solo)" },
+  { value: "Family",           label: "Family / Couples" },
+  { value: "Greek-life event", label: "Greek-life event (formal, philanthropy, mixer)" },
 ];
 
 // ─── Style primitives ──────────────────────────────────────────────────────
@@ -253,11 +173,6 @@ function buildMonthOptions(): { value: string; label: string }[] {
   return out;
 }
 
-function moodLabel(value: MoodTag | ""): string {
-  if (!value) return "";
-  return MOOD_TILES.find((m) => m.value === value)?.title ?? value;
-}
-
 // ─── Component ─────────────────────────────────────────────────────────────
 
 export function BookingFormSteps({
@@ -265,11 +180,12 @@ export function BookingFormSteps({
 }: {
   /**
    * Optional pre-selected session type. Sourced from /investment via
-   * `?package=mini|story|day` and resolved server-side. When present we
-   * override whatever the local draft says so the visitor lands on the form
-   * with the relevant tile already selected.
+   * `?package=mini|story|day` and from /c/<slug> campaign CTAs. Accepts any
+   * string (legacy values like "Wedding" may arrive from /investment until
+   * those packages are renamed) — unknown values fall through and the
+   * dropdown stays unselected, which is fine.
    */
-  initialSessionType?: SessionType | null;
+  initialSessionType?: string | null;
 } = {}) {
   const [step, setStep] = useState<StepNum>(1);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
@@ -282,12 +198,15 @@ export function BookingFormSteps({
   const topRef = useRef<HTMLDivElement | null>(null);
 
   // Rehydrate from localStorage on mount. If a `?package=` arrived from
-  // /investment, overlay its sessionType on top of the rehydrated draft.
+  // /investment, overlay its sessionType on top of the rehydrated draft —
+  // but only if the value matches a current SessionType. Unknown legacy
+  // values are dropped so the form doesn't display an out-of-vocab option.
   useEffect(() => {
     const loaded = loadDraft();
+    const known = SESSION_OPTIONS.find((o) => o.value === initialSessionType);
     setDraft(
-      initialSessionType
-        ? { ...loaded, sessionType: initialSessionType }
+      known
+        ? { ...loaded, sessionType: known.value }
         : loaded,
     );
     setHydrated(true);
@@ -316,12 +235,11 @@ export function BookingFormSteps({
 
   // ─── Per-step validation ─────────────────────────────────────────────────
   const step1Valid = draft.sessionType !== "";
-  const step2Valid = draft.locationLabel !== "" && draft.moodTag !== "";
-  const step3Valid =
+  const step2Valid =
     draft.firstName.trim().length > 0 &&
     draft.lastName.trim().length > 0 &&
     isValidEmail(draft.email);
-  const step4Valid = step1Valid && step2Valid && step3Valid;
+  const step3Valid = step1Valid && step2Valid;
 
   function step1Hint(): string | null {
     if (step1Valid) return null;
@@ -329,14 +247,6 @@ export function BookingFormSteps({
   }
   function step2Hint(): string | null {
     if (step2Valid) return null;
-    if (!draft.locationLabel && !draft.moodTag) {
-      return "Choose a location and the mood you're drawn to.";
-    }
-    if (!draft.locationLabel) return "Choose where the session will happen.";
-    return "Pick the mood you're drawn to.";
-  }
-  function step3Hint(): string | null {
-    if (step3Valid) return null;
     if (!draft.firstName.trim() || !draft.lastName.trim()) {
       return "Add your name so Korrin knows who to reply to.";
     }
@@ -348,7 +258,7 @@ export function BookingFormSteps({
     e.preventDefault();
     setError(null);
 
-    if (!step4Valid) {
+    if (!step3Valid) {
       setError("Please complete every step before sending.");
       return;
     }
@@ -368,15 +278,9 @@ export function BookingFormSteps({
     } else {
       summaryLines.push("Tentative month: Not sure yet");
     }
-    if (draft.readyToCommit) {
-      summaryLines.push("Soft commitment: ready to book the right fit");
-    }
-    if (draft.locationLabel) summaryLines.push(`Location: ${draft.locationLabel}`);
+    if (draft.locationLabel.trim()) summaryLines.push(`Location: ${draft.locationLabel.trim()}`);
     if (draft.locationDetail.trim()) {
       summaryLines.push(`City / venue: ${draft.locationDetail.trim()}`);
-    }
-    if (draft.moodTag) {
-      summaryLines.push(`Mood: ${moodLabel(draft.moodTag)}`);
     }
     const userMessage = draft.message.trim();
     const messageBody =
@@ -386,11 +290,12 @@ export function BookingFormSteps({
     if (draft.preferredMonth && draft.preferredMonth !== "not-sure") {
       fd.set("preferredMonth", draft.preferredMonth);
     }
-    if (draft.locationLabel) fd.set("locationLabel", draft.locationLabel);
+    if (draft.locationLabel.trim()) fd.set("locationLabel", draft.locationLabel.trim());
     if (draft.locationDetail.trim()) fd.set("locationDetail", draft.locationDetail.trim());
-    if (draft.moodTag) fd.set("moodTag", draft.moodTag);
     if (draft.phone.trim()) fd.set("phone", draft.phone.trim());
+    if (draft.smsConsent) fd.set("smsConsent", "on");
     fd.set("referralSource", draft.referralSource);
+    if (draft.referredByEmail.trim()) fd.set("referredByEmail", draft.referredByEmail.trim());
 
     startTransition(async () => {
       const result = await submitBooking(fd);
@@ -525,22 +430,10 @@ export function BookingFormSteps({
 
   // Compute Next-button enablement for the *current* step.
   const canAdvance =
-    step === 1
-      ? step1Valid
-      : step === 2
-        ? step2Valid
-        : step === 3
-          ? step3Valid
-          : step4Valid;
+    step === 1 ? step1Valid : step === 2 ? step2Valid : step3Valid;
 
   const currentHint =
-    step === 1
-      ? step1Hint()
-      : step === 2
-        ? step2Hint()
-        : step === 3
-          ? step3Hint()
-          : null;
+    step === 1 ? step1Hint() : step === 2 ? step2Hint() : null;
 
   // ─── Render ──────────────────────────────────────────────────────────────
   return (
@@ -556,9 +449,8 @@ export function BookingFormSteps({
           />
         )}
         {step === 2 && <Step2 draft={draft} update={update} />}
-        {step === 3 && <Step3 draft={draft} update={update} />}
-        {step === 4 && (
-          <Step4
+        {step === 3 && (
+          <Step3
             draft={draft}
             monthOptions={monthOptions}
             goToStep={goToStep}
@@ -592,7 +484,7 @@ export function BookingFormSteps({
             setStep((s) => (s > 1 ? ((s - 1) as StepNum) : s))
           }
           onNext={() =>
-            setStep((s) => (s < 4 ? ((s + 1) as StepNum) : s))
+            setStep((s) => (s < 3 ? ((s + 1) as StepNum) : s))
           }
         />
       </form>
@@ -622,7 +514,7 @@ function ProgressBar({ step }: { step: StepNum }) {
             color: "var(--olive)",
           }}
         >
-          Step {step} of 4 — {STEP_TITLES[step]}
+          Step {step} of 3 — {STEP_TITLES[step]}
         </p>
         <p
           style={{
@@ -633,17 +525,17 @@ function ProgressBar({ step }: { step: StepNum }) {
             fontFamily: "'Cormorant Garamond', serif",
           }}
         >
-          {Math.round(((step - 1) / 3) * 100)}%
+          {Math.round(((step - 1) / 2) * 100)}%
         </p>
       </div>
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "1fr 1fr 1fr 1fr",
+          gridTemplateColumns: "1fr 1fr 1fr",
           gap: "0.5rem",
         }}
       >
-        {([1, 2, 3, 4] as StepNum[]).map((n) => {
+        {([1, 2, 3] as StepNum[]).map((n) => {
           const completed = n < step;
           const active = n === step;
           let background: string;
@@ -695,55 +587,23 @@ function Step1({
         What kind of <em style={{ fontStyle: "italic" }}>session</em>?
       </h2>
 
-      <div className="booking-tile-grid-3" style={{ marginBottom: "2rem" }}>
-        {SESSION_TILES.map((tile) => {
-          const selected = draft.sessionType === tile.value;
-          return (
-            <button
-              type="button"
-              key={tile.value}
-              onClick={() => update("sessionType", tile.value)}
-              style={tileStyle(selected)}
-              aria-pressed={selected}
-            >
-              <span
-                style={{
-                  fontSize: "0.6rem",
-                  letterSpacing: "0.2em",
-                  textTransform: "uppercase",
-                  color: selected ? "var(--olive)" : "var(--charcoal-muted)",
-                  marginBottom: "0.6rem",
-                  display: "block",
-                }}
-              >
-                {tile.eyebrow}
-              </span>
-              <span
-                style={{
-                  fontFamily: "'Cormorant Garamond', serif",
-                  fontSize: "1.45rem",
-                  fontWeight: 300,
-                  color: "var(--charcoal)",
-                  lineHeight: 1.2,
-                  display: "block",
-                  marginBottom: "0.4rem",
-                }}
-              >
-                {tile.title}
-              </span>
-              <span
-                style={{
-                  fontSize: "0.8rem",
-                  color: "var(--charcoal-muted)",
-                  lineHeight: 1.55,
-                  display: "block",
-                }}
-              >
-                {tile.subtext}
-              </span>
-            </button>
-          );
-        })}
+      <div style={{ marginBottom: "1.75rem" }}>
+        <label style={labelStyle} htmlFor="sessionType">
+          Session type
+        </label>
+        <select
+          id="sessionType"
+          value={draft.sessionType}
+          onChange={(e) => update("sessionType", e.target.value as SessionType | "")}
+          style={inputStyle}
+        >
+          <option value="">Select a session type</option>
+          {SESSION_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div style={{ marginBottom: "1.75rem" }}>
@@ -777,153 +637,42 @@ function Step1({
         </p>
       </div>
 
-      <label
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          gap: "0.75rem",
-          fontSize: "0.85rem",
-          color: "var(--charcoal-light)",
-          lineHeight: 1.6,
-          cursor: "pointer",
-          padding: "0.85rem 0",
-          borderTop: "0.5px solid var(--border)",
-          borderBottom: "0.5px solid var(--border)",
-        }}
-      >
-        <input
-          type="checkbox"
-          checked={draft.readyToCommit}
-          onChange={(e) => update("readyToCommit", e.target.checked)}
-          style={{
-            marginTop: "0.2rem",
-            accentColor: "var(--olive)",
-            width: "14px",
-            height: "14px",
-            flexShrink: 0,
-          }}
-        />
-        <span>
-          I&apos;m ready to book if it&apos;s the right fit.
-          <span
-            style={{
-              display: "block",
-              fontSize: "0.78rem",
-              color: "var(--charcoal-muted)",
-              marginTop: "0.2rem",
-              fontStyle: "italic",
-            }}
-          >
-            Optional — just helps Korrin prioritize her reply queue.
-          </span>
-        </span>
-      </label>
-    </div>
-  );
-}
-
-// ─── Step 2 ────────────────────────────────────────────────────────────────
-
-function Step2({
-  draft,
-  update,
-}: {
-  draft: Draft;
-  update: <K extends keyof Draft>(k: K, v: Draft[K]) => void;
-}) {
-  return (
-    <div>
-      <p style={stepEyebrowStyle}>Step Two</p>
-      <h2 style={stepHeadingStyle}>
-        Where and what <em style={{ fontStyle: "italic" }}>vibe</em>?
-      </h2>
-
       <div style={{ marginBottom: "1.75rem" }}>
         <label style={labelStyle} htmlFor="locationLabel">
-          Location
+          Where will the session be? (optional)
         </label>
-        <select
+        <input
           id="locationLabel"
+          type="text"
           value={draft.locationLabel}
-          onChange={(e) =>
-            update("locationLabel", e.target.value as Draft["locationLabel"])
-          }
+          onChange={(e) => update("locationLabel", e.target.value)}
+          placeholder="e.g. Tuscaloosa, AL / Louisville, KY / your sorority house"
           style={inputStyle}
-        >
-          <option value="">Select a location</option>
-          <option value="Cary / Raleigh-Durham area">
-            Cary / Raleigh-Durham area
-          </option>
-          <option value="North Carolina">North Carolina</option>
-          <option value="I'll travel — somewhere else">
-            I&apos;ll travel — somewhere else
-          </option>
-        </select>
+          maxLength={120}
+        />
       </div>
 
-      <div style={{ marginBottom: "2rem" }}>
+      <div>
         <label style={labelStyle} htmlFor="locationDetail">
-          City or venue (optional)
+          Venue or specific spot (optional)
         </label>
         <input
           id="locationDetail"
           type="text"
           value={draft.locationDetail}
           onChange={(e) => update("locationDetail", e.target.value)}
-          placeholder="e.g. Umstead Park, The Bradford"
+          placeholder="e.g. The Quad, the chapter room, Cherokee Park"
           style={inputStyle}
           maxLength={200}
         />
-      </div>
-
-      <p style={{ ...labelStyle, marginBottom: "0.75rem" }}>
-        What mood are you drawn to?
-      </p>
-      <div className="booking-tile-grid-mood">
-        {MOOD_TILES.map((mood) => {
-          const selected = draft.moodTag === mood.value;
-          return (
-            <button
-              type="button"
-              key={mood.value}
-              onClick={() => update("moodTag", mood.value)}
-              style={tileStyle(selected)}
-              aria-pressed={selected}
-            >
-              <span
-                style={{
-                  fontFamily: "'Cormorant Garamond', serif",
-                  fontSize: "1.25rem",
-                  fontWeight: 300,
-                  color: "var(--charcoal)",
-                  lineHeight: 1.2,
-                  display: "block",
-                  marginBottom: "0.4rem",
-                }}
-              >
-                {mood.title}
-              </span>
-              <span
-                style={{
-                  fontSize: "0.78rem",
-                  color: "var(--charcoal-muted)",
-                  lineHeight: 1.55,
-                  display: "block",
-                }}
-              >
-                {mood.subtext}
-              </span>
-            </button>
-          );
-        })}
       </div>
     </div>
   );
 }
 
-// ─── Step 3 ────────────────────────────────────────────────────────────────
+// ─── Step 2 — Details ─────────────────────────────────────────────────────
 
-function Step3({
+function Step2({
   draft,
   update,
 }: {
@@ -933,10 +682,36 @@ function Step3({
   const charsLeft = 1000 - draft.message.length;
   return (
     <div>
-      <p style={stepEyebrowStyle}>Step Three</p>
+      <p style={stepEyebrowStyle}>Step Two</p>
       <h2 style={stepHeadingStyle}>
         Your <em style={{ fontStyle: "italic" }}>details</em>
       </h2>
+
+      <p
+        style={{
+          fontSize: "0.85rem",
+          color: "var(--charcoal-muted)",
+          lineHeight: 1.65,
+          marginTop: "-1rem",
+          marginBottom: "1.75rem",
+          fontStyle: "italic",
+          fontFamily: "'Cormorant Garamond', serif",
+        }}
+      >
+        Curious what each package looks like?{" "}
+        <Link
+          href="/investment"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            color: "var(--olive)",
+            textDecoration: "underline",
+            textUnderlineOffset: "3px",
+          }}
+        >
+          Open the process page →
+        </Link>
+      </p>
 
       <div style={{ marginBottom: "2rem" }}>
         <label style={labelStyle} htmlFor="message">
@@ -1017,7 +792,7 @@ function Step3({
         />
       </div>
 
-      <div style={{ marginBottom: "1.6rem" }}>
+      <div style={{ marginBottom: "0.75rem" }}>
         <label style={labelStyle} htmlFor="phone">Phone (optional)</label>
         <input
           id="phone"
@@ -1030,7 +805,34 @@ function Step3({
         />
       </div>
 
-      <div style={{ marginBottom: "1.75rem" }}>
+      <label
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: "0.6rem",
+          fontSize: "0.82rem",
+          color: "var(--charcoal-light)",
+          lineHeight: 1.55,
+          cursor: "pointer",
+          marginBottom: "1.6rem",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={draft.smsConsent}
+          onChange={(e) => update("smsConsent", e.target.checked)}
+          style={{
+            marginTop: "0.2rem",
+            accentColor: "var(--olive)",
+            width: "14px",
+            height: "14px",
+            flexShrink: 0,
+          }}
+        />
+        <span>It&apos;s ok to text me at this number.</span>
+      </label>
+
+      <div style={{ marginBottom: "1.25rem" }}>
         <label style={labelStyle} htmlFor="referralSource">
           How did you hear about me?
         </label>
@@ -1042,62 +844,47 @@ function Step3({
           }
           style={inputStyle}
         >
-          <option value="Website">Website</option>
           <option value="Instagram">Instagram</option>
+          <option value="TikTok">TikTok</option>
           <option value="Google">Google</option>
-          <option value="Referral">Referral</option>
+          <option value="Friend or Family">Friend or Family</option>
           <option value="Other">Other</option>
         </select>
       </div>
 
-      <label
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          gap: "0.75rem",
-          fontSize: "0.85rem",
-          color: "var(--charcoal-light)",
-          lineHeight: 1.6,
-          cursor: "pointer",
-          padding: "0.85rem 0",
-          borderTop: "0.5px solid var(--border)",
-          borderBottom: "0.5px solid var(--border)",
-        }}
-      >
+      <div style={{ marginBottom: "0.5rem" }}>
+        <label style={labelStyle} htmlFor="referredByEmail">
+          Who referred you? (optional)
+        </label>
         <input
-          type="checkbox"
-          checked={draft.readProcessPage}
-          onChange={(e) => update("readProcessPage", e.target.checked)}
-          style={{
-            marginTop: "0.2rem",
-            accentColor: "var(--olive)",
-            width: "14px",
-            height: "14px",
-            flexShrink: 0,
-          }}
+          id="referredByEmail"
+          type="email"
+          value={draft.referredByEmail}
+          onChange={(e) => update("referredByEmail", e.target.value)}
+          style={inputStyle}
+          placeholder="their@email.com"
+          maxLength={120}
         />
-        <span>
-          I&apos;ve read the{" "}
-          <Link
-            href="/investment"
-            style={{
-              color: "var(--olive)",
-              textDecoration: "underline",
-              textUnderlineOffset: "3px",
-            }}
-          >
-            process
-          </Link>{" "}
-          page.
-        </span>
-      </label>
+        <p
+          style={{
+            fontSize: "0.72rem",
+            color: "var(--charcoal-muted)",
+            marginTop: "0.5rem",
+            lineHeight: 1.5,
+            fontStyle: "italic",
+          }}
+        >
+          If a friend pointed you to Korrin, drop their email here so we can
+          thank them properly.
+        </p>
+      </div>
     </div>
   );
 }
 
-// ─── Step 4 — Review ───────────────────────────────────────────────────────
+// ─── Step 3 — Review ───────────────────────────────────────────────────────
 
-function Step4({
+function Step3({
   draft,
   monthOptions,
   goToStep,
@@ -1113,7 +900,7 @@ function Step4({
       : "Not sure yet";
 
   const sessionTitle =
-    SESSION_TILES.find((s) => s.value === draft.sessionType)?.title ||
+    SESSION_OPTIONS.find((s) => s.value === draft.sessionType)?.label ||
     draft.sessionType ||
     "—";
 
@@ -1121,7 +908,7 @@ function Step4({
 
   return (
     <div>
-      <p style={stepEyebrowStyle}>Step Four</p>
+      <p style={stepEyebrowStyle}>Step Three</p>
       <h2 style={stepHeadingStyle}>
         Look this <em style={{ fontStyle: "italic" }}>over</em>
       </h2>
@@ -1147,36 +934,31 @@ function Step4({
         rows={[
           { label: "Type", value: sessionTitle || "—" },
           { label: "Tentative month", value: monthValue },
+          { label: "Location", value: draft.locationLabel.trim() || "—" },
           {
-            label: "Soft commitment",
-            value: draft.readyToCommit
-              ? "Ready to book the right fit"
-              : "Just exploring",
-          },
-        ]}
-      />
-
-      <ReviewSection
-        title="Location & mood"
-        onEdit={() => goToStep(2)}
-        rows={[
-          { label: "Location", value: draft.locationLabel || "—" },
-          {
-            label: "City or venue",
+            label: "Venue or spot",
             value: draft.locationDetail.trim() || "—",
           },
-          { label: "Mood", value: moodLabel(draft.moodTag) || "—" },
         ]}
       />
 
       <ReviewSection
         title="Your details"
-        onEdit={() => goToStep(3)}
+        onEdit={() => goToStep(2)}
         rows={[
           { label: "Name", value: fullName || "—" },
           { label: "Email", value: draft.email.trim() || "—" },
-          { label: "Phone", value: draft.phone.trim() || "—" },
+          {
+            label: "Phone",
+            value: draft.phone.trim()
+              ? `${draft.phone.trim()}${draft.smsConsent ? " (text ok)" : ""}`
+              : "—",
+          },
           { label: "Heard about me via", value: draft.referralSource },
+          {
+            label: "Referred by",
+            value: draft.referredByEmail.trim() || "—",
+          },
           {
             label: "Note to Korrin",
             value: draft.message.trim() || "(no additional notes)",
@@ -1317,7 +1099,7 @@ function StepNav({
   onNext: () => void;
 }) {
   const showBack = step > 1;
-  const isFinal = step === 4;
+  const isFinal = step === 3;
 
   return (
     <div

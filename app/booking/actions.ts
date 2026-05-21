@@ -18,22 +18,37 @@ import { getFirstAdminUser } from "@/lib/db/users";
 import { getStudioHoursOrDefault } from "@/lib/db/admin-settings";
 import { isStudioOpen, describeClosedReason } from "@/lib/studio-hours";
 
+// Public session-type vocabulary (May 2026 redesign — operator decision):
+// keep Portrait + Family, add Greek-life event. Legacy values
+// (Wedding/Engagement/Editorial/Commercial) stay in the schema so projects
+// created before this change still validate, but the booking form no longer
+// surfaces them. Lead scoring (lib/lead-scoring.ts) covers the same enum.
 const BookingSchema = z.object({
   firstName:     z.string().min(1, "First name is required").max(100),
   lastName:      z.string().min(1, "Last name is required").max(100),
   email:         z.string().email("Please enter a valid email address"),
-  sessionType:   z.enum(["Wedding", "Portrait", "Editorial", "Family", "Engagement", "Commercial"], {
+  sessionType:   z.enum([
+    "Portrait",
+    "Family",
+    "Greek-life event",
+    // ── Legacy (still accepted on existing projects) ──
+    "Wedding",
+    "Engagement",
+    "Editorial",
+    "Commercial",
+  ], {
     errorMap: () => ({ message: "Please select a session type" }),
   }),
   preferredDate: z.string().optional(),
   message:       z.string().min(10, "Please tell me a bit more about your vision").max(5000),
   // ── Optional multi-step form extensions (all default to safe no-ops) ────
-  phone:           z.string().max(40).optional(),
-  referralSource:  z.enum(["Website", "Instagram", "Google", "Referral", "Other"]).optional(),
-  locationLabel:   z.enum(["Cary / Raleigh-Durham area", "North Carolina", "I'll travel — somewhere else"]).optional(),
-  locationDetail:  z.string().max(200).optional(),
-  moodTag:         z.enum(["light-airy", "dark-moody", "editorial", "documentary", "bold-cinematic"]).optional(),
-  preferredMonth:  z.string().regex(/^\d{4}-\d{2}$/, "Invalid month").optional(),
+  phone:             z.string().max(40).optional(),
+  smsConsent:        z.union([z.literal("on"), z.literal("true")]).optional(),
+  referralSource:    z.enum(["Instagram", "TikTok", "Google", "Friend or Family", "Other"]).optional(),
+  referredByEmail:   z.string().email().optional().or(z.literal("")),
+  locationLabel:     z.string().max(120).optional(),
+  locationDetail:    z.string().max(200).optional(),
+  preferredMonth:    z.string().regex(/^\d{4}-\d{2}$/, "Invalid month").optional(),
 });
 
 type BookingResult = { success: true } | { success: false; error: string };
@@ -52,12 +67,13 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
     sessionType:    formData.get("sessionType"),
     preferredDate:  opt(formData.get("preferredDate")),
     message:        formData.get("message"),
-    phone:          opt(formData.get("phone")),
-    referralSource: opt(formData.get("referralSource")),
-    locationLabel:  opt(formData.get("locationLabel")),
-    locationDetail: opt(formData.get("locationDetail")),
-    moodTag:        opt(formData.get("moodTag")),
-    preferredMonth: opt(formData.get("preferredMonth")),
+    phone:           opt(formData.get("phone")),
+    smsConsent:      opt(formData.get("smsConsent")),
+    referralSource:  opt(formData.get("referralSource")),
+    referredByEmail: opt(formData.get("referredByEmail")),
+    locationLabel:   opt(formData.get("locationLabel")),
+    locationDetail:  opt(formData.get("locationDetail")),
+    preferredMonth:  opt(formData.get("preferredMonth")),
   });
 
   if (!parsed.success) {
@@ -66,7 +82,8 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
 
   const {
     firstName, lastName, email, sessionType, preferredDate, message,
-    phone, referralSource, locationLabel, locationDetail, moodTag, preferredMonth,
+    phone, smsConsent, referralSource, referredByEmail,
+    locationLabel, locationDetail, preferredMonth,
   } = parsed.data;
 
   // If only a month was provided (no specific date), use the first of that month
@@ -116,9 +133,6 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
   try {
     // ── Automatic tagging heuristics ──────────────────────────────────────────
     const autoTags: string[] = [sessionType]; // Automatically tag the session type
-
-    // Mood tile selection → namespaced tag (e.g. "mood:dark-moody").
-    if (moodTag) autoTags.push(`mood:${moodTag}`);
 
     // "Rush" — preferred date is within 30 days
     if (effectivePreferredDate) {
@@ -230,6 +244,26 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
       }
     }
 
+    // Fallback: the public form lets the visitor type the email of the person
+    // who referred them. If we don't already have a referrer from the
+    // `?ref=` link, resolve the email → client id. Best-effort; an unknown
+    // email is fine (we still want the inquiry).
+    const trimmedReferredByEmail = (referredByEmail ?? "").trim().toLowerCase();
+    if (!referredByClientId && trimmedReferredByEmail) {
+      try {
+        const refByEmailSnap = await adminDb
+          .collection("clients")
+          .where("email", "==", trimmedReferredByEmail)
+          .limit(1)
+          .get();
+        if (!refByEmailSnap.empty) {
+          referredByClientId = refByEmailSnap.docs[0].id;
+        }
+      } catch (err) {
+        console.error("referredByEmail resolution failed", { trimmedReferredByEmail, err });
+      }
+    }
+
     // 1. Find or create Client
     let clientId: string;
     const clientSnap = await adminDb.collection("clients").where("email", "==", email).limit(1).get();
@@ -302,10 +336,11 @@ export async function submitBooking(formData: FormData): Promise<BookingResult> 
       lastContactedAt: null,
       lastRespondedAt: null,
       // Optional multi-step extensions — null when not collected.
-      moodTag:        moodTag ?? null,
       locationLabel:  locationLabel ?? null,
       preferredMonth: preferredMonth ?? null,
       referralSource: referralSource ?? null,
+      referredByEmail: referredByEmail || null,
+      smsConsent:     !!smsConsent,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
