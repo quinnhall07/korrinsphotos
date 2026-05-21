@@ -2,17 +2,36 @@
 
 // components/admin/AdminSidebar.tsx
 // Admin navigation sidebar. usePathname drives the active link highlight.
+//
+// May 2026 reorg: collapsed from 5+ groups into 6 named-by-job groups so a
+// new operator can find things by intent. Every item carries a `tooltip`
+// surfaced via the native title attribute — Korrin can hover to remind
+// herself what each surface is. See docs/site-editor-review/REVIEW_NOTES.md
+// "Pain Point 4" for the vocabulary the tooltips draw from.
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-const NAV = [
+interface NavItem {
+  label: string;
+  href: string;
+  tooltip: string;
+  icon: React.ReactNode;
+}
+
+interface NavGroup {
+  group: string;
+  items: NavItem[];
+}
+
+const NAV: NavGroup[] = [
   {
     group: "Overview",
     items: [
       {
         label: "Dashboard",
         href: "/admin",
+        tooltip: "Overview of pending inquiries, recent events, and activity.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <rect x="1" y="1" width="6" height="6" rx="1" />
@@ -25,6 +44,7 @@ const NAV = [
       {
         label: "Inbox",
         href: "/admin/inbox",
+        tooltip: "Triage feed: new inquiries, payment events, signed contracts, automated nudges.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <path d="M2 9l2-6h8l2 6M2 9v5h12V9M2 9h4l1 2h2l1-2h4" />
@@ -34,6 +54,7 @@ const NAV = [
       {
         label: "Pipeline",
         href: "/admin/projects",
+        tooltip: "Every project across its lifecycle, from inquiry to delivered gallery.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <rect x="1" y="2" width="4" height="12" rx="0.5" />
@@ -45,6 +66,7 @@ const NAV = [
       {
         label: "Clients",
         href: "/admin/clients",
+        tooltip: "Universal client records (one per email). Lifetime spend, referrals, sessions.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <circle cx="8" cy="5" r="2.6" />
@@ -55,6 +77,7 @@ const NAV = [
       {
         label: "Capacity",
         href: "/admin/calendar",
+        tooltip: "Forward-looking calendar of booked shoots and editing workload.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <rect x="1" y="4" width="14" height="11" rx="0.5" />
@@ -72,6 +95,7 @@ const NAV = [
       {
         label: "Site editor",
         href: "/admin/site",
+        tooltip: "Edit text + photos on every public page. Draft → publish workflow.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <rect x="1.5" y="2.5" width="13" height="11" rx="0.5" />
@@ -83,6 +107,7 @@ const NAV = [
       {
         label: "Events",
         href: "/admin/events",
+        tooltip: "Confirmed shoots and their client galleries.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <rect x="1" y="4" width="14" height="11" rx="1" />
@@ -93,6 +118,7 @@ const NAV = [
       {
         label: "Locations",
         href: "/admin/locations",
+        tooltip: "Reusable shoot locations with parking, light, and permit notes.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <path d="M8 1c-3 0-5 2.2-5 5 0 3.7 5 9 5 9s5-5.3 5-9c0-2.8-2-5-5-5z" />
@@ -103,6 +129,7 @@ const NAV = [
       {
         label: "Vendors",
         href: "/admin/vendors",
+        tooltip: "Other industry contacts (planners, venues, HMUA) for referral reciprocity.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <path d="M2 6l6-4 6 4v8H2z" />
@@ -113,6 +140,7 @@ const NAV = [
       {
         label: "Lead Magnets",
         href: "/admin/lead-magnets",
+        tooltip: "Free downloadables gated behind an email-capture form, to grow the list.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <path d="M3 2h7l3 3v9H3z" />
@@ -124,6 +152,7 @@ const NAV = [
       {
         label: "Shop",
         href: "/admin/shop",
+        tooltip: "Digital products store (presets, courses, ebooks) with Stripe payment links.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <path d="M2 5h12l-1 9H3z" />
@@ -134,6 +163,7 @@ const NAV = [
       {
         label: "Journal",
         href: "/admin/journal",
+        tooltip: "Public blog. Posts can be auto-drafted from delivered projects for SEO.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <path d="M3 1h7l3 3v11H3z" />
@@ -145,6 +175,7 @@ const NAV = [
       {
         label: "Campaigns",
         href: "/admin/campaigns",
+        tooltip: "Marketing campaign tracker — UTM attribution + ad spend allocation.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <path d="M2 5h9l3 3-3 3H2z" />
@@ -160,6 +191,7 @@ const NAV = [
       {
         label: "Questionnaires",
         href: "/admin/questionnaires/templates",
+        tooltip: "Reusable question templates sent to clients after they book.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <rect x="2" y="2" width="12" height="12" rx="0.5" />
@@ -170,6 +202,7 @@ const NAV = [
       {
         label: "Users",
         href: "/admin/users",
+        tooltip: "Auth identities — anyone who has logged in (admins or clients).",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <circle cx="8" cy="5" r="3" />
@@ -185,6 +218,7 @@ const NAV = [
       {
         label: "Segments",
         href: "/admin/segments",
+        tooltip: "Saved Firestore filters — used as the audience for Broadcasts.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <circle cx="5" cy="6" r="3" />
@@ -196,6 +230,7 @@ const NAV = [
       {
         label: "Broadcasts",
         href: "/admin/broadcasts",
+        tooltip: "One-off mass emails to a Segment (newsletter blasts).",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <path d="M2 6l12-4-3 12-4-5z" />
@@ -206,6 +241,7 @@ const NAV = [
       {
         label: "Sequences",
         href: "/admin/sequences",
+        tooltip: "Multi-step automated drips triggered by status changes or dates.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <circle cx="3" cy="3" r="1.5" />
@@ -223,6 +259,7 @@ const NAV = [
       {
         label: "Finance",
         href: "/admin/reports/finance",
+        tooltip: "Revenue, deposits, monthly cash flow, deposit liability.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <path d="M2 14V2M2 14h12M5 11V7M8 11V4M11 11V8" />
@@ -232,6 +269,7 @@ const NAV = [
       {
         label: "Tax & Expenses",
         href: "/admin/reports/tax",
+        tooltip: "Manual expense entries by IRS Schedule C line; year/month summaries.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <rect x="2" y="2" width="12" height="12" rx="0.5" />
@@ -242,6 +280,7 @@ const NAV = [
       {
         label: "Sales Tax",
         href: "/admin/reports/sales-tax",
+        tooltip: "Per-state sales tax owed and filed totals.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <rect x="2" y="3" width="12" height="10" rx="0.5" />
@@ -252,6 +291,7 @@ const NAV = [
       {
         label: "Referrals",
         href: "/admin/reports/referrals",
+        tooltip: "Referral chain visualisation + lifetime referral rewards earned.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <circle cx="3" cy="8" r="2" />
@@ -264,6 +304,7 @@ const NAV = [
       {
         label: "Compliance",
         href: "/admin/reports/compliance",
+        tooltip: "COI tracking, sales tax overdue, data requests.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <path d="M8 1l5 2v5c0 3.5-2.3 6.4-5 7-2.7-.6-5-3.5-5-7V3l5-2z" />
@@ -274,6 +315,7 @@ const NAV = [
       {
         label: "Ad Spend",
         href: "/admin/reports/ad-spend",
+        tooltip: "Per-platform paid ad spend and customer acquisition cost.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <path d="M2 13L6 9l3 3 5-7" />
@@ -284,6 +326,7 @@ const NAV = [
       {
         label: "First 100",
         href: "/admin/reports/first-100",
+        tooltip: "Tracker for your first 100 paid clients.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <circle cx="8" cy="8" r="6.5" />
@@ -291,22 +334,12 @@ const NAV = [
           </svg>
         ),
       },
-      {
-        label: "Quiet Season",
-        href: "/admin/reports/quiet-season",
-        icon: (
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
-            <path d="M2 13h12" />
-            <rect x="3" y="9" width="2" height="4" />
-            <rect x="6.5" y="6" width="2" height="7" />
-            <rect x="10" y="10" width="2" height="3" />
-            <path d="M3 4l2 2 3-3 4 2" />
-          </svg>
-        ),
-      },
+      // Quiet Season removed from the sidebar (May 2026 review — Korrin:
+      // "doesn't need its own page"). Reachable at /admin/reports/quiet-season.
       {
         label: "Health",
         href: "/admin/health",
+        tooltip: "Self-checks: webhook deliveries, scheduled task drain, broken links.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <path d="M1 8h3l2-5 4 10 2-5h3" />
@@ -316,6 +349,7 @@ const NAV = [
       {
         label: "Exports",
         href: "/admin/exports",
+        tooltip: "One-click CSV exports for clients, projects, invoices, expenses.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <path d="M3 2h7l3 3v9H3z" />
@@ -332,6 +366,7 @@ const NAV = [
       {
         label: "Automations",
         href: "/admin/settings/automations",
+        tooltip: "8 recipes (referral, follow-ups, balance invoice, etc.) toggled and tuned.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <circle cx="8" cy="8" r="2.5" />
@@ -340,8 +375,9 @@ const NAV = [
         ),
       },
       {
-        label: "Gear Templates",
+        label: "Kits",
         href: "/admin/settings/gear-templates",
+        tooltip: "Equipment checklists (\"Wedding Kit\") attached to projects as pack lists.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <rect x="2" y="5" width="12" height="9" rx="0.5" />
@@ -350,19 +386,13 @@ const NAV = [
           </svg>
         ),
       },
-      {
-        label: "Studio Hours",
-        href: "/admin/settings/studio-hours",
-        icon: (
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
-            <circle cx="8" cy="8" r="6.5" />
-            <path d="M8 4v4l2.5 2" />
-          </svg>
-        ),
-      },
+      // Studio Hours intentionally removed from the sidebar (May 2026 review).
+      // The page is still reachable at /admin/settings/studio-hours for
+      // anyone who wants to configure off-hours auto-responder behaviour.
       {
         label: "Insurer",
         href: "/admin/settings/insurer",
+        tooltip: "Your photo-insurance contact + Certificate of Insurance (COI) workflow.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <path d="M8 1l6 3v4c0 4-3 6.5-6 7-3-0.5-6-3-6-7V4l6-3z" />
@@ -373,6 +403,7 @@ const NAV = [
       {
         label: "Brand voice",
         href: "/admin/settings/brand-voice",
+        tooltip: "Saved tone samples your AI assists draw from.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <path d="M3 3h4v4H5l-2 3V3z" />
@@ -381,8 +412,9 @@ const NAV = [
         ),
       },
       {
-        label: "Tax",
+        label: "Tax setup",
         href: "/admin/settings/tax",
+        tooltip: "One-time tax filing config (state, EIN). The Tax & Expenses report uses these values.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <path d="M3 2h10v12H3z" />
@@ -393,6 +425,7 @@ const NAV = [
       {
         label: "Reply templates",
         href: "/admin/settings/reply-templates",
+        tooltip: "Saved reply blocks for quick-insert in the project workspace.",
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
             <path d="M2 3h12v8H6l-3 3V3z" />
@@ -461,12 +494,13 @@ export function AdminSidebar() {
           >
             {group}
           </p>
-          {items.map(({ label, href, icon }) => {
+          {items.map(({ label, href, icon, tooltip }) => {
             const active = isActive(href);
             return (
               <Link
                 key={href}
                 href={href}
+                title={tooltip}
                 style={{
                   display: "flex",
                   alignItems: "center",

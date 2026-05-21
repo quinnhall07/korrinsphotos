@@ -4432,12 +4432,12 @@ function GearTab({
                 margin: 0,
               }}
             >
-              No gear templates exist for this session type yet. Build one in{" "}
+              No kits exist for this session type yet. Build one in{" "}
               <Link
                 href="/admin/settings/gear-templates"
                 style={{ color: "var(--olive)", textDecoration: "underline" }}
               >
-                Settings → Gear Templates
+                Settings → Kits
               </Link>
               .
             </p>

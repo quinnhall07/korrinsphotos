@@ -8,7 +8,7 @@ import { requireAdmin } from "@/lib/session";
 import { listGearTemplates } from "@/lib/db/gear-templates";
 import { GearTemplateList } from "./GearTemplateList";
 
-export const metadata: Metadata = { title: "Gear Templates | Admin" };
+export const metadata: Metadata = { title: "Kits | Admin" };
 export const dynamic = "force-dynamic";
 
 export default async function GearTemplatesPage() {
@@ -77,7 +77,7 @@ export default async function GearTemplatesPage() {
         }}
       >
         <div>
-          <p style={eyebrow}>Gear Templates</p>
+          <p style={eyebrow}>Kits</p>
           <h2 style={pageTitle}>Kits</h2>
           <p
             style={{
