@@ -31,6 +31,7 @@ export interface InboxItemDoc {
   link?: string | null;
   read: boolean;
   snoozedUntil?: Timestamp | null;
+  archivedAt?: Timestamp | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -59,9 +60,9 @@ export async function createInboxItem(
 }
 
 export async function listInboxItems(
-  opts: { includeRead?: boolean; includeSnoozed?: boolean } = {}
+  opts: { includeRead?: boolean; includeSnoozed?: boolean; includeArchived?: boolean } = {}
 ): Promise<InboxItemDoc[]> {
-  const { includeRead = false, includeSnoozed = false } = opts;
+  const { includeRead = false, includeSnoozed = false, includeArchived = false } = opts;
 
   // Fetch broadly (single orderBy) and filter in-memory to avoid composite-index
   // requirements that proliferate quickly with `where(...) + orderBy(...)`.
@@ -71,6 +72,7 @@ export async function listInboxItems(
   const all = snap.docs.map((d) => ({ id: d.id, ...d.data() } as InboxItemDoc));
 
   return all.filter((item) => {
+    if (!includeArchived && item.archivedAt) return false;
     if (!includeRead && item.read) return false;
     if (!includeSnoozed) {
       // Hide items whose snooze window is still in the future.
@@ -80,6 +82,17 @@ export async function listInboxItems(
     }
     return true;
   });
+}
+
+/** Items in the Archived tab. Read-only set; never re-mixes with the open list. */
+export async function listArchivedInboxItems(): Promise<InboxItemDoc[]> {
+  const snap = await inboxItemsCol()
+    .orderBy("createdAt", "desc")
+    .limit(500)
+    .get();
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() } as InboxItemDoc))
+    .filter((i) => !!i.archivedAt);
 }
 
 export async function markRead(id: string): Promise<void> {
@@ -97,7 +110,17 @@ export async function markUnread(id: string): Promise<void> {
 }
 
 export async function archiveItem(id: string): Promise<void> {
-  await inboxItemsCol().doc(id).delete();
+  await inboxItemsCol().doc(id).update({
+    archivedAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+}
+
+export async function unarchiveItem(id: string): Promise<void> {
+  await inboxItemsCol().doc(id).update({
+    archivedAt: null,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
 }
 
 export async function snoozeItem(id: string, until: Date): Promise<void> {
@@ -123,15 +146,36 @@ export async function bulkArchive(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
   const batch = adminDb.batch();
   for (const id of ids) {
-    batch.delete(inboxItemsCol().doc(id));
+    batch.update(inboxItemsCol().doc(id), {
+      archivedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
   }
   await batch.commit();
 }
 
+/**
+ * Hard-delete an archived item (frees the slot). The soft-archive UX gives
+ * Korrin a recovery window; this is the "actually gone" escape hatch from
+ * the Archived tab. Refuses non-archived rows so it can't be misused to
+ * skip the recovery step.
+ */
+export async function permanentlyDeleteItem(id: string): Promise<void> {
+  const snap = await inboxItemsCol().doc(id).get();
+  if (!snap.exists) return;
+  const data = snap.data() as InboxItemDoc;
+  if (!data.archivedAt) {
+    throw new Error("Cannot permanently delete an item that is not archived first.");
+  }
+  await inboxItemsCol().doc(id).delete();
+}
+
 export async function countUnread(): Promise<number> {
   try {
-    const snap = await inboxItemsCol().where("read", "==", false).count().get();
-    return snap.data().count;
+    // Use the broad list so we exclude archived items in-memory rather than
+    // requiring a composite index on (read, archivedAt).
+    const items = await listInboxItems({ includeRead: false, includeSnoozed: true });
+    return items.length;
   } catch {
     return 0;
   }

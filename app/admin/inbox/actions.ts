@@ -10,6 +10,8 @@ import {
   markRead,
   markUnread,
   archiveItem,
+  unarchiveItem,
+  permanentlyDeleteItem,
   snoozeItem,
   bulkMarkRead as dbBulkMarkRead,
   bulkArchive as dbBulkArchive,
@@ -62,6 +64,33 @@ export async function archiveInboxItem(id: string): Promise<ActionResult> {
   } catch (err) {
     console.error("archiveInboxItem error:", err);
     return { success: false, error: "Failed to archive." };
+  }
+}
+
+export async function unarchiveInboxItem(id: string): Promise<ActionResult> {
+  await requireAdmin();
+  try {
+    await unarchiveItem(id);
+    revalidate();
+    return { success: true };
+  } catch (err) {
+    console.error("unarchiveInboxItem error:", err);
+    return { success: false, error: "Failed to restore." };
+  }
+}
+
+export async function permanentlyDeleteInboxItem(id: string): Promise<ActionResult> {
+  await requireAdmin();
+  try {
+    await permanentlyDeleteItem(id);
+    revalidate();
+    return { success: true };
+  } catch (err) {
+    console.error("permanentlyDeleteInboxItem error:", err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to delete.",
+    };
   }
 }
 

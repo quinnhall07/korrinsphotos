@@ -10,6 +10,8 @@ import Link from "next/link";
 import { toast } from "@/components/ui/Toaster";
 import {
   archiveInboxItem,
+  unarchiveInboxItem,
+  permanentlyDeleteInboxItem,
   bulkArchiveInboxItems,
   bulkMarkRead,
   markInboxRead,
@@ -55,8 +57,11 @@ export type InboxItemView = {
   link: string | null;
   read: boolean;
   snoozedUntilIso: string | null;
+  archivedAtIso: string | null;
   createdAtIso: string;
 };
+
+type InboxTab = "open" | "archived";
 
 const TYPE_LABELS: Record<InboxItemView["type"], string> = {
   INQUIRY_RECEIVED: "INQUIRY",
@@ -96,13 +101,16 @@ function relativeTime(iso: string): string {
 export function InboxClientPage({
   openItems,
   snoozedItems,
+  archivedItems,
   voiceAnchors,
 }: {
   openItems: InboxItemView[];
   snoozedItems: InboxItemView[];
+  archivedItems: InboxItemView[];
   voiceAnchors: BrandVoiceAnchor[];
 }) {
   const router = useRouter();
+  const [tab, setTab] = useState<InboxTab>("open");
   const [typeFilter, setTypeFilter] = useState<InboxItemView["type"] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(
     openItems[0]?.id ?? null
@@ -119,8 +127,46 @@ export function InboxClientPage({
     () =>
       filteredOpen.find((i) => i.id === selectedId) ??
       snoozedItems.find((i) => i.id === selectedId) ??
+      archivedItems.find((i) => i.id === selectedId) ??
       null,
-    [filteredOpen, snoozedItems, selectedId]
+    [filteredOpen, snoozedItems, archivedItems, selectedId]
+  );
+
+  // When switching tabs, jump to the first item of the new tab.
+  useEffect(() => {
+    if (tab === "open") {
+      setSelectedId(filteredOpen[0]?.id ?? null);
+    } else {
+      setSelectedId(archivedItems[0]?.id ?? null);
+    }
+    setChecked(new Set());
+  }, [tab, archivedItems, filteredOpen]);
+
+  const doUnarchive = useCallback(
+    async (id: string) => {
+      const res = await unarchiveInboxItem(id);
+      if (res.success) {
+        toast("Restored");
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to restore");
+      }
+    },
+    [router]
+  );
+
+  const doPermanentDelete = useCallback(
+    async (id: string) => {
+      if (!confirm("Permanently delete this archived item? This cannot be undone.")) return;
+      const res = await permanentlyDeleteInboxItem(id);
+      if (res.success) {
+        toast("Deleted");
+        router.refresh();
+      } else {
+        toast(res.error ?? "Failed to delete");
+      }
+    },
+    [router]
   );
 
   // Keep selectedId valid when the list changes (e.g. after a revalidation).
@@ -286,13 +332,53 @@ export function InboxClientPage({
           Inbox
         </h1>
         <p style={{ fontSize: "0.78rem", color: "var(--charcoal-muted)", margin: 0 }}>
-          {unreadCount} unread · {openItems.length} open · {snoozedItems.length} snoozed
+          {unreadCount} unread · {openItems.length} open · {snoozedItems.length} snoozed · {archivedItems.length} archived
           <span style={{ marginLeft: "1rem", letterSpacing: "0.08em" }}>
             <KbdHint k="j" /> next · <KbdHint k="k" /> prev · <KbdHint k="e" /> archive ·{" "}
             <KbdHint k="s" /> snooze · <KbdHint k="m" /> toggle read ·{" "}
             <KbdHint k="↵" /> open
           </span>
         </p>
+
+        {/* Tabs */}
+        <div
+          style={{
+            marginTop: "0.85rem",
+            display: "flex",
+            gap: "0.5rem",
+            borderBottom: "0.5px solid var(--border)",
+          }}
+        >
+          {(
+            [
+              { id: "open" as const, label: `Open · ${openItems.length}` },
+              { id: "archived" as const, label: `Archived · ${archivedItems.length}` },
+            ]
+          ).map((t) => {
+            const active = tab === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setTab(t.id)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  padding: "0.5rem 0.85rem 0.55rem",
+                  fontSize: "0.78rem",
+                  letterSpacing: "0.04em",
+                  color: active ? "var(--charcoal)" : "var(--charcoal-muted)",
+                  borderBottom: active ? "1.5px solid var(--olive)" : "1.5px solid transparent",
+                  cursor: "pointer",
+                  fontFamily: "'Jost', sans-serif",
+                  marginBottom: "-0.5px",
+                }}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
 
         {/* Filter chips */}
         {typeFilter && (
@@ -351,48 +437,16 @@ export function InboxClientPage({
             maxHeight: "calc(100vh - 200px)",
           }}
         >
-          {filteredOpen.length === 0 ? (
-            <div style={{ padding: "2rem", color: "var(--charcoal-muted)", fontSize: "0.85rem" }}>
-              {openItems.length === 0
-                ? "Inbox zero. Nothing to triage."
-                : "No items match this filter."}
-            </div>
-          ) : (
-            filteredOpen.map((item) => (
-              <Row
-                key={item.id}
-                item={item}
-                selected={item.id === selectedId}
-                checked={checked.has(item.id)}
-                onSelect={() => setSelectedId(item.id)}
-                onToggleCheck={() => toggleCheck(item.id)}
-                onFilterType={() => setTypeFilter(item.type)}
-              />
-            ))
-          )}
-
-          {/* Snoozed section */}
-          {snoozedItems.length > 0 && (
-            <div style={{ borderTop: "0.5px solid var(--border)", marginTop: "0.5rem" }}>
-              <button
-                onClick={() => setSnoozedOpen((v) => !v)}
-                style={{
-                  width: "100%",
-                  textAlign: "left",
-                  background: "transparent",
-                  border: "none",
-                  padding: "0.85rem 1rem",
-                  cursor: "pointer",
-                  fontSize: "0.65rem",
-                  letterSpacing: "0.2em",
-                  textTransform: "uppercase",
-                  color: "var(--charcoal-muted)",
-                }}
-              >
-                {snoozedOpen ? "▾" : "▸"} Snoozed ({snoozedItems.length})
-              </button>
-              {snoozedOpen &&
-                snoozedItems.map((item) => (
+          {tab === "open" ? (
+            <>
+              {filteredOpen.length === 0 ? (
+                <div style={{ padding: "2rem", color: "var(--charcoal-muted)", fontSize: "0.85rem" }}>
+                  {openItems.length === 0
+                    ? "Inbox zero. Nothing to triage."
+                    : "No items match this filter."}
+                </div>
+              ) : (
+                filteredOpen.map((item) => (
                   <Row
                     key={item.id}
                     item={item}
@@ -401,10 +455,67 @@ export function InboxClientPage({
                     onSelect={() => setSelectedId(item.id)}
                     onToggleCheck={() => toggleCheck(item.id)}
                     onFilterType={() => setTypeFilter(item.type)}
-                    isSnoozed
                   />
-                ))}
-            </div>
+                ))
+              )}
+
+              {/* Snoozed section (open tab only) */}
+              {snoozedItems.length > 0 && (
+                <div style={{ borderTop: "0.5px solid var(--border)", marginTop: "0.5rem" }}>
+                  <button
+                    onClick={() => setSnoozedOpen((v) => !v)}
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      background: "transparent",
+                      border: "none",
+                      padding: "0.85rem 1rem",
+                      cursor: "pointer",
+                      fontSize: "0.65rem",
+                      letterSpacing: "0.2em",
+                      textTransform: "uppercase",
+                      color: "var(--charcoal-muted)",
+                    }}
+                  >
+                    {snoozedOpen ? "▾" : "▸"} Snoozed ({snoozedItems.length})
+                  </button>
+                  {snoozedOpen &&
+                    snoozedItems.map((item) => (
+                      <Row
+                        key={item.id}
+                        item={item}
+                        selected={item.id === selectedId}
+                        checked={checked.has(item.id)}
+                        onSelect={() => setSelectedId(item.id)}
+                        onToggleCheck={() => toggleCheck(item.id)}
+                        onFilterType={() => setTypeFilter(item.type)}
+                        isSnoozed
+                      />
+                    ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {archivedItems.length === 0 ? (
+                <div style={{ padding: "2rem", color: "var(--charcoal-muted)", fontSize: "0.85rem" }}>
+                  Nothing archived yet.
+                </div>
+              ) : (
+                archivedItems.map((item) => (
+                  <Row
+                    key={item.id}
+                    item={item}
+                    selected={item.id === selectedId}
+                    checked={checked.has(item.id)}
+                    onSelect={() => setSelectedId(item.id)}
+                    onToggleCheck={() => toggleCheck(item.id)}
+                    onFilterType={() => setTypeFilter(item.type)}
+                    isArchived
+                  />
+                ))
+              )}
+            </>
           )}
         </div>
 
@@ -417,6 +528,9 @@ export function InboxClientPage({
               onArchive={() => doArchive(selected.id)}
               onSnooze={() => doSnooze(selected.id)}
               onToggleRead={() => doToggleRead(selected)}
+              isArchived={!!selected.archivedAtIso}
+              onUnarchive={() => doUnarchive(selected.id)}
+              onPermanentDelete={() => doPermanentDelete(selected.id)}
             />
           ) : (
             <div style={{ color: "var(--charcoal-muted)", fontSize: "0.85rem" }}>
@@ -437,6 +551,7 @@ function Row({
   onToggleCheck,
   onFilterType,
   isSnoozed,
+  isArchived,
 }: {
   item: InboxItemView;
   selected: boolean;
@@ -445,6 +560,7 @@ function Row({
   onToggleCheck: () => void;
   onFilterType: () => void;
   isSnoozed?: boolean;
+  isArchived?: boolean;
 }) {
   return (
     <div
@@ -458,7 +574,7 @@ function Row({
         borderLeft: selected ? "2px solid var(--olive)" : "2px solid transparent",
         background: selected ? "rgba(107,120,69,0.06)" : "transparent",
         cursor: "pointer",
-        opacity: item.read || isSnoozed ? 0.6 : 1,
+        opacity: item.read || isSnoozed || isArchived ? 0.6 : 1,
         transition: "all 0.15s",
       }}
     >
@@ -524,12 +640,18 @@ function DetailPane({
   onArchive,
   onSnooze,
   onToggleRead,
+  isArchived,
+  onUnarchive,
+  onPermanentDelete,
 }: {
   item: InboxItemView;
   voiceAnchors: BrandVoiceAnchor[];
   onArchive: () => void;
   onSnooze: () => void;
   onToggleRead: () => void;
+  isArchived: boolean;
+  onUnarchive: () => void;
+  onPermanentDelete: () => void;
 }) {
   return (
     <div>
@@ -559,6 +681,9 @@ function DetailPane({
         {relativeTime(item.createdAtIso)}
         {item.snoozedUntilIso && (
           <span> · snoozed until {new Date(item.snoozedUntilIso).toLocaleString()}</span>
+        )}
+        {item.archivedAtIso && (
+          <span> · archived {relativeTime(item.archivedAtIso)}</span>
         )}
         {item.read && <span> · read</span>}
       </p>
@@ -611,15 +736,35 @@ function DetailPane({
             Open →
           </Link>
         )}
-        <button onClick={onToggleRead} style={pillButtonStyle()}>
-          {item.read ? "Mark unread" : "Mark read"}
-        </button>
-        <button onClick={onSnooze} style={pillButtonStyle()}>
-          Snooze 24h
-        </button>
-        <button onClick={onArchive} style={pillButtonStyle()}>
-          Archive
-        </button>
+        {isArchived ? (
+          <>
+            <button onClick={onUnarchive} style={pillButtonStyle()}>
+              Restore to inbox
+            </button>
+            <button
+              onClick={onPermanentDelete}
+              style={{
+                ...pillButtonStyle(),
+                color: "#991B1B",
+                border: "0.5px solid #FECACA",
+              }}
+            >
+              Delete permanently
+            </button>
+          </>
+        ) : (
+          <>
+            <button onClick={onToggleRead} style={pillButtonStyle()}>
+              {item.read ? "Mark unread" : "Mark read"}
+            </button>
+            <button onClick={onSnooze} style={pillButtonStyle()}>
+              Snooze 24h
+            </button>
+            <button onClick={onArchive} style={pillButtonStyle()}>
+              Archive
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

@@ -4,7 +4,11 @@
 // client component for keyboard-first triage.
 
 import { requireAdmin } from "@/lib/session";
-import { listInboxItems, type InboxItemDoc } from "@/lib/db/inbox";
+import {
+  listInboxItems,
+  listArchivedInboxItems,
+  type InboxItemDoc,
+} from "@/lib/db/inbox";
 import { getBrandVoiceSamples, type BrandVoiceSample } from "@/lib/db/admin-settings";
 import {
   InboxClientPage,
@@ -25,6 +29,7 @@ function toView(item: InboxItemDoc): InboxItemView {
     link: item.link ?? null,
     read: item.read,
     snoozedUntilIso: item.snoozedUntil ? item.snoozedUntil.toDate().toISOString() : null,
+    archivedAtIso: item.archivedAt ? item.archivedAt.toDate().toISOString() : null,
     createdAtIso: item.createdAt ? item.createdAt.toDate().toISOString() : new Date().toISOString(),
   };
 }
@@ -41,9 +46,10 @@ function toAnchor(s: BrandVoiceSample): BrandVoiceAnchor {
 export default async function AdminInboxPage() {
   const session = await requireAdmin();
 
-  const [openItems, allItems, voiceSamples] = await Promise.all([
+  const [openItems, allItems, archivedItems, voiceSamples] = await Promise.all([
     listInboxItems({ includeRead: false, includeSnoozed: false }),
     listInboxItems({ includeRead: false, includeSnoozed: true }),
+    listArchivedInboxItems(),
     getBrandVoiceSamples(session.uid),
   ]);
 
@@ -54,6 +60,7 @@ export default async function AdminInboxPage() {
     <InboxClientPage
       openItems={openItems.map(toView)}
       snoozedItems={snoozedItems.map(toView)}
+      archivedItems={archivedItems.map(toView)}
       voiceAnchors={voiceSamples.map(toAnchor)}
     />
   );
