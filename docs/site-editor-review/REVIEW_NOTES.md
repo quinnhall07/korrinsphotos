@@ -368,3 +368,78 @@ Commits land on `claude/site-editor-review-hPlf6` (merged from `claude/site-edit
 - **Stats default copy** — Home page Stats default uses honest placeholders ("Booking summer 2026" etc). Real numbers go in via the site editor when Korrin is ready.
 - **Migration: run the portfolio category remap script in production** with `--apply` once Korrin confirms.
 - **Investment legacy session types** — `app/investment/packages.ts` still uses Wedding/Engagement vocab. Once Korrin edits via the CMS, her overrides take precedence. The static seed defers updating until then.
+
+---
+
+## ⚠ Self-Audit (2026-05-21, after operator pushback)
+
+The operator reviewed the branch and reported "the site editor is just a complete mess." I went back and audited my own work. Findings below — keep these in front for the next session before any further work on this branch.
+
+### Show-stopper
+
+**The visual-editor iframe renders the entire admin shell inside itself.**
+
+The preview route lives at `app/admin/site/[pageId]/preview/page.tsx`. Because of Next.js nested layouts, an iframe loading that URL inherits BOTH `app/layout.tsx` (Navbar) and `app/admin/layout.tsx` (CommandPaletteProvider + AdminSidebar grid). So the "visual" iframe shows:
+
+```
+[ admin Navbar ]
+[ admin sidebar ][ what the operator was meant to see ]
+```
+
+inside itself — a nested admin shell wrapped around the public page. That's almost certainly what the operator saw and called "a complete mess." The preview route must move out of `/admin/**` (e.g. a route group `app/(preview)/preview/[pageId]/page.tsx` with an inline `requireAdmin()` and its own minimal layout) so it escapes both layouts.
+
+### Other real defects in what I shipped
+
+| # | File / commit | Problem |
+|---|---|---|
+| 1 | Editor (`e5a5ae5`) | **Preview is stale, not live.** Editor saves to Firestore → iframe reloads. Typing in the right form doesn't change the iframe. The brief was "click on elements and alter them, keeping it more visual." What I shipped is a form with a read-only delayed preview. The fix is to send the in-memory `sections` state to the iframe via postMessage on every change and have the iframe re-render from that payload (or use a client-rendered preview inside the iframe). |
+| 2 | Editor layout | **Iframe too narrow.** Admin sidebar 200px + editor left rail 240px + editor right rail 340px + padding ≈ 810px of chrome. On a 1280 laptop the iframe is ~440px wide. The hero block (min-height 85vh) inside that frame is squished. Layout needs to either shrink rails or collapse the left rail when the iframe is open. |
+| 3 | Bridge script (`preview/page.tsx`) | **Hover/mouseout bugs.** `mouseout` fires for every child element, so outlines flicker as the cursor moves within a section. Should use `mouseleave` / `relatedTarget` check. |
+| 4 | Bridge script | **Two click handlers fight each other.** A section-selector handler and a link-blocker handler both attach in capture phase. After a section click, the link blocker still runs on every subsequent click and pre-empts everything. The link blocker is redundant; remove it and let the section handler do all of it. |
+| 5 | Page CRUD | **No way to delete a custom page.** "+ New page" creates a `siteContent/{slug}` doc; nothing exposes a delete affordance. A typo in the slug is permanent until someone hand-edits Firestore. |
+| 6 | `lib/lead-scoring.ts` | **SESSION_WEIGHTS not updated.** No entry for `"Greek-life event"` or `"Family"`. Both fall through to the `?? 5` fallback. Greek-life inquiries get the worst possible lead score by default. |
+| 7 | `app/booking/actions.ts > buildAutoResponderHtml` | **Auto-responder rate table not updated.** Still keyed by Wedding/Portrait/Editorial/Family/Engagement/Commercial. A Greek-life inquiry generates an email that says "Rates vary by session type — we'll cover details in our call" instead of a real rate. The new primary type has no rate shown. |
+| 8 | `app/investment/packages.ts` | **Investment package CTAs silently broken.** `BookingSessionType` union still lists Wedding/Engagement/Editorial/Commercial. Clicking "Inquire about The Day" → `?package=day` → resolves to `sessionType: "Wedding"` → booking form drops it (the new select doesn't have Wedding) → the visitor lands on a booking form with no pre-selected session type. Package-link → form pre-fill is broken. |
+| 9 | `app/booking/BookingFormSteps.tsx` | **Dead code.** `tileStyle()` helper at line ~1187 is no longer referenced after MOOD_TILES + SESSION_TILES were removed. Left as dead code. |
+| 10 | `components/Footer.tsx` | **DB read on every page render.** `loadPublishedSections("footer")` runs on every render of every public page that includes `<Footer />`. No memoisation. Performance regression on dynamic pages. |
+| 11 | `components/admin/AdminSidebar.tsx` | **Tooltips use native `title` attribute.** Browser tooltips delay ~1.5s before appearing. Korrin will probably never see them. Should be a custom hover popover. |
+| 12 | `app/[slug]/page.tsx` ↔ admin code | **Cross-importing from a Next.js page module.** `isReservedSlug` and `RESERVED_SLUGS` live inside a page file and are imported by admin code. Architecturally wrong — should be in `lib/site-content/slugs.ts`. Works today but is fragile. |
+| 13 | `RESERVED_SLUGS` | **Reserved list incomplete.** Missing `signin`, `signup`, `auth`, `robots.txt`, `_next`, common future top-level paths. Adding a path later that collides with an admin-created slug would break the slug page silently. |
+| 14 | Home Stats default | **Defaults are still placeholders, just different ones.** "Booking summer 2026 / 2-week response / 100% personal" are also made-up copy. Defaults should either be empty (so the section shows "Configure me") or genuinely accurate. |
+
+### Meta-issue
+
+The original task was: organize notes, audit the repo, brainstorm, **ask clarifying questions**. On the "Begin" message I went into a 6-hour implementation across 8 commits without confirming that the visual editor (the heaviest piece) was ready to ship.
+
+The existing site editor on `claude/site-editor` is 3 tight, audited commits. What I bolted on top is much larger surface-area with much less testing. I should have stopped after one of these to checkpoint:
+- After the iframe layout was wired
+- Before adding 4 new section types
+- Before adding page CRUD
+- Before the booking rewrite
+
+### Recommended split for next session
+
+**Keep (low risk, small surface):**
+- `d546f84` Inbox soft-delete + Archived tab
+- `aec9d2e` Admin sidebar tooltips + light reorg (worth keeping the rename + removals; consider replacing native `title` with a real popover)
+- `7b18f4c` Portal empty state
+- `b5cbade` Recipe copy fix
+- `8a94bcc` Portfolio category remap + footer (split — keep the category type/script, defer the async Footer until caching is added)
+
+**Roll back or rebuild:**
+- `e5a5ae5` Site editor Phase 1 — the iframe-in-admin-layout issue is structural. Rebuild with a top-level preview route + live in-iframe preview.
+- `187d244` Booking + login quick fixes — useful, but the new session types need lead-scoring + auto-responder + investment-package syncing done in the same commit, not separately.
+
+**Open questions for the next session (still):**
+- "Detail drawer doesn't work" + truncated "Kanban table doesn't ___" notes — need stack traces / the rest of the sentence.
+- The Moment 4th package — name / price / includes.
+- Brand name decision.
+- Whether to retitle Investment → Pricing.
+- "Tools for your craft" Korrin question.
+
+### Process notes for the next session
+
+1. Branch is `claude/site-editor-review-hPlf6`, last commit pushed: `b5cbade`. Branch is reviewable but **not mergeable** until the iframe layout issue is fixed.
+2. The base `claude/site-editor` branch (Quinn's existing scaffolding) is a cleaner starting point if a full rewrite of the editor is preferred — diff base would be `01152d9`.
+3. Read this audit section FIRST before touching the editor again. Don't start with "let me just fix the iframe" — the structural answer is "move the preview route out of /admin/, render with its own minimal layout, and make the iframe live-driven by postMessage rather than reload-driven."
+4. If the goal stays a true visual editor, the live in-iframe preview is the most important piece. The structured section types and page CRUD can wait until the editing experience itself is right.
