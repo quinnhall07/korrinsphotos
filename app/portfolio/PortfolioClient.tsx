@@ -4,9 +4,9 @@
 // Handles the active filter tab state and filters the photo array accordingly.
 // The parent Server Component passes all photos; filtering is purely client-side.
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { MasonryGrid, type MasonryPhoto } from "@/components/MasonryGrid";
-import { PORTFOLIO_CATEGORIES, type PortfolioCategory } from "./categories";
+import { PORTFOLIO_CATEGORIES, normaliseStoredCategory, type PortfolioCategory } from "./categories";
 
 type Category = "all" | PortfolioCategory;
 
@@ -18,10 +18,21 @@ const TABS: { label: string; value: Category }[] = [
 export function PortfolioClient({ photos }: { photos: MasonryPhoto[] }) {
   const [activeCategory, setActiveCategory] = useState<Category>("all");
 
+  // Normalise legacy stored values so the new tabs still work before the
+  // backfill script has run in production.
+  const normalised = useMemo(
+    () =>
+      photos.map((p) => ({
+        ...p,
+        category: normaliseStoredCategory(p.category) ?? undefined,
+      })),
+    [photos]
+  );
+
   const filtered =
     activeCategory === "all"
-      ? photos
-      : photos.filter((p) => p.category === activeCategory);
+      ? normalised
+      : normalised.filter((p) => p.category === activeCategory);
 
   return (
     <>

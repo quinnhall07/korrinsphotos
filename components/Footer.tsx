@@ -1,9 +1,25 @@
 // components/Footer.tsx
 // Reusable footer. Used on public-facing pages.
+//
+// CMS-aware: if an admin has published a `siteContent/footer` doc, the
+// rendered blocks replace the hardcoded layout below. Async server
+// component — safe because every consumer awaits it (or renders inside an
+// async server boundary). No-op fallback on Firestore failure keeps the
+// page legible during local dev without env vars.
 
 import Link from "next/link";
+import { loadPublishedSections } from "@/lib/db/site-content";
+import { renderSections } from "@/lib/site-content/render";
 
-export function Footer() {
+export async function Footer() {
+  const published = await loadPublishedSections("footer").catch(() => null);
+  if (published && published.length > 0) {
+    return (
+      <footer style={{ borderTop: "0.5px solid var(--border)" }}>
+        {renderSections(published)}
+      </footer>
+    );
+  }
   return (
     <footer
       style={{
