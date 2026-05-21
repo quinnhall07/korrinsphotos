@@ -4,7 +4,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/session";
-import { generatePresignedUploadUrl } from "@/lib/cloudflare";
+import { generatePresignedUploadUrl } from "@/lib/storage/r2";
 import { z } from "zod";
 import { randomUUID } from "crypto";
 
@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
   const ext = fileName.split(".").pop() ?? "jpg";
   const key = `site-assets/${randomUUID()}.${ext}`;
 
-  const { presignedUrl } = await generatePresignedUploadUrl({ key, contentType, eventId: "site-assets" });
+  const { presignedUrl } = await generatePresignedUploadUrl({ key, contentType });
 
   return NextResponse.json({ presignedUrl, key });
 }

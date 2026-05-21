@@ -47,18 +47,6 @@ export function PhotoPicker({ open, onClose, onSelect, initialData }: Props) {
 
   if (!open) return null;
 
-  const refetch = async () => {
-    try {
-      const res = await fetch("/api/site-assets/list", { cache: "no-store" });
-      if (res.ok) {
-        const json = await res.json();
-        setData((prev) => ({ ...prev, siteAssets: json.siteAssets ?? [] }));
-      }
-    } catch {
-      // best-effort refresh
-    }
-  };
-
   const handleUpload = async (file: File) => {
     if (!label.trim() || !altText.trim()) {
       toast("Label and alt text are required for site uploads.");
@@ -91,6 +79,14 @@ export function PhotoPicker({ open, onClose, onSelect, initialData }: Props) {
       const { asset } = await confirmRes.json();
 
       toast("Uploaded.");
+      // Prepend the new asset to local state so reopening the Site tab shows it.
+      setData((prev) => ({
+        ...prev,
+        siteAssets: [
+          { id: asset.id, cloudflareImageId: asset.cloudflareImageId, label: asset.label, altText: asset.altText },
+          ...prev.siteAssets,
+        ],
+      }));
       onSelect({
         source: "SITE",
         id: asset.id,
@@ -99,7 +95,6 @@ export function PhotoPicker({ open, onClose, onSelect, initialData }: Props) {
       });
       setLabel("");
       setAltText("");
-      await refetch();
     } catch (err) {
       console.error("[PhotoPicker] upload error", err);
       toast("Upload failed. Check console for details.");

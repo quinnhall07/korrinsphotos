@@ -28,13 +28,25 @@ function renderInline(s: string): string {
     const decodedHref = href.replace(/&amp;/g, "&");
     if (!SAFE_HREF.test(decodedHref)) return label;
     const safeHref = escapeHtml(decodedHref);
-    return `<a href="${safeHref}" style="color:var(--olive);text-decoration:underline">${label}</a>`;
+    const external = decodedHref.startsWith("http");
+    const attrs = external
+      ? ` target="_blank" rel="noopener noreferrer"`
+      : "";
+    return `<a href="${safeHref}"${attrs} style="color:var(--olive);text-decoration:underline">${label}</a>`;
   });
   // Bold (greedy-safe with non-greedy match)
   out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   // Italic (single-star, must not collide with bold)
   out = out.replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, "$1<em>$2</em>");
   return out;
+}
+
+// Inline-only variant for one-line surfaces (headings, banner headlines).
+// Collapses newlines to spaces and renders inline marks but no block wrappers.
+export function renderInlineMarkdown(input: string): string {
+  if (!input) return "";
+  const collapsed = input.replace(/\r\n/g, "\n").replace(/\s*\n\s*/g, " ").trim();
+  return renderInline(collapsed);
 }
 
 export function renderConstrainedMarkdown(input: string): string {

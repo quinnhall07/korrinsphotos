@@ -28,14 +28,14 @@ export async function generatePresignedUploadUrl({
 }: {
   key: string;
   contentType: string;
-  eventId: string;
+  eventId?: string;
 }): Promise<{ presignedUrl: string; key: string }> {
   const command = new PutObjectCommand({
     Bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME!,
     Key: key,
     ContentType: contentType,
     Metadata: {
-      eventId,
+      ...(eventId ? { eventId } : {}),
       uploadedAt: new Date().toISOString(),
     },
   });

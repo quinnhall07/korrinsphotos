@@ -104,10 +104,9 @@ export async function saveDraftAction(
   }
 
   await saveDraftSections(pageId, parsedSections, session.uid);
-  await logActivity("NOTE_ADDED", `Saved draft for site page "${def.label}".`, {
+  await logActivity("SITE_DRAFT_SAVED", `Saved draft for site page "${def.label}".`, {
     surface: "site-editor",
     pageId,
-    action: "DRAFT_SAVED",
     sectionCount: parsedSections.length,
     actorUid: session.uid,
   }).catch(() => {});
@@ -123,10 +122,9 @@ export async function discardDraftAction(pageId: string): Promise<ActionResult> 
   if (!def) return { success: false, error: "Unknown page." };
 
   await dbDiscardDraft(pageId, session.uid);
-  await logActivity("NOTE_ADDED", `Discarded draft for site page "${def.label}".`, {
+  await logActivity("SITE_DRAFT_DISCARDED", `Discarded draft for site page "${def.label}".`, {
     surface: "site-editor",
     pageId,
-    action: "DRAFT_DISCARDED",
     actorUid: session.uid,
   }).catch(() => {});
 
@@ -145,10 +143,9 @@ export async function publishDraftAction(
 
   try {
     const { revisionId } = await dbPublishDraft(pageId, session.uid, noteSummary);
-    await logActivity("NOTE_ADDED", `Published site page "${def.label}".`, {
+    await logActivity("SITE_PUBLISHED", `Published site page "${def.label}".`, {
       surface: "site-editor",
       pageId,
-      action: "PUBLISHED",
       revisionId,
       noteSummary: noteSummary ?? null,
       actorUid: session.uid,
@@ -177,10 +174,9 @@ export async function restoreRevisionAction(
 
   try {
     await restoreRevisionToDraft(pageId, revisionId, session.uid);
-    await logActivity("NOTE_ADDED", `Restored revision into draft for site page "${def.label}".`, {
+    await logActivity("SITE_REVISION_RESTORED", `Restored revision into draft for site page "${def.label}".`, {
       surface: "site-editor",
       pageId,
-      action: "REVISION_RESTORED",
       revisionId,
       actorUid: session.uid,
     }).catch(() => {});

@@ -7,7 +7,7 @@
 import Link from "next/link";
 import type { Section, PhotoRef } from "./types";
 import { buildCdnUrl } from "@/lib/cloudflare";
-import { renderConstrainedMarkdown } from "./markdown";
+import { renderConstrainedMarkdown, renderInlineMarkdown } from "./markdown";
 
 function photoSrc(ref: PhotoRef, variant: "thumbnail" | "gallery" = "gallery"): string {
   return buildCdnUrl(ref.cloudflareImageId, variant);
@@ -60,7 +60,7 @@ function HeroBlock({ section }: { section: Extract<Section, { type: "HERO" }> })
               lineHeight: 1.05,
               letterSpacing: "-0.01em",
             }}
-            dangerouslySetInnerHTML={{ __html: renderConstrainedMarkdown(headline).replace(/<p[^>]*>|<\/p>/g, "") }}
+            dangerouslySetInnerHTML={{ __html: renderInlineMarkdown(headline) }}
           />
         )}
         {sub && (
@@ -110,7 +110,7 @@ function PhotoGridBlock({ section }: { section: Extract<Section, { type: "PHOTO_
           {heading && (
             <h2
               style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "clamp(2.2rem, 4vw, 3.2rem)", fontWeight: 300, lineHeight: 1.2, letterSpacing: "-0.01em" }}
-              dangerouslySetInnerHTML={{ __html: renderConstrainedMarkdown(heading).replace(/<p[^>]*>|<\/p>/g, "") }}
+              dangerouslySetInnerHTML={{ __html: renderInlineMarkdown(heading) }}
             />
           )}
           {body && (
@@ -187,7 +187,7 @@ function CtaBannerBlock({ section }: { section: Extract<Section, { type: "CTA_BA
         )}
         <h2
           style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "clamp(2rem, 4vw, 3rem)", fontWeight: 300, color: fg, lineHeight: 1.2 }}
-          dangerouslySetInnerHTML={{ __html: renderConstrainedMarkdown(section.headline).replace(/<p[^>]*>|<\/p>/g, "") }}
+          dangerouslySetInnerHTML={{ __html: renderInlineMarkdown(section.headline) }}
         />
       </div>
       <div style={{ display: "flex", gap: "1rem", flexShrink: 0 }}>
