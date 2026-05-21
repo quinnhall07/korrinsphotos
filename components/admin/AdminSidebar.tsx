@@ -70,6 +70,17 @@ const NAV = [
     group: "Content",
     items: [
       {
+        label: "Site editor",
+        href: "/admin/site",
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" width="16" height="16">
+            <rect x="1.5" y="2.5" width="13" height="11" rx="0.5" />
+            <path d="M1.5 5.5h13" />
+            <path d="M4 8h4M4 10h6" />
+          </svg>
+        ),
+      },
+      {
         label: "Events",
         href: "/admin/events",
         icon: (
