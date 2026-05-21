@@ -1,15 +1,10 @@
 // app/investment/page.tsx
-// Public Investment page (Phase 2.3 + Phase 13.14 hybrid).
-// Server Component, no auth. Editorial process + investment hybrid layout.
+// Public Investment page. Reads sections from `siteContent/investment` once an
+// admin has published a draft via /admin/site/investment; otherwise renders
+// the original editorial layout below as a fallback.
 //
-// Sections:
-//   1. Editorial header
-//   2. Four-step process (Inquire → Consult → Shoot → Receive your gallery)
-//   3. Three package cards (driven by INVESTMENT_PACKAGES)
-//   4. Single testimonial pull-quote (placeholder until reviews import)
-//   5. Footer CTA → /booking
-//
-// Each package emits Service JSON-LD; the page emits a BreadcrumbList.
+// Each package on the published page emits Service JSON-LD; the page emits a
+// BreadcrumbList.
 
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -20,6 +15,8 @@ import {
   buildServiceSchema,
 } from "@/lib/seo/schema";
 import { INVESTMENT_PACKAGES } from "./packages";
+import { loadPublishedSections } from "@/lib/db/site-content";
+import { renderSections } from "@/lib/site-content/render";
 
 export const metadata: Metadata = {
   title: "Investment | Korrin's Photos",
@@ -67,7 +64,25 @@ function formatUsd(amount: number): string {
 
 /* ─── Page ────────────────────────────────────────────────────────────── */
 
-export default function InvestmentPage() {
+export default async function InvestmentPage() {
+  // CMS path — once an admin publishes a draft, this supersedes the
+  // hand-coded layout below. Anything else falls through to the original
+  // editorial render so the page keeps working on a fresh deployment.
+  const published = await loadPublishedSections("investment").catch(() => null);
+  if (published && published.length > 0) {
+    const cmsJsonLd = buildBreadcrumbSchema([
+      { name: "Home",       url: "/" },
+      { name: "Investment", url: "/investment" },
+    ]);
+    return (
+      <div style={{ paddingTop: "72px" }} className="page-fade-in">
+        <JsonLd data={cmsJsonLd as unknown as Parameters<typeof JsonLd>[0]["data"]} />
+        {renderSections(published)}
+        <Footer />
+      </div>
+    );
+  }
+
   // JSON-LD: one Service per package + a breadcrumb for the page itself.
   // buildServiceSchema accepts a category slug; the package sessionType maps
   // cleanly onto the recognised slugs (Portrait/Engagement/Wedding/etc).

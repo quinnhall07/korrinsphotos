@@ -6,7 +6,12 @@ export type SectionType =
   | "HERO"
   | "PHOTO_GRID"
   | "RICH_TEXT"
-  | "CTA_BANNER";
+  | "CTA_BANNER"
+  | "PROCESS_STEPS"
+  | "PACKAGE_CARDS"
+  | "TESTIMONIAL"
+  | "SLIDESHOW"
+  | "STATS";
 
 export type PhotoSource = "PROJECT" | "SITE";
 
@@ -66,11 +71,82 @@ export interface CtaBannerSection {
   variant?: "DARK" | "LIGHT";
 }
 
+// ─── Phase 1 — structured section types ──────────────────────────────────
+
+export interface ProcessStep {
+  n: string;       // e.g. "01"
+  title: string;
+  body: string;
+}
+
+export interface ProcessStepsSection {
+  id: string;
+  type: "PROCESS_STEPS";
+  eyebrow?: string;
+  heading?: string;
+  intro?: string;
+  steps: ProcessStep[];
+}
+
+export interface PackageCard {
+  id: string;             // slug-ish, used by the booking form's ?package=
+  name: string;
+  startingPriceUsd: number;
+  sessionType: string;    // session-type the booking form should prefill
+  includes: string[];
+  idealFor: string;
+  ctaLabel?: string;
+}
+
+export interface PackageCardsSection {
+  id: string;
+  type: "PACKAGE_CARDS";
+  eyebrow?: string;
+  heading?: string;
+  intro?: string;
+  packages: PackageCard[];
+}
+
+export interface TestimonialSection {
+  id: string;
+  type: "TESTIMONIAL";
+  eyebrow?: string;
+  quote: string;
+  author?: string;
+  authorRole?: string;
+  variant?: "DARK" | "LIGHT";
+}
+
+export interface SlideshowSection {
+  id: string;
+  type: "SLIDESHOW";
+  eyebrow?: string;
+  heading?: string;
+  slides: PhotoRef[];
+  intervalMs?: number;    // defaults to 5000
+}
+
+export interface StatRow {
+  number: string;         // "340+", "12", "98%"
+  label: string;
+}
+
+export interface StatsSection {
+  id: string;
+  type: "STATS";
+  items: StatRow[];
+}
+
 export type Section =
   | HeroSection
   | PhotoGridSection
   | RichTextSection
-  | CtaBannerSection;
+  | CtaBannerSection
+  | ProcessStepsSection
+  | PackageCardsSection
+  | TestimonialSection
+  | SlideshowSection
+  | StatsSection;
 
 export type SectionDraft = Section;
 

@@ -3,7 +3,7 @@
 // app/admin/site/[pageId]/EditorClient.tsx
 // Per-page editor — stateful list of Section[] with per-block forms.
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "@/components/ui/Toaster";
 import { PhotoPicker } from "@/components/admin/PhotoPicker";
@@ -45,6 +45,45 @@ function blank(type: SectionType): Section {
       return { id: makeId("RICH_TEXT"), type: "RICH_TEXT", body: "" };
     case "CTA_BANNER":
       return { id: makeId("CTA_BANNER"), type: "CTA_BANNER", headline: "Your headline", variant: "DARK" };
+    case "PROCESS_STEPS":
+      return {
+        id: makeId("PROCESS_STEPS"),
+        type: "PROCESS_STEPS",
+        steps: [
+          { n: "01", title: "Step one", body: "Describe the first step here." },
+          { n: "02", title: "Step two", body: "Describe the second step here." },
+        ],
+      };
+    case "PACKAGE_CARDS":
+      return {
+        id: makeId("PACKAGE_CARDS"),
+        type: "PACKAGE_CARDS",
+        packages: [],
+      };
+    case "TESTIMONIAL":
+      return {
+        id: makeId("TESTIMONIAL"),
+        type: "TESTIMONIAL",
+        quote: "A real testimonial will live here.",
+        variant: "DARK",
+      };
+    case "SLIDESHOW":
+      return {
+        id: makeId("SLIDESHOW"),
+        type: "SLIDESHOW",
+        slides: [],
+        intervalMs: 5000,
+      };
+    case "STATS":
+      return {
+        id: makeId("STATS"),
+        type: "STATS",
+        items: [
+          { number: "0+", label: "Sessions" },
+          { number: "0",  label: "Years" },
+          { number: "0%", label: "Satisfaction" },
+        ],
+      };
   }
 }
 
@@ -53,6 +92,11 @@ const SECTION_LABEL: Record<SectionType, string> = {
   PHOTO_GRID: "Photo grid",
   RICH_TEXT: "Rich text",
   CTA_BANNER: "CTA banner",
+  PROCESS_STEPS: "Process steps",
+  PACKAGE_CARDS: "Package cards",
+  TESTIMONIAL: "Testimonial",
+  SLIDESHOW: "Slideshow",
+  STATS: "Stats",
 };
 
 export function EditorClient({ pageId, allowedSections, initialSections, pickerData }: Props) {
@@ -60,8 +104,38 @@ export function EditorClient({ pageId, allowedSections, initialSections, pickerD
   const [sections, setSections] = useState<Section[]>(initialSections);
   const [selectedId, setSelectedId] = useState<string | null>(initialSections[0]?.id ?? null);
   const [dirty, setDirty] = useState(false);
-  const [pickerCtx, setPickerCtx] = useState<{ sectionId: string; slot: "HERO_SLIDE" | "GRID_PHOTO"; index?: number } | null>(null);
+  const [pickerCtx, setPickerCtx] = useState<{ sectionId: string; slot: "HERO_SLIDE" | "GRID_PHOTO" | "SLIDESHOW_SLIDE"; index?: number } | null>(null);
   const [isPending, startTransition] = useTransition();
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const [frameReady, setFrameReady] = useState(false);
+
+  // Bridge to the iframe preview. The iframe posts SECTION_SELECTED when the
+  // admin clicks a section in the preview; we sync that to selectedId here
+  // so the right-side form jumps to the same section.
+  useEffect(() => {
+    function onMessage(e: MessageEvent) {
+      const data = e.data as { type?: string; id?: string } | null;
+      if (!data || typeof data !== "object") return;
+      if (data.type === "FRAME_READY") {
+        setFrameReady(true);
+        return;
+      }
+      if (data.type === "SECTION_SELECTED" && typeof data.id === "string") {
+        setSelectedId(data.id);
+      }
+    }
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
+  // Tell the iframe which section the editor considers selected. Bounce on
+  // every selectedId change so highlights match the right-side form.
+  useEffect(() => {
+    if (!frameReady) return;
+    const w = iframeRef.current?.contentWindow;
+    if (!w) return;
+    w.postMessage({ type: "SET_SELECTED", id: selectedId }, "*");
+  }, [selectedId, frameReady]);
 
   const selected = sections.find((s) => s.id === selectedId) ?? null;
 
@@ -119,8 +193,26 @@ export function EditorClient({ pageId, allowedSections, initialSections, pickerD
         photos.push(ref);
       }
       update<PhotoGridSection>(target.id, { photos });
+    } else if (target.type === "SLIDESHOW" && pickerCtx.slot === "SLIDESHOW_SLIDE") {
+      const slides = [...(target as Extract<Section, { type: "SLIDESHOW" }>).slides];
+      if (pickerCtx.index != null) {
+        slides[pickerCtx.index] = ref;
+      } else {
+        slides.push(ref);
+      }
+      update<Extract<Section, { type: "SLIDESHOW" }>>(target.id, { slides });
     }
     setPickerCtx(null);
+  }
+
+  function reloadFrame() {
+    const w = iframeRef.current?.contentWindow;
+    if (!w) return;
+    try {
+      w.location.reload();
+    } catch {
+      // Cross-origin should never happen here; ignore.
+    }
   }
 
   function handleSave() {
@@ -134,6 +226,8 @@ export function EditorClient({ pageId, allowedSections, initialSections, pickerD
       setDirty(false);
       toast("Draft saved.");
       router.refresh();
+      // Iframe shows persisted draft — reload after the save lands.
+      setTimeout(reloadFrame, 50);
     });
   }
 
@@ -168,7 +262,15 @@ export function EditorClient({ pageId, allowedSections, initialSections, pickerD
   }
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", gap: "1.5rem", alignItems: "start" }}>
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "240px 1fr 340px",
+        gap: "1rem",
+        alignItems: "stretch",
+        minHeight: "calc(100vh - 8rem)",
+      }}
+    >
       {/* Left rail: section list */}
       <aside style={{ border: "0.5px solid var(--border)", padding: "1rem", background: "var(--white)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "0.75rem" }}>
@@ -245,14 +347,75 @@ export function EditorClient({ pageId, allowedSections, initialSections, pickerD
         </div>
       </aside>
 
-      {/* Right: section editor */}
-      <main style={{ minWidth: 0 }}>
+      {/* Middle: live iframe preview */}
+      <div
+        style={{
+          border: "0.5px solid var(--border)",
+          background: "var(--white)",
+          position: "relative",
+          minWidth: 0,
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            padding: "0.6rem 0.85rem",
+            borderBottom: "0.5px solid var(--border)",
+            background: "rgba(42,42,40,0.02)",
+            fontSize: "0.72rem",
+            color: "var(--charcoal-muted)",
+            letterSpacing: "0.04em",
+          }}
+        >
+          <span>
+            Click a section in the preview to edit it.
+            {dirty && (
+              <span style={{ marginLeft: "0.6rem", color: "var(--olive)" }}>
+                · Unsaved changes — save to refresh preview
+              </span>
+            )}
+          </span>
+          <button
+            type="button"
+            onClick={reloadFrame}
+            style={{
+              ...iconBtn,
+              padding: "0.3rem 0.7rem",
+              fontSize: "0.7rem",
+            }}
+            title="Reload preview"
+          >
+            ↻
+          </button>
+        </div>
+        <iframe
+          ref={iframeRef}
+          src={`/admin/site/${pageId}/preview?frame=1`}
+          title="Site preview"
+          style={{
+            flex: 1,
+            width: "100%",
+            border: "none",
+            background: "var(--white)",
+            display: "block",
+          }}
+        />
+      </div>
+
+      {/* Right: section property form */}
+      <aside style={{ minWidth: 0 }}>
         {!selected ? (
-          <div style={{ padding: "3rem 1rem", textAlign: "center", color: "var(--charcoal-muted)", border: "0.5px dashed var(--border-strong)", background: "var(--white)" }}>
-            Select a section on the left, or add a new one.
+          <div style={{ padding: "3rem 1rem", textAlign: "center", color: "var(--charcoal-muted)", border: "0.5px dashed var(--border-strong)", background: "var(--white)", height: "100%" }}>
+            <p style={{ margin: 0, fontSize: "0.85rem", lineHeight: 1.6 }}>
+              Click a section in the preview to edit it, or pick one from the left rail.
+            </p>
           </div>
         ) : (
-          <div style={{ border: "0.5px solid var(--border)", padding: "1.25rem", background: "var(--white)" }}>
+          <div style={{ border: "0.5px solid var(--border)", padding: "1.25rem", background: "var(--white)", height: "100%", overflowY: "auto", maxHeight: "calc(100vh - 8rem)" }}>
             <h3 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.4rem", fontWeight: 300, marginTop: 0 }}>
               {SECTION_LABEL[selected.type]}
             </h3>
@@ -279,9 +442,41 @@ export function EditorClient({ pageId, allowedSections, initialSections, pickerD
             {selected.type === "CTA_BANNER" && (
               <CtaBannerForm section={selected as CtaBannerSection} onChange={(patch) => update<CtaBannerSection>(selected.id, patch)} />
             )}
+            {selected.type === "PROCESS_STEPS" && (
+              <ProcessStepsForm
+                section={selected as Extract<Section, { type: "PROCESS_STEPS" }>}
+                onChange={(patch) => update<Extract<Section, { type: "PROCESS_STEPS" }>>(selected.id, patch)}
+              />
+            )}
+            {selected.type === "PACKAGE_CARDS" && (
+              <PackageCardsForm
+                section={selected as Extract<Section, { type: "PACKAGE_CARDS" }>}
+                onChange={(patch) => update<Extract<Section, { type: "PACKAGE_CARDS" }>>(selected.id, patch)}
+              />
+            )}
+            {selected.type === "TESTIMONIAL" && (
+              <TestimonialForm
+                section={selected as Extract<Section, { type: "TESTIMONIAL" }>}
+                onChange={(patch) => update<Extract<Section, { type: "TESTIMONIAL" }>>(selected.id, patch)}
+              />
+            )}
+            {selected.type === "SLIDESHOW" && (
+              <SlideshowForm
+                section={selected as Extract<Section, { type: "SLIDESHOW" }>}
+                onChange={(patch) => update<Extract<Section, { type: "SLIDESHOW" }>>(selected.id, patch)}
+                onPickSlide={(index) => setPickerCtx({ sectionId: selected.id, slot: "SLIDESHOW_SLIDE", index })}
+                onPickAdd={() => setPickerCtx({ sectionId: selected.id, slot: "SLIDESHOW_SLIDE" })}
+              />
+            )}
+            {selected.type === "STATS" && (
+              <StatsForm
+                section={selected as Extract<Section, { type: "STATS" }>}
+                onChange={(patch) => update<Extract<Section, { type: "STATS" }>>(selected.id, patch)}
+              />
+            )}
           </div>
         )}
-      </main>
+      </aside>
 
       <PhotoPicker
         open={pickerCtx !== null}
@@ -460,6 +655,205 @@ function CtaBannerForm({ section, onChange }: { section: CtaBannerSection; onCha
           <option value="DARK">Dark (charcoal background)</option>
           <option value="LIGHT">Light (olive tint background)</option>
         </select>
+      </Field>
+    </>
+  );
+}
+
+/* ─── Phase-1 structured-block forms ───────────────────────────────────── */
+
+function ProcessStepsForm({
+  section,
+  onChange,
+}: {
+  section: Extract<Section, { type: "PROCESS_STEPS" }>;
+  onChange: (patch: Partial<Extract<Section, { type: "PROCESS_STEPS" }>>) => void;
+}) {
+  function setStep(i: number, patch: Partial<{ n: string; title: string; body: string }>) {
+    const next = section.steps.map((s, j) => (j === i ? { ...s, ...patch } : s));
+    onChange({ steps: next });
+  }
+  function addStep() {
+    const n = String(section.steps.length + 1).padStart(2, "0");
+    onChange({ steps: [...section.steps, { n, title: "New step", body: "" }] });
+  }
+  function removeStep(i: number) {
+    if (!confirm("Remove this step?")) return;
+    onChange({ steps: section.steps.filter((_, j) => j !== i) });
+  }
+  return (
+    <>
+      <Field label="Eyebrow"><TextInput value={section.eyebrow ?? ""} onChange={(v) => onChange({ eyebrow: v })} /></Field>
+      <Field label="Heading (Markdown allowed)"><TextInput value={section.heading ?? ""} onChange={(v) => onChange({ heading: v })} /></Field>
+      <Field label="Intro paragraph"><TextArea value={section.intro ?? ""} onChange={(v) => onChange({ intro: v })} /></Field>
+      <Field label="Steps">
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+          {section.steps.map((s, i) => (
+            <div key={i} style={{ border: "0.5px solid var(--border)", padding: "0.75rem" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "80px 1fr auto", gap: "0.5rem", alignItems: "start" }}>
+                <input value={s.n} onChange={(e) => setStep(i, { n: e.target.value })} placeholder="01" style={{ width: "100%", border: "0.5px solid var(--border)", background: "transparent", padding: "0.4rem", fontSize: "0.85rem" }} />
+                <input value={s.title} onChange={(e) => setStep(i, { title: e.target.value })} placeholder="Step title" style={{ width: "100%", border: "0.5px solid var(--border)", background: "transparent", padding: "0.4rem", fontSize: "0.85rem" }} />
+                <button type="button" onClick={() => removeStep(i)} style={mini}>×</button>
+              </div>
+              <textarea value={s.body} onChange={(e) => setStep(i, { body: e.target.value })} placeholder="Step body" rows={3} style={{ marginTop: "0.4rem", width: "100%", border: "0.5px solid var(--border)", background: "transparent", padding: "0.4rem", fontSize: "0.85rem", resize: "vertical" }} />
+            </div>
+          ))}
+          <button type="button" onClick={addStep} style={addBtn}>+ Add step</button>
+        </div>
+      </Field>
+    </>
+  );
+}
+
+function PackageCardsForm({
+  section,
+  onChange,
+}: {
+  section: Extract<Section, { type: "PACKAGE_CARDS" }>;
+  onChange: (patch: Partial<Extract<Section, { type: "PACKAGE_CARDS" }>>) => void;
+}) {
+  function updatePkg(i: number, patch: Partial<Extract<Section, { type: "PACKAGE_CARDS" }>["packages"][number]>) {
+    const next = section.packages.map((p, j) => (j === i ? { ...p, ...patch } : p));
+    onChange({ packages: next });
+  }
+  function addPkg() {
+    onChange({
+      packages: [
+        ...section.packages,
+        {
+          id: `pkg-${Math.random().toString(36).slice(2, 6)}`,
+          name: "New package",
+          startingPriceUsd: 0,
+          sessionType: "Portrait",
+          includes: [],
+          idealFor: "",
+        },
+      ],
+    });
+  }
+  function removePkg(i: number) {
+    if (!confirm("Remove this package?")) return;
+    onChange({ packages: section.packages.filter((_, j) => j !== i) });
+  }
+  return (
+    <>
+      <Field label="Eyebrow"><TextInput value={section.eyebrow ?? ""} onChange={(v) => onChange({ eyebrow: v })} /></Field>
+      <Field label="Heading (Markdown allowed)"><TextInput value={section.heading ?? ""} onChange={(v) => onChange({ heading: v })} /></Field>
+      <Field label="Intro paragraph"><TextArea value={section.intro ?? ""} onChange={(v) => onChange({ intro: v })} /></Field>
+      <Field label="Packages">
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+          {section.packages.map((p, i) => (
+            <div key={p.id} style={{ border: "0.5px solid var(--border)", padding: "0.75rem" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 110px auto", gap: "0.5rem", alignItems: "start" }}>
+                <input value={p.name} onChange={(e) => updatePkg(i, { name: e.target.value })} placeholder="Package name" style={{ border: "0.5px solid var(--border)", background: "transparent", padding: "0.4rem", fontSize: "0.85rem" }} />
+                <input type="number" min={0} step={25} value={p.startingPriceUsd} onChange={(e) => updatePkg(i, { startingPriceUsd: Number(e.target.value) || 0 })} style={{ border: "0.5px solid var(--border)", background: "transparent", padding: "0.4rem", fontSize: "0.85rem" }} />
+                <button type="button" onClick={() => removePkg(i)} style={mini}>×</button>
+              </div>
+              <input value={p.sessionType} onChange={(e) => updatePkg(i, { sessionType: e.target.value })} placeholder="sessionType (Portrait, Family, …)" style={{ marginTop: "0.4rem", width: "100%", border: "0.5px solid var(--border)", background: "transparent", padding: "0.4rem", fontSize: "0.85rem" }} />
+              <textarea value={p.includes.join("\n")} onChange={(e) => updatePkg(i, { includes: e.target.value.split("\n").filter(Boolean) })} placeholder="Inclusions — one per line" rows={4} style={{ marginTop: "0.4rem", width: "100%", border: "0.5px solid var(--border)", background: "transparent", padding: "0.4rem", fontSize: "0.85rem", resize: "vertical" }} />
+              <input value={p.idealFor} onChange={(e) => updatePkg(i, { idealFor: e.target.value })} placeholder="Ideal for…" style={{ marginTop: "0.4rem", width: "100%", border: "0.5px solid var(--border)", background: "transparent", padding: "0.4rem", fontSize: "0.85rem" }} />
+              <input value={p.id} onChange={(e) => updatePkg(i, { id: e.target.value.trim() })} placeholder="slug (controls ?package=)" style={{ marginTop: "0.4rem", width: "100%", border: "0.5px solid var(--border)", background: "transparent", padding: "0.4rem", fontSize: "0.85rem" }} />
+            </div>
+          ))}
+          <button type="button" onClick={addPkg} style={addBtn}>+ Add package</button>
+        </div>
+      </Field>
+    </>
+  );
+}
+
+function TestimonialForm({
+  section,
+  onChange,
+}: {
+  section: Extract<Section, { type: "TESTIMONIAL" }>;
+  onChange: (patch: Partial<Extract<Section, { type: "TESTIMONIAL" }>>) => void;
+}) {
+  return (
+    <>
+      <Field label="Eyebrow"><TextInput value={section.eyebrow ?? ""} onChange={(v) => onChange({ eyebrow: v })} /></Field>
+      <Field label="Quote"><TextArea value={section.quote} onChange={(v) => onChange({ quote: v })} rows={6} /></Field>
+      <Field label="Author"><TextInput value={section.author ?? ""} onChange={(v) => onChange({ author: v })} /></Field>
+      <Field label="Author role / context"><TextInput value={section.authorRole ?? ""} onChange={(v) => onChange({ authorRole: v })} /></Field>
+      <Field label="Variant">
+        <select value={section.variant ?? "DARK"} onChange={(e) => onChange({ variant: e.target.value as "DARK" | "LIGHT" })} style={selectStyle}>
+          <option value="DARK">Dark</option>
+          <option value="LIGHT">Light</option>
+        </select>
+      </Field>
+    </>
+  );
+}
+
+function SlideshowForm({
+  section,
+  onChange,
+  onPickSlide,
+  onPickAdd,
+}: {
+  section: Extract<Section, { type: "SLIDESHOW" }>;
+  onChange: (patch: Partial<Extract<Section, { type: "SLIDESHOW" }>>) => void;
+  onPickSlide: (index: number) => void;
+  onPickAdd: () => void;
+}) {
+  return (
+    <>
+      <Field label="Eyebrow"><TextInput value={section.eyebrow ?? ""} onChange={(v) => onChange({ eyebrow: v })} /></Field>
+      <Field label="Heading"><TextInput value={section.heading ?? ""} onChange={(v) => onChange({ heading: v })} /></Field>
+      <Field label="Cycle interval (ms — 1500-30000)">
+        <input
+          type="number"
+          min={1500}
+          max={30000}
+          step={500}
+          value={section.intervalMs ?? 5000}
+          onChange={(e) => onChange({ intervalMs: Number(e.target.value) || 5000 })}
+          style={{ width: "100%", border: "0.5px solid var(--border)", background: "transparent", padding: "0.55rem 0.65rem", fontSize: "0.9rem", fontFamily: "inherit" }}
+        />
+      </Field>
+      <Field label="Slides">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "0.5rem", marginBottom: "0.5rem" }}>
+          {section.slides.map((slide, i) => (
+            <div key={i} style={{ border: "0.5px solid var(--border)", padding: "0.4rem" }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={buildCdnUrl(slide.cloudflareImageId, "thumbnail")} alt="" style={{ width: "100%", height: "90px", objectFit: "cover" }} />
+              <div style={{ display: "flex", gap: "0.3rem", marginTop: "0.3rem" }}>
+                <button type="button" onClick={() => onPickSlide(i)} style={mini}>Swap</button>
+                <button type="button" onClick={() => onChange({ slides: section.slides.filter((_, j) => j !== i) })} style={mini}>Remove</button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <button type="button" onClick={onPickAdd} style={addBtn}>+ Add slide</button>
+      </Field>
+    </>
+  );
+}
+
+function StatsForm({
+  section,
+  onChange,
+}: {
+  section: Extract<Section, { type: "STATS" }>;
+  onChange: (patch: Partial<Extract<Section, { type: "STATS" }>>) => void;
+}) {
+  function setItem(i: number, patch: Partial<{ number: string; label: string }>) {
+    const next = section.items.map((it, j) => (j === i ? { ...it, ...patch } : it));
+    onChange({ items: next });
+  }
+  return (
+    <>
+      <Field label="Stats">
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+          {section.items.map((it, i) => (
+            <div key={i} style={{ display: "grid", gridTemplateColumns: "100px 1fr auto", gap: "0.4rem", alignItems: "center" }}>
+              <input value={it.number} onChange={(e) => setItem(i, { number: e.target.value })} placeholder="340+" style={{ border: "0.5px solid var(--border)", background: "transparent", padding: "0.4rem", fontSize: "0.85rem" }} />
+              <input value={it.label} onChange={(e) => setItem(i, { label: e.target.value })} placeholder="Sessions Completed" style={{ border: "0.5px solid var(--border)", background: "transparent", padding: "0.4rem", fontSize: "0.85rem" }} />
+              <button type="button" onClick={() => onChange({ items: section.items.filter((_, j) => j !== i) })} style={mini}>×</button>
+            </div>
+          ))}
+          <button type="button" onClick={() => onChange({ items: [...section.items, { number: "", label: "" }] })} style={addBtn}>+ Add stat</button>
+        </div>
       </Field>
     </>
   );

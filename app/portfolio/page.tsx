@@ -1,5 +1,8 @@
 // app/portfolio/page.tsx
 // Public portfolio — fetches all portfolio photos from Firestore.
+// The page header (eyebrow + heading + intro) is editable via the site
+// editor at `/admin/site/portfolio` — once a draft is published, those
+// sections render above the photo grid in place of the static header.
 
 import { adminDb }         from "@/lib/firebase-admin";
 import { buildCdnUrl }     from "@/lib/cloudflare";
@@ -7,6 +10,8 @@ import { PortfolioClient } from "./PortfolioClient";
 import { Footer }          from "@/components/Footer";
 import type { MasonryPhoto } from "@/components/MasonryGrid";
 import type { Metadata }     from "next";
+import { loadPublishedSections } from "@/lib/db/site-content";
+import { renderSections } from "@/lib/site-content/render";
 
 export const metadata: Metadata = {
   title:       "Portfolio",
@@ -65,16 +70,22 @@ export default async function PortfolioPage() {
     // Firestore not yet configured — use dev placeholders
   }
 
+  const cmsSections = await loadPublishedSections("portfolio").catch(() => null);
+
   return (
     <div style={{ paddingTop: "72px" }} className="page-fade-in">
-      <div style={{ padding: "4rem 4rem 3rem", borderBottom: "0.5px solid var(--border)", marginBottom: "3rem" }}>
-        <p style={{ fontSize: "0.65rem", letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--olive)", marginBottom: "1rem" }}>
-          Korrin&apos;s Portfolio
-        </p>
-        <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "clamp(2.5rem, 5vw, 4rem)", fontWeight: 300, letterSpacing: "-0.01em" }}>
-          The full <em>collection</em>
-        </h1>
-      </div>
+      {cmsSections && cmsSections.length > 0 ? (
+        renderSections(cmsSections)
+      ) : (
+        <div style={{ padding: "4rem 4rem 3rem", borderBottom: "0.5px solid var(--border)", marginBottom: "3rem" }}>
+          <p style={{ fontSize: "0.65rem", letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--olive)", marginBottom: "1rem" }}>
+            Korrin&apos;s Portfolio
+          </p>
+          <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "clamp(2.5rem, 5vw, 4rem)", fontWeight: 300, letterSpacing: "-0.01em" }}>
+            The full <em>collection</em>
+          </h1>
+        </div>
+      )}
 
       <PortfolioClient photos={photos} />
       <Footer />

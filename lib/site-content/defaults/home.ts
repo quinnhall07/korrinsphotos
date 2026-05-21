@@ -27,6 +27,15 @@ export const HOME_DEFAULTS: Section[] = [
     photos: [],
   },
   {
+    id: "home-stats-default",
+    type: "STATS",
+    items: [
+      { number: "Booking", label: "Summer 2026" },
+      { number: "2-week",  label: "Average response" },
+      { number: "100%",    label: "Personal — every shoot" },
+    ],
+  },
+  {
     id: "home-cta-default",
     type: "CTA_BANNER",
     eyebrow: "Ready to begin?",

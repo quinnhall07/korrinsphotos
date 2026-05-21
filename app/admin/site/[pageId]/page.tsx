@@ -4,25 +4,64 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireAdmin } from "@/lib/session";
-import { getPageDefinition } from "@/lib/site-content/page-registry";
+import { getPageDefinition, type PageDefinition } from "@/lib/site-content/page-registry";
 import { getSiteContent, loadDraftSections } from "@/lib/db/site-content";
 import { listSiteAssets, listProjectPhotos } from "@/lib/db/site-assets";
 import { EditorClient } from "./EditorClient";
 import { HOME_DEFAULTS } from "@/lib/site-content/defaults/home";
-import type { Section } from "@/lib/site-content/types";
+import { INVESTMENT_DEFAULTS } from "@/lib/site-content/defaults/investment";
+import { PORTFOLIO_DEFAULTS } from "@/lib/site-content/defaults/portfolio";
+import { ABOUT_DEFAULTS } from "@/lib/site-content/defaults/about";
+import { FOOTER_DEFAULTS } from "@/lib/site-content/defaults/footer";
+import { isReservedSlug } from "@/app/[slug]/page";
+import type { Section, SectionType } from "@/lib/site-content/types";
 import { formatDateTime } from "@/lib/date";
 
 export const dynamic = "force-dynamic";
 
 const PAGE_DEFAULTS: Record<string, Section[]> = {
   home: HOME_DEFAULTS,
+  investment: INVESTMENT_DEFAULTS,
+  portfolio: PORTFOLIO_DEFAULTS,
+  about: ABOUT_DEFAULTS,
+  footer: FOOTER_DEFAULTS,
 };
+
+// For admin-created custom pages we don't have a registry entry; the editor
+// still needs an allowedSections list and a label. These are the defaults.
+const CUSTOM_PAGE_ALLOWED_SECTIONS: readonly SectionType[] = [
+  "HERO",
+  "PHOTO_GRID",
+  "SLIDESHOW",
+  "STATS",
+  "RICH_TEXT",
+  "CTA_BANNER",
+  "PROCESS_STEPS",
+  "PACKAGE_CARDS",
+  "TESTIMONIAL",
+];
 
 export default async function SiteEditorPage({ params }: { params: Promise<{ pageId: string }> }) {
   await requireAdmin();
   const { pageId } = await params;
-  const def = getPageDefinition(pageId);
-  if (!def) notFound();
+
+  let def: PageDefinition;
+  const registryEntry = getPageDefinition(pageId);
+  if (registryEntry) {
+    def = registryEntry;
+  } else {
+    // Custom page — exists in Firestore? If not, refuse.
+    const doc = await getSiteContent(pageId);
+    if (!doc) notFound();
+    if (isReservedSlug(pageId)) notFound();
+    def = {
+      id: pageId,
+      label: pageId.charAt(0).toUpperCase() + pageId.slice(1),
+      publicHref: `/${pageId}`,
+      description: "Custom page — created from the site editor.",
+      allowedSections: CUSTOM_PAGE_ALLOWED_SECTIONS,
+    };
+  }
 
   const [doc, draftSections, siteAssets, projectPhotos] = await Promise.all([
     getSiteContent(pageId),
