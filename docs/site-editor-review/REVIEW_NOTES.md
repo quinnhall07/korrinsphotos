@@ -1,0 +1,341 @@
+# Site Editor — Review Notes
+
+> Consolidated from Rowan, Quinn (devs) and Korrin (operator) reviews.
+> Source dates: 2026-05-21. Codebase audited against branch `claude/site-editor-review-hPlf6`.
+>
+> Each item has: (R)owan / (Q)uinn / (K)orrin attribution, the repo evidence,
+> proposed fix, and rough effort. Overlap between reviewers is called out
+> explicitly under "Strong overlaps."
+
+---
+
+## Strong Overlaps (≥2 reviewers raised the same thing)
+
+| # | Theme | Who | Priority |
+|---|---|---|---|
+| 1 | **Clients vs Users feel redundant** | Q + K | HIGH |
+| 2 | **My Portal is broken** | Q + K | HIGH |
+| 3 | **Studio Hours doesn't belong** | Q + K | LOW (delete it) |
+| 4 | **Investment page needs editable copy + prices** | Q (rename → Pricing) + K (edit prose, edit prices, drop AI descriptions) | HIGH — this IS the site editor |
+| 5 | **Tax / sales tax is opaque** | Q ("how do they differ?") + K ("walk me through") | MED |
+| 6 | **"What is X?" — vocabulary problem** | Q (LTV, Campaigns, Segments) + K (Vendors, Lead Magnets, Segments, Broadcasts, Sequences, Kits) | HIGH (glossary + sidebar reorg) |
+| 7 | **Site editor needed** | Q (need site editor) + K (write descriptions, edit prices, edit portfolio categories) | HIGH — single biggest piece of work |
+
+---
+
+## Pain Point 1 — Site Editor / Editable Content (HIGHEST PRIORITY)
+
+This is the unifying theme of half the notes. Korrin can't change copy, prices, or imagery without a dev touching code.
+
+### Hardcoded today
+- **Home page stats** (`app/page.tsx:84–95`) — "340+ Sessions, 12 Years, 98% Satisfaction" are hardcoded JSX (R+Q+K flag this; numbers are also called out as fake in `.claude/startup-state.md` Evidence Log).
+- **Portfolio categories** (`app/portfolio/categories.ts`) — `wedding | portrait | editorial | landscape` is a TypeScript union, not Firestore data. K wants `portraits, landscapes, nature, edits` for launch.
+- **Investment page** (`app/investment/page.tsx`) — process step copy (`PROCESS_STEPS`), package data (`app/investment/packages.ts`), testimonial (lit. `"[Placeholder…]"` at line 482), CTA copy — all hardcoded.
+- **Investment package prices** (`packages.ts:46–88`) — `startingPriceUsd: 450 / 1250 / 3500` are in TS source. K explicitly asks "will I be able to edit the prices as they fluctuate?"
+- **Style quiz options** (`app/style/questions.ts`) — K wants to: drop "Indoor studio" → "Indoor"; drop "Documentary vs Editorial"; change "Film vs Crisp" → "Edited vs Unedited".
+- **Home page hero slideshow** — `components/HeroSlideshow.tsx` likely also hardcoded; should be CMS-editable.
+
+### Proposed: a real site-editor surface at `/admin/site`
+New Firestore collection `siteContent/{key}` where each key is one editable block:
+
+```
+siteContent/home.stats               { items: [{number, label}] }
+siteContent/home.heroSlides          { slides: [{cloudflareImageId, alt}] }
+siteContent/investment.processSteps  { steps: [{n, title, body}] }
+siteContent/investment.packages      { packages: [{id, name, priceUsd, includes[], idealFor, sessionType}] }
+siteContent/investment.testimonial   { quote, author }
+siteContent/portfolio.categories     { categories: [{value, label}] }
+siteContent/style.questions          { questions: [...] }   // optional, lower priority
+```
+
+Reads at the page level become `getSiteContent("home.stats")` (server-only via `lib/db/site-content.ts`); the static TS files become fallback defaults if Firestore is empty.
+
+UI is one page (`/admin/site`) with a left rail of editable sections + a simple form per block. No WYSIWYG — paragraph textareas only, the editorial design is preserved by the page templates.
+
+**Effort:** ~1 day for plumbing + 4 highest-value blocks (stats, packages, process steps, portfolio categories). Style quiz can be its own follow-up.
+
+---
+
+## Pain Point 2 — Booking Form UX (HIGH)
+
+Multiple complaints, mostly Step 2 + Step 3.
+
+### Confirmed bugs/UX issues
+
+| Note | File | Fix |
+|---|---|---|
+| "Get rid of checkbox in booking" (R+Q) | `BookingFormSteps.tsx:794` (`readyToCommit`) + line 1067 (`readProcessPage`) | Drop both checkboxes. Neither is used by `submitBooking` (only `readyToCommit` lands in the auto-summary; `readProcessPage` is unread). |
+| "Update moods on Booking (no moods?)" | `BookingFormSteps.tsx:147–173`, `MOOD_TILES` | Either remove the mood quiz entirely from Step 2 OR re-tile to Korrin's voice (light/dark/edited/unedited per K's quiz revisions). |
+| "Booking-kind of session should be dropdown" (R+Q) | `SESSION_TILES` tile grid in Step 1 | Convert tile grid to a `<select>` dropdown. Less visual real-estate, more obvious. |
+| "Other kinds of sessions?" (R+Q) | `BookingSchema` enum, `actions.ts:35`; matched on home / portfolio / style quiz | Pending K's input — what new types? Greek-life formals? Senior portraits? Bid day? See `startup-state.md` — Phase 2 ICP is Bama Greek-life. |
+| "Step 2 of booking is shit" (R+Q) | `Step2()` in `BookingFormSteps.tsx:827` | Combined with mood + checkbox cleanup, this collapses to "Where will we shoot?" only. Maybe merge into Step 1 (dropdown + location). |
+| "Last page on booking automatically skips" (R+Q) | Need to repro — possibly `step4Valid` short-circuits | Inspect `setStep(4)` transitions; might be auto-submitting on Step 3 → 4 click. **Repro needed.** |
+| "Get rid of 'website' on referrals; add TikTok, Friends, Family, optional referrer email" (R+Q) | `ReferralSource` enum line 51 + `<select>` line 1037 | Replace enum with `Instagram | TikTok | Google | Friend or Family | Other`. Add optional `referredByEmail` text input → fed to existing `referralCode`/`referredBy` plumbing in `clients.ts`. |
+| "Process page needs to open new tab" (R+Q) | `BookingFormSteps.tsx:1081` (`<Link href="/investment">`) | Add `target="_blank" rel="noopener"` so people don't lose their draft. |
+| "'Can we contact you' box on phone #" (R+Q) | `BookingFormSteps.tsx:1021–1031` (phone field) | New optional `smsConsent` checkbox under the phone input. Persist on `clients/{id}.smsConsent`. **TCPA implication — confirm intent.** |
+| "Show password needs an option" (R+Q) | `app/login/LoginForm.tsx:353, 368` | Eye-icon toggle on the password input(s). 10-line client-state change. |
+| "Redirect off of login" (R+Q) | `LoginForm.tsx:122-136` — already redirects role-aware to /admin or /gallery | Either repro a specific failure or this means: redirect when an already-signed-in user hits `/login` (currently the form renders). Likely the latter. |
+
+---
+
+## Pain Point 3 — Admin Inbox / Pipeline (HIGH — multiple confirmed bugs)
+
+### Inbox
+
+| Note | Evidence | Fix |
+|---|---|---|
+| "I clicked mark read on an inquiry and I'm not sure where it went" (K) | `app/admin/inbox/page.tsx:45` lists only `includeRead: false`. Marking read removes from the only visible list. | Add "All / Open / Snoozed / Read / Archived" filter tabs. Currently there are only Open + Snoozed sections. |
+| "What does snooze do?" (R+Q) + "Can't access snoozed inquiries" | Snoozed list exists (`page.tsx:46`, `:51`) — but is it visually separated and labelled? Need to verify the rendered UI clearly. | Add an explicit "Snoozed" section header with un-snooze button. |
+| "Can't access archived inquiries" (R+Q) | `lib/db/inbox.ts:99-101` — `archiveItem` literally `.doc(id).delete()`. **Once archived, it's gone forever.** | Change archive to a soft-delete: write `archivedAt: Timestamp` instead of deleting. Add an Archived view. The actual `projects/{id}` doc is unaffected — only the inbox row dies — but the user loses the breadcrumb. |
+| "$150 referral email — what is that?" (K) | `lib/automations/recipes.ts:60` mentions "$150 referral email" in the description, but the actual `REFERRAL_TIER_REWARDS` in `lib/db/clients.ts:117-118` are $50 (Tier 1) and $100 (Tier 2). **Documentation bug.** | Either (a) raise the actual rewards to $150, or (b) fix the recipe description to say "the referral ask email" and remove the dollar amount. Pending K's input on referral economics. |
+
+### Pipeline
+
+| Note | Evidence | Fix |
+|---|---|---|
+| "Needs Action isn't being updated on dashboard" (R+Q) | Dashboard reads `projects where status == "INQUIRY"` (`app/admin/page.tsx:46`). After an inquiry advances to QUALIFYING / PROPOSAL_SENT, the counter drops — by design — but the label "Pending Inquiries" misleads. | Rename label OR broaden to "Needs Action" = `projects where status in (INQUIRY, QUALIFYING, NEGOTIATING, DEPOSIT_PENDING, CONTRACT_SENT)`. K should pick. |
+| "Detail drawer doesn't work - error" (R+Q) | No drawer — Kanban cards (`ProjectsPipelineClientPage.tsx:872`) are `<Link>` to `/admin/projects/{id}`. The "drawer" they mean is the detail page, which errors. **Need a stack trace to repro.** | **Repro needed.** Suspect Firestore composite index on `projects/{id}/dayOfTimeline orderBy(startTime)` (also affects Portal). |
+| "Kanban table doesn't [cut off]" (R+Q) | Likely "Kanban table view doesn't work" | **Repro needed.** |
+| "Get rid of Table view on pipeline" (R+Q) | `ProjectsPipelineClientPage.tsx` toggles between Kanban + table | Remove the table-view toggle; Kanban only. **Confirm — table is useful for some workflows.** |
+| "What is save view - where are the filters" (R+Q) | `lib/db/saved-views.ts` — 5 built-in + per-admin Firestore-persisted views | Add inline help: "Save the current Kanban filters as a named view." Possibly merge under a single dropdown vs the chip row. |
+| "Where will I see the gallery on a booked session?" (K) | `ProjectWorkspaceClient.tsx:2670` Gallery tab exists but reads `eventId` only; event auto-creates on BOOKED. If event creation failed silently, the tab shows the "no gallery yet" empty state forever. | Gallery tab needs (a) a fallback "create event manually" CTA, (b) a direct deep-link to `/admin/events/{eventId}` (the editor surface where photos go). Probably both. |
+
+---
+
+## Pain Point 4 — Information Architecture / Sidebar (HIGH — Korrin can't navigate her own app)
+
+Korrin asked what 7 of the 28 sidebar items do. That's a navigation crisis, not a feature gap.
+
+### Glossary (write into `CONTEXT.md` + tooltips in sidebar)
+
+| Term | Meaning in this app | Where it lives | Korrin needs it? |
+|---|---|---|---|
+| **Client** | Universal record keyed by email. Exists before they log in. | `clients/{id}` | Yes |
+| **User** | Firebase Auth identity (someone who logged in). | `users/{uid}` | Mostly internal — merge into Clients view |
+| **Lead Magnet** | Free downloadable (preset pack, location guide PDF) gated behind an email-capture form to grow the list. | `leadMagnets/{id}` | Defer — not needed in Year 1 |
+| **Segment** | Saved Firestore filter ("all Wedding clients from 2025"). Used as the audience for a Broadcast. | `segments/{id}` | Yes, but only after Broadcasts get used |
+| **Broadcast** | One-time block-based mass email to a Segment. Like a newsletter blast. | `broadcasts/{id}` | Yes — for "I have an open Saturday" announcements |
+| **Sequence** | Multi-step automated drip ("3 days after booking → send X; 7 days later → send Y"). Triggered by status changes or dates. | `sequences/{id}` | Yes — but the 8 default Automations already cover most of it |
+| **Campaign** | Marketing campaign tracker (UTM source/medium attribution + Ad Spend allocation). | `campaigns/{id}` + `adSpendEntries/{id}` | Only when paid ads start |
+| **Kit / Gear Template** | Equipment checklist ("Wedding Kit: 2× Sony A7IV, 35mm, 85mm, 2 batteries…"). Attaches to a project as a pack-list. | `gearTemplates/{id}` | Yes — but rename "Kits" everywhere consistently |
+| **Vendor** | Other industry contacts (venue, planner, HMUA, florist). For referral reciprocity tracking. | `vendors/{id}` | Yes, for Bama Greek-life network |
+| **Location** | A reusable shoot location with scouting metadata (parking, golden-hour window, permit info). | `locations/{id}` | Yes |
+| **Quiet Season** | Calendar view that highlights months historically below booking targets so K can plan promos. | computed view of `projects/shootDate` | Demote — fold into Finance |
+| **LTV** | Lifetime value — sum of all PAID invoices per client. | computed in `/admin/clients` | Just rename to "Lifetime spend" |
+| **Insurer** | Stored contact info for K's photo insurance policy + COI request workflow. | `users/{uid}.insurerContact` | Only when a vendor asks for a Certificate of Insurance |
+
+### Sidebar reorg — proposed
+
+Today (5 groups × 28 entries — too many):
+> Overview · Content · Clients · Marketing · Reports · Settings
+
+Proposed (4 groups × ~16 entries):
+```
+Day-to-day
+  Dashboard
+  Inbox
+  Pipeline
+  Calendar
+
+People & Places
+  Clients          ← merge old "Clients" + "Users"
+  Locations        ← absorbs Vendors > VENUE type
+  Vendors          ← non-venue vendors only
+
+Content
+  Events           (= shoots/galleries)
+  Portfolio        ← NEW: site editor
+  Journal
+  Shop
+  Lead Magnets   (collapsed; hide until first one is created)
+
+Marketing
+  Segments + Broadcasts + Sequences  ← collapse into one "Outreach" page with tabs
+  Campaigns + Ad Spend                ← collapse into one "Campaigns" page
+
+Reports
+  Finance (absorbs Tax / Expenses / Sales Tax / Quiet Season as tabs)
+  Compliance (absorbs Insurer / COI / Data Requests)
+  Referrals
+  Health
+  Exports
+
+Settings
+  Automations
+  Kits             ← rename from "Gear Templates"
+  Brand voice
+  Reply templates
+  ──────────
+  [removed] Studio Hours      ← K + Q both said drop it
+  [removed] Tax (settings)    ← merge into Reports > Finance
+```
+
+**Effort:** half a day for the sidebar + page-merging redirects + tooltips.
+
+---
+
+## Pain Point 5 — Public Site Polish
+
+| Note | File | Fix |
+|---|---|---|
+| Stats are fake on main page | `app/page.tsx:84-95` | See Pain Point 1 — make CMS-editable. Until first launch, **lower to honest numbers** (e.g. "Booking summer 2026"). Per `startup-state.md`: 340/12y/98% are AI marketing copy, not real. |
+| "Portfolio photos Lightroom is weird" | Need clarification from R/Q — is this about the upload pipeline or the public grid? | Pending |
+| Portfolio categories: drop weddings + editorial; add portraits, landscapes, nature, edits (K) | `app/portfolio/categories.ts` | Change `PORTFOLIO_CATEGORIES` constant. **One-line change today; CMS-editable later.** Note: photos are already categorised in Firestore against the old vocab — need a migration or a one-time tag-rename script. |
+| Rename Investment → Pricing (Q) | route, nav links, page title, metadata | Move route to `app/pricing/`; add 301 redirect from `/investment`. **Confirm — Korrin liked the editorial "Investment" framing.** |
+| No public Locations page | `/locations` exists (`app/locations/page.tsx`) but is NC-centric (`lib/seo/cities.ts` is the NC seed) | This is a discovery / navigation issue, not a missing route. Add to Footer nav? Or wait for Tuscaloosa rewrite. |
+| Take out AI-style copy from Investment (K) | Process step bodies in `app/investment/page.tsx:32-57` + `packages.ts:55, 71, 88` "idealFor" lines | Either let Korrin rewrite via the site editor (Pain Point 1) or replace placeholders now. |
+| "What is the use of Journal?" (Q) | `/journal` public blog (per-project posts auto-drafted from delivered sessions for SEO) | K wants to write entries from scratch + edit/delete. Currently: edit/delete works (`actions.ts:147`, `:180`), but there's no "New post from scratch" button — only "Draft from delivered project." See follow-up below. |
+
+---
+
+## Pain Point 6 — Auth / Portal Bugs (HIGH)
+
+| Note | Evidence | Fix |
+|---|---|---|
+| "My Portal is broken — error" (Q+K) | `app/portal/[projectId]/page.tsx:189-203` fans out to `dayOfTimeline.orderBy("startTime")` — composite index requirement; same pattern listed under root CLAUDE.md gotcha #1 | **Most likely cause.** Confirm with a Firestore error in the logs; create the composite index. If it's something else, a stack trace narrows it down. Could also be: signed-in user has no `clients/{id}` doc by email → 302 to `/` (`portal/router/page.tsx:43`) — could feel like an "error" if it's silent. |
+| Korrin asks "should I have access to booking page through the admin?" | Booking form is public — admins land on the same form. There's no "admin view" of the booking funnel. | Not a bug. Add a small "View as public" link from the admin pipeline to make this discoverable; remove the Navbar "Book a Session" CTA when the user is an ADMIN. |
+
+---
+
+## Pain Point 7 — Misc Fixes (LOW–MED)
+
+| Note | Action |
+|---|---|
+| 4 steps on Investment is good (R+Q) | No change — keep the 4-step Process section |
+| "The Moment" package (R+Q) | New 4th package between The Mini and The Story? **Pending K's confirmation** of price + inclusions. |
+| Improve Reports UI; things can be integrated (R+Q) | Covered by sidebar reorg above |
+| Put Referrals integrated with Clients (R+Q) | `/admin/reports/referrals` is the dashboard. The data lives on `clients/{id}.referralCount/Tier/Rewards`. Add a "Referrals" tab to `/admin/clients/{id}` instead of a separate report. |
+| Booking heatmap → 14-day forward calendar w/ available times (R+Q) | `/admin/calendar` is currently a Capacity Heatmap. Replace the default view with a 14-day forward agenda showing existing shoots + suggested open slots. **Confirm — heatmap is still useful for capacity planning, suggest a tabbed view.** |
+| "Korrin's Photos" brand name | Per `startup-state.md`, rename pending (v5 was "Common Light Photography" → reverted). All hardcoded "Korrin's Photos" copy is in: `app/layout.tsx`, `app/page.tsx`, `app/investment/page.tsx`, `components/Navbar.tsx`, `components/Footer.tsx`, `app/admin/page.tsx` ("Korrin's Studio"), metadata everywhere. Centralise in a single `BRAND_NAME` constant or in `siteContent/brand`. |
+| All NC / Raleigh-Durham / Cary copy | `startup-state.md`: "delete or replace before launch." 13 files. Site editor scope. |
+
+---
+
+## Architecture Proposals
+
+### 1. `siteContent` collection + `lib/db/site-content.ts` (Pain Point 1)
+Already detailed above. Follows the existing per-collection convention; no aggregator (ADR-013).
+
+### 2. Soft-delete the inbox archive (Pain Point 3)
+`archiveItem(id)` should `update({ archivedAt: Timestamp.now() })` instead of `.delete()`. Add `listInboxItems({ includeArchived: true })`. Two lines + a UI surface.
+
+### 3. Collapse Clients + Users into one route (Pain Point 4)
+Today: `/admin/clients` (universal record) + `/admin/users` (Firebase Auth mirror). Merge into one `/admin/people` page with two filters: "Has logged in" / "All". The `users` collection stays for auth role lookups, but the admin UI surfaces it as one list with a "Has account" pill.
+
+### 4. Glossary tooltips in the sidebar (Pain Point 4)
+Each item in `components/admin/AdminSidebar.tsx`'s `NAV` array gets an optional `tooltip` field; show on hover. Two days of writing copy, half a day of UI.
+
+### 5. New events ↔ projects ↔ kits visualisation (Pain Point 4)
+Korrin wants to "connect kits to events" — they're already connected to **projects** (which auto-create an event on BOOKED). On the Event detail page, surface the linked Project's gear kit so K sees the pack list when she opens "Wedding — Smith".
+
+---
+
+## Repro / Investigation Items (need to reproduce before fixing)
+
+1. Last page on booking auto-skips. (R+Q — repro not provided)
+2. "Detail drawer doesn't work - error" — exact stack trace needed.
+3. "Kanban table doesn't ___" — truncated note; need full sentence.
+4. "Portal is broken — error" — exact error message + the user's email so I can check whether they have a `clients/{id}` doc.
+
+---
+
+## Suggested ordering
+
+1. **Fix the bugs.** Inbox soft-delete + repro Portal/Pipeline errors + remove the two booking checkboxes + show-password toggle. (½ day)
+2. **Sidebar reorg + glossary tooltips.** Korrin needs to be able to find things. (½ day)
+3. **Site editor v1.** Stats, packages, process steps, portfolio categories. (1 day)
+4. **Booking form rework.** Step 1 dropdown, drop Step 2 mood, new referral options. (½ day)
+5. **Portfolio category migration** + retitle Investment → Pricing if K agrees. (¼ day)
+6. **Brand/geography sweep.** Wait for brand name decision; do NC → Louisville/Tuscaloosa now. (¼ day)
+
+---
+
+## Locked Decisions (2026-05-21)
+
+After consult with operator, these are final:
+
+- **Branch strategy:** merge `origin/claude/site-editor` into `claude/site-editor-review-hPlf6`. Single PR target.
+- **Site editor scope:** **Full visual CMS.** Iframe-based two-mode editor (preview pane + click-to-edit-section side panel).
+- **Coverage:** Home, Investment (→ keep "Investment" name unless K renames), Portfolio (categories + featured photos), About/Process, Footer, Navbar, global brand name + geography. Plus full page CRUD ("Korrin creates a new page").
+- **Page CRUD URL model:** slug-based catch-all (`app/[slug]/page.tsx`). Reserved-name list prevents collisions with `admin`, `booking`, `portfolio`, `gallery`, `portal`, `journal`, `shop`, `style`, `magnet`, `welcome-packet`, `sign-contract`, `questionnaire`, `day-of-room`, `locations`, `login`, `settings`, `t`, `r`, `c`, `api`.
+- **Block vocabulary:** keep `HERO | PHOTO_GRID | RICH_TEXT | CTA_BANNER`, **add** `PROCESS_STEPS`, `PACKAGE_CARDS`, `TESTIMONIAL`, `SLIDESHOW` (PhotoGrid + auto-cycle). Structured types are used on canonical pages (Home / Investment / Portfolio); user-created pages can use any registered type.
+- **Photo source for sections:** `PhotoRef.source = "PROJECT" | "SITE"` — PROJECT pulls from `events/{id}/photos`, SITE pulls from the new `siteAssets/` library (already on the editor branch). Both stay available everywhere.
+- **Portfolio categories:** auto-remap on next deploy → `wedding → portraits`, `editorial → edits`, `portrait → portraits` (lowercase plural), `landscape → landscapes`. Add new `nature`. One-time backfill script in `scripts/`.
+- **Booking session types:** keep `Portrait` and `Family`; **add** `Greek-life event`; drop `Wedding`, `Engagement`, `Editorial`, `Commercial` from the public form (the enum stays for legacy projects).
+- **Inbox archive:** soft-delete (`archivedAt: Timestamp`). New "Archived" filter tab. Migration: existing rows are unaffected — they were hard-deleted, so there's nothing to migrate.
+
+---
+
+## Technical Plan
+
+### Phase 0 — Branch hygiene (5 min)
+1. `git merge origin/claude/site-editor` into the review branch.
+2. Verify build passes on the merged tree.
+
+### Phase 1 — Visual editor v1 (the heaviest piece)
+
+**Shell:** `app/admin/site/[pageId]/EditorClient.tsx` becomes a three-pane layout:
+- Left rail: section list (existing, kept).
+- Center: `<iframe src="/admin/site/{pageId}/preview?frame=1" />` — preview route already exists; we add a `?frame=1` mode that hides the sticky admin chrome and injects a tiny client-side bridge script.
+- Right rail: section property form (existing, kept).
+
+**Click bridge:** the iframe page injects a thin script that listens for `click` events on each rendered section's outermost element (added `data-section-id` attribute in `lib/site-content/render.tsx`), and posts `{ type: "SECTION_SELECTED", id }` to its parent via `window.parent.postMessage`. The parent updates `selectedId` in `EditorClient`, scrolling the right rail to that section's form. Save → `router.refresh()` → iframe `location.reload()`.
+
+**Why iframe, not contenteditable everywhere:** the public page uses inline CSS variables, the grain overlay, and CDN-driven `<img>` tags that conflict with contenteditable's DOM-mutation expectations. Iframe + bridge is a safer pattern in a Server-Components codebase. We can layer contenteditable inside the iframe later if K wants it.
+
+**New section types** in `lib/site-content/types.ts`:
+```ts
+type SectionType = "HERO" | "PHOTO_GRID" | "RICH_TEXT" | "CTA_BANNER"
+  | "PROCESS_STEPS"    // numbered editorial list, n+title+body
+  | "PACKAGE_CARDS"    // PackageBlock[] with priceUsd + includes[] + idealFor + ctaHref
+  | "TESTIMONIAL"      // quote + author + role
+  | "SLIDESHOW";       // PhotoRef[] + interval + transition
+```
+Add renderers in `lib/site-content/render.tsx` and forms in `EditorClient.tsx`.
+
+### Phase 2 — Page CRUD (slug catch-all)
+
+- New `app/[slug]/page.tsx` catch-all that:
+  1. Checks `slug` against `RESERVED_SLUGS` → `notFound()` if reserved.
+  2. Reads `siteContent/{slug}` published sections; `notFound()` if none.
+  3. Renders via `renderSections(published)`.
+- Page registry becomes mutable: `siteContent/{slug}` docs created via a "+ New page" action in `/admin/site` (form: slug + label + initial section). Reserved slug check on creation.
+- Admin index lists all docs in `siteContent/`, not just statically registered.
+
+### Phase 3 — Wire existing pages into the editor
+
+For each surface, the goal is: the public page reads from `siteContent/{pageId}.publishedSections` first; falls back to the hardcoded TS data if Firestore is empty.
+
+| Page | `pageId` | Default sections (seed) |
+|---|---|---|
+| Home | `home` | already on the branch |
+| Investment | `investment` | HERO + PROCESS_STEPS + PACKAGE_CARDS + TESTIMONIAL + CTA_BANNER |
+| Portfolio | `portfolio` | HERO + PHOTO_GRID (filterable by category, special-cased) |
+| About / Process | `about` | RICH_TEXT + PHOTO_GRID + CTA_BANNER |
+| Footer | `_footer` (global) | RICH_TEXT — special-cased, rendered via `<Footer />` |
+| Navbar | `_navbar` (global) | Link list — separate `navItems` schema, not a Section |
+
+Defaults files live in `lib/site-content/defaults/{home,investment,portfolio,about,footer}.ts`.
+
+### Phase 4 — Side fixes (independent of the editor)
+
+- Inbox soft-delete + Archived tab.
+- Booking form: drop both checkboxes, session-type dropdown, new referral options (Instagram/TikTok/Google/Friend/Family/Other + optional `referredByEmail`), `target="_blank"` on the process-page link.
+- Login: show-password toggle.
+- Sidebar reorg + tooltips (separate commit).
+- Portfolio category migration script in `scripts/2026-05-remap-portfolio-categories.ts`.
+
+### Phase 5 — Repros + bug fixes
+- Reproduce the Portal "error," Pipeline "detail drawer" error, Kanban table error, and booking "last page auto-skips."
+- Fix and revalidate.
+
+---
+
+## Open items still pending K's input
+
+- The Moment package (4th package?) — name, price, inclusions.
+- "Edited vs Unedited" labelling in the style quiz — confirm new copy.
+- Brand name (still pending per startup-state.md v6).
+- Whether to retitle Investment → Pricing.
+- "Tools for your craft" (Korrin's note about a non-Lightroom-preset section) — what would actually go here?
+- "Korrin should have access to booking from admin?" — answer: no, hide the "Book a Session" CTA when admin is signed in.
