@@ -31,6 +31,73 @@ function ts(value: unknown): string | null {
   return null;
 }
 
+function EmptyState({ heading, body }: { heading: string; body: string }) {
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "var(--white)",
+        paddingTop: "120px",
+        paddingBottom: "5rem",
+      }}
+    >
+      <div style={{ maxWidth: "560px", margin: "0 auto", padding: "0 1.5rem" }}>
+        <p
+          style={{
+            fontSize: "0.65rem",
+            letterSpacing: "0.2em",
+            textTransform: "uppercase",
+            color: "var(--olive)",
+            margin: 0,
+          }}
+        >
+          Your Portal
+        </p>
+        <h1
+          style={{
+            fontFamily: "'Cormorant Garamond', serif",
+            fontWeight: 300,
+            fontSize: "2.2rem",
+            letterSpacing: "0.01em",
+            color: "var(--charcoal)",
+            margin: "0.5rem 0 1rem 0",
+            lineHeight: 1.15,
+          }}
+        >
+          {heading}
+        </h1>
+        <p
+          style={{
+            fontFamily: "'Jost', sans-serif",
+            fontSize: "0.95rem",
+            color: "var(--charcoal-light)",
+            lineHeight: 1.7,
+          }}
+        >
+          {body}
+        </p>
+        <p
+          style={{
+            marginTop: "2rem",
+            fontSize: "0.78rem",
+            color: "var(--charcoal-muted)",
+            letterSpacing: "0.04em",
+          }}
+        >
+          <Link href="/booking" style={{ color: "var(--olive)", textDecoration: "underline", textUnderlineOffset: "3px" }}>
+            Start an inquiry
+          </Link>
+          {" "}or{" "}
+          <Link href="/" style={{ color: "var(--olive)", textDecoration: "underline", textUnderlineOffset: "3px" }}>
+            return home
+          </Link>
+          .
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default async function PortalRouterPage() {
   const session = await requireSession();
   const email = (session.email ?? "").toLowerCase();
@@ -40,14 +107,27 @@ export default async function PortalRouterPage() {
 
   const client = await getClientByEmail(email);
   if (!client) {
-    redirect("/");
+    // Signed in but no client record yet — common right after an admin
+    // invite before the first project is created. Show a real empty state
+    // instead of a silent redirect to /.
+    return (
+      <EmptyState
+        heading="No projects on file yet."
+        body="Once Korrin links a project to this email, it'll show up here. If you were expecting access to a gallery, double-check that you're signed in with the same email Korrin used when she invited you."
+      />
+    );
   }
 
   const projects = await getProjectsByClientId(client.id);
   const active = projects.filter((p) => p.status !== "ARCHIVED" && p.status !== "LOST");
 
   if (active.length === 0 && projects.length === 0) {
-    redirect("/");
+    return (
+      <EmptyState
+        heading="No projects on file yet."
+        body="Your account is set up, but Korrin hasn't linked a session to this email yet. Reach out and she'll fix it in a few minutes."
+      />
+    );
   }
 
   const list = active.length > 0 ? active : projects;
