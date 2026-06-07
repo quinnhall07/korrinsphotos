@@ -399,10 +399,10 @@ export async function createCustomPageAction(
 /**
  * Delete an admin-created custom page entirely (doc + revisions).
  *
- * Refuses to delete built-in pages (Home / Investment / Portfolio / About /
- * Footer) — those are part of the public surface and have hand-coded
- * fallbacks. For custom pages, deletes the `siteContent/{slug}` doc and its
- * revisions subcollection.
+ * Refuses to delete built-in pages (Home / Portfolio / Pricing / Booking) —
+ * those are part of the public surface and have hand-coded fallbacks. For
+ * custom pages, deletes the `siteContent/{slug}` doc and its revisions
+ * subcollection.
  */
 export async function deleteCustomPageAction(slug: string): Promise<ActionResult> {
   const session = await requireAdmin();

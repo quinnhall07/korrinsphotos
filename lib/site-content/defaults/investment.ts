@@ -1,7 +1,8 @@
 // lib/site-content/defaults/investment.ts
-// Frozen current Investment/Pricing copy. Rendered when siteContent/investment
-// has no published doc. The current static page (app/investment/page.tsx +
-// app/investment/packages.ts) is the source for this seed.
+// Frozen Pricing page copy. Rendered when siteContent/pricing has no published
+// doc. The current static page (app/pricing/packages.ts) is the source for
+// this seed. Note: the export is intentionally still named INVESTMENT_DEFAULTS
+// and is consumed as the Pricing page's fallback + seed source.
 
 import type { Section } from "@/lib/site-content/types";
 

@@ -17,6 +17,7 @@ import type {
   TestimonialSection,
   SlideshowSection,
   StatsSection,
+  BookingFormSection,
 } from "@/lib/site-content/types";
 import { SECTION_LABEL } from "./styles";
 import { HeroForm } from "./forms/HeroForm";
@@ -28,6 +29,7 @@ import { PackageCardsForm } from "./forms/PackageCardsForm";
 import { TestimonialForm } from "./forms/TestimonialForm";
 import { SlideshowForm } from "./forms/SlideshowForm";
 import { StatsForm } from "./forms/StatsForm";
+import { BookingFormForm } from "./forms/BookingFormForm";
 
 export type PickerSlot =
   | { sectionId: string; slot: "HERO_SLIDE"; index?: number }
@@ -147,6 +149,9 @@ export function SectionDrawer({
         )}
         {section?.type === "STATS" && (
           <StatsForm section={section as StatsSection} onChange={(patch) => onChange(patch as Partial<Section>)} />
+        )}
+        {section?.type === "BOOKING_FORM" && (
+          <BookingFormForm section={section as BookingFormSection} onChange={(patch) => onChange(patch as Partial<Section>)} />
         )}
       </div>
     </aside>

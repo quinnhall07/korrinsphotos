@@ -104,4 +104,5 @@ export const SECTION_LABEL: Record<string, string> = {
   TESTIMONIAL: "Testimonial",
   SLIDESHOW: "Slideshow",
   STATS: "Stats",
+  BOOKING_FORM: "Booking form",
 };
