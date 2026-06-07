@@ -37,7 +37,7 @@ export function EditorTopBar({
             <button key={d} type="button" onClick={() => onDeviceChange(d)} aria-pressed={device === d}
               title={d} style={{ border: "none", padding: "0.3rem 0.6rem", cursor: "pointer", fontSize: "0.85rem",
                 background: device === d ? "var(--olive-dim)" : "transparent", color: "var(--charcoal)" }}>
-              {d === "desktop" ? "🖥" : d === "tablet" ? "▭" : "▯"}
+              {d === "desktop" ? "▭" : d === "tablet" ? "▢" : "▯"}
             </button>
           ))}
         </div>

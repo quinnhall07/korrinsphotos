@@ -25,7 +25,7 @@ export function ConfirmDialog({
         {body && <p style={dialogBody}>{body}</p>}
         <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end", marginTop: "1.25rem" }}>
           <button type="button" onClick={onCancel} style={editorStyles.secondaryBtn}>{cancelLabel}</button>
-          <button type="button" onClick={onConfirm}
+          <button type="button" onClick={onConfirm} autoFocus
             style={destructive ? { ...editorStyles.primaryBtn, background: "#9a3434", borderColor: "#9a3434" } : editorStyles.primaryBtn}>
             {confirmLabel}
           </button>

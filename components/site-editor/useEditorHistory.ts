@@ -4,7 +4,9 @@
 // duplicate/replace) each create one history step. Consecutive field edits to
 // the SAME section coalesce into one step (so typing isn't 1 undo per keystroke).
 import { useReducer, useCallback } from "react";
-import type { Section, SectionType } from "@/lib/site-content/types";
+import type { Section } from "@/lib/site-content/types";
+
+const MAX_HISTORY = 50;
 
 interface HistoryState {
   past: Section[][];
@@ -25,16 +27,17 @@ function reducer(state: HistoryState, action: Action): HistoryState {
     case "RESET":
       return { past: [], present: action.sections, future: [], lastTag: null };
     case "REPLACE":
-      return { past: [...state.past, state.present], present: action.sections, future: [], lastTag: action.tag ?? null };
+      return { past: [...state.past, state.present].slice(-MAX_HISTORY), present: action.sections, future: [], lastTag: action.tag ?? null };
     case "UPDATE": {
       const tag = `update:${action.id}`;
       const nextPresent = state.present.map((s) =>
         s.id === action.id ? ({ ...s, ...action.patch } as Section) : s
       );
       if (state.lastTag === tag) {
+        // Coalescing branch: same section edited consecutively — no new checkpoint.
         return { ...state, present: nextPresent, future: [] };
       }
-      return { past: [...state.past, state.present], present: nextPresent, future: [], lastTag: tag };
+      return { past: [...state.past, state.present].slice(-MAX_HISTORY), present: nextPresent, future: [], lastTag: tag };
     }
     case "UNDO": {
       if (state.past.length === 0) return state;
@@ -60,5 +63,3 @@ export function useEditorHistory(initial: Section[]) {
   const redo = useCallback(() => dispatch({ type: "REDO" }), []);
   return { sections: state.present, canUndo: state.past.length > 0, canRedo: state.future.length > 0, reset, replace, updateSection, undo, redo };
 }
-
-export type { SectionType };

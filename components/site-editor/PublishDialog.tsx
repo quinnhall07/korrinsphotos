@@ -20,7 +20,7 @@ export function PublishDialog({
       <div onClick={(e) => e.stopPropagation()} style={panel} role="dialog" aria-modal="true" aria-label="Publish page">
         <h3 style={dialogTitle}>Publish this page?</h3>
         <p style={dialogBody}>Your draft will go live immediately. Add an optional note for the revision history.</p>
-        <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3}
+        <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} autoFocus
           placeholder="e.g. Updated pricing copy" style={textareaStyle} />
         <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end", marginTop: "1.25rem" }}>
           <button type="button" onClick={onCancel} style={editorStyles.secondaryBtn}>Cancel</button>
