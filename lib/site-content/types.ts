@@ -22,7 +22,9 @@ export interface PhotoRef {
   cloudflareImageId: string;
   eventId?: string;
   altText?: string;
+  /** Horizontal focal point, 0–1; defaults to 0.5 (center). */
   focalX?: number;
+  /** Vertical focal point, 0–1; defaults to 0.5 (center). */
   focalY?: number;
 }
 

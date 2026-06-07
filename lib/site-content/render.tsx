@@ -2,7 +2,8 @@
 // Block dispatcher: turns Section[] into JSX. Used by both production pages
 // and the admin preview route — preview and prod render through the same code path.
 //
-// Pure presentation — no data fetching. Server-component-safe.
+// Pure presentation — no data fetching. MAY embed "use client" components (e.g.
+// BookingFormSteps); do NOT import server-only modules (db, storage, session, etc.).
 
 import Link from "next/link";
 import type { Section, PhotoRef } from "./types";
@@ -513,9 +514,9 @@ function BookingFormBlock({ section }: { section: Extract<Section, { type: "BOOK
       style={{ padding: "5rem 4rem", maxWidth: "52rem", margin: "0 auto" }}
     >
       {section.eyebrow && (
-        <span style={{ fontSize: "0.65rem", letterSpacing: "0.22em", textTransform: "uppercase", color: "var(--olive)" }}>
+        <p style={{ fontSize: "0.65rem", letterSpacing: "0.22em", textTransform: "uppercase", color: "var(--olive)", marginBottom: "1rem" }}>
           {section.eyebrow}
-        </span>
+        </p>
       )}
       {section.heading && (
         <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontWeight: 300, fontSize: "clamp(2rem,4vw,3rem)", margin: "0.75rem 0" }}>
