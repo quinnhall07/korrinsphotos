@@ -5,6 +5,7 @@
 // move down / duplicate / delete). Wraps every rendered section in edit mode.
 
 import { useState } from "react";
+import { TOP_BAR_HEIGHT } from "./EditorTopBar";
 
 interface Props {
   sectionId: string;
@@ -66,7 +67,7 @@ export function SectionWrapper({
           onClick={(e) => e.stopPropagation()}
           style={{
             position: "sticky",
-            top: "calc(56px + 0.5rem)",
+            top: `calc(${TOP_BAR_HEIGHT}px + 0.5rem)`,
             marginTop: "-2.5rem",
             float: "right",
             zIndex: 8400,

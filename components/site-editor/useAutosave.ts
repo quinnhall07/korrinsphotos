@@ -17,6 +17,7 @@ export function useAutosave(
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latest = useRef(sections);
   const firstRun = useRef(true);
+  const suppress = useRef(false);
   // Generation counter: prevents a slow in-flight save from overwriting a
   // newer save's status (last write wins, stale resolves are discarded).
   const saveGen = useRef(0);
@@ -34,10 +35,13 @@ export function useAutosave(
     setStatus(res.success ? "saved" : "error");
   }, [save]);
 
+  const suppressNext = useCallback(() => { suppress.current = true; }, []);
+
   // Note: an `error` status auto-recovers because the next change sets `unsaved`
   // and re-arms the debounce timer, which will attempt another save.
   useEffect(() => {
     if (firstRun.current) { firstRun.current = false; return; }
+    if (suppress.current) { suppress.current = false; setStatus("saved"); return; }
     setStatus("unsaved");
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => { void doSave(); }, DEBOUNCE_MS);
@@ -54,5 +58,5 @@ export function useAutosave(
     return res.success;
   }, [save]);
 
-  return { status, flush };
+  return { status, flush, suppressNext };
 }

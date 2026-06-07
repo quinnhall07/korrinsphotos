@@ -167,7 +167,7 @@ function EditModeCanvas({
     (s: Section[]) => saveDraftAction(pageId, JSON.stringify(s)),
     [pageId]
   );
-  const { status, flush } = useAutosave(sections, saveFn);
+  const { status, flush, suppressNext } = useAutosave(sections, saveFn);
 
   // ─── Local UI state ───────────────────────────────────────────────────
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -183,8 +183,11 @@ function EditModeCanvas({
     onConfirm: () => void;
   } | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [publishing, setPublishing] = useState(false);
 
   // Re-sync if the parent rehydrates (e.g. server-side initialSections changes).
+  // NOTE: assumes SectionsCanvas is only re-mounted/re-parented on navigation,
+  // not on every parent re-render — so this won't clobber history mid-edit.
   useEffect(() => {
     reset(initialSections);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -201,9 +204,10 @@ function EditModeCanvas({
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [status]);
 
-  // Keyboard undo / redo.
+  // Keyboard undo / redo — suppressed while any dialog is open.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (confirmState || publishOpen) return;
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) return;
       if (e.key.toLowerCase() === "z" && !e.shiftKey) {
@@ -216,7 +220,7 @@ function EditModeCanvas({
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [undo, redo]);
+  }, [undo, redo, confirmState, publishOpen]);
 
   const selected = useMemo(
     () => sections.find((s) => s.id === selectedId) ?? null,
@@ -291,6 +295,7 @@ function EditModeCanvas({
           toast(res.error ?? "Discard failed.");
           return;
         }
+        suppressNext();
         reset(res.sections);
         toast("Draft discarded.");
       },
@@ -307,6 +312,21 @@ function EditModeCanvas({
     } else {
       onExit();
     }
+  }
+
+  // Publish: flush latest draft first, then publish. Dialog stays open on
+  // failure (note is preserved) and only closes on success.
+  async function doPublish(note?: string) {
+    setPublishing(true);
+    const ok = await flush();
+    if (!ok) { toast("Couldn't save your draft — please try again."); setPublishing(false); return; }
+    const res = await publishDraftAction(pageId, note);
+    setPublishing(false);
+    if (!res.success) { toast(res.error ?? "Publish failed."); return; } // keep dialog OPEN
+    suppressNext();
+    reset(res.sections);
+    setPublishOpen(false);
+    toast("Published.");
   }
 
   // ─── Render ────────────────────────────────────────────────────────────
@@ -398,7 +418,7 @@ function EditModeCanvas({
         pageId={pageId}
         open={showRevisions}
         onClose={() => setShowRevisions(false)}
-        onRestored={(restoredSections) => reset(restoredSections)}
+        onRestored={(restoredSections) => { suppressNext(); reset(restoredSections); }}
       />
 
       <ConfirmDialog
@@ -415,22 +435,9 @@ function EditModeCanvas({
 
       <PublishDialog
         open={publishOpen}
-        onPublish={async (note) => {
-          setPublishOpen(false);
-          const ok = await flush();
-          if (!ok) {
-            toast("Couldn't save draft — try again.");
-            return;
-          }
-          const res = await publishDraftAction(pageId, note);
-          if (!res.success) {
-            toast(res.error ?? "Publish failed.");
-            return;
-          }
-          reset(res.sections);
-          toast("Published.");
-        }}
-        onCancel={() => setPublishOpen(false)}
+        isPending={publishing}
+        onPublish={doPublish}
+        onCancel={() => { if (!publishing) setPublishOpen(false); }}
       />
     </>
   );

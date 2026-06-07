@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import { editorStyles } from "./styles";
 
 export function PublishDialog({
-  open, onPublish, onCancel,
-}: { open: boolean; onPublish: (note?: string) => void; onCancel: () => void }) {
+  open, isPending, onPublish, onCancel,
+}: { open: boolean; isPending?: boolean; onPublish: (note?: string) => void; onCancel: () => void }) {
   const [note, setNote] = useState("");
   useEffect(() => {
     if (!open) return;
@@ -23,8 +23,10 @@ export function PublishDialog({
         <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} autoFocus
           placeholder="e.g. Updated pricing copy" style={textareaStyle} />
         <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end", marginTop: "1.25rem" }}>
-          <button type="button" onClick={onCancel} style={editorStyles.secondaryBtn}>Cancel</button>
-          <button type="button" onClick={() => onPublish(note.trim() || undefined)} style={editorStyles.publishBtn}>Publish now</button>
+          <button type="button" onClick={onCancel} disabled={isPending} style={editorStyles.secondaryBtn}>Cancel</button>
+          <button type="button" onClick={() => onPublish(note.trim() || undefined)} disabled={isPending} style={editorStyles.publishBtn}>
+            {isPending ? "Publishing…" : "Publish now"}
+          </button>
         </div>
       </div>
     </div>

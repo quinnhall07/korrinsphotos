@@ -9,6 +9,7 @@ import { useEffect, useState, useTransition } from "react";
 import { toast } from "@/components/ui/Toaster";
 import { listRevisionsAction, restoreRevisionAction, type RevisionSummary } from "@/app/admin/site/actions";
 import type { Section } from "@/lib/site-content/types";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 export function RevisionsModal({
   pageId,
@@ -24,6 +25,7 @@ export function RevisionsModal({
   const [revisions, setRevisions] = useState<RevisionSummary[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const [pendingRestoreId, setPendingRestoreId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -39,9 +41,9 @@ export function RevisionsModal({
 
   if (!open) return null;
 
-  function restore(revisionId: string) {
+  function runRestore(id: string) {
     startTransition(async () => {
-      const res = await restoreRevisionAction(pageId, revisionId);
+      const res = await restoreRevisionAction(pageId, id);
       if (!res.success) {
         toast(res.error ?? "Restore failed.");
         return;
@@ -129,7 +131,7 @@ export function RevisionsModal({
                 </div>
                 <button
                   type="button"
-                  onClick={() => restore(r.id)}
+                  onClick={() => setPendingRestoreId(r.id)}
                   disabled={isPending}
                   style={{
                     padding: "0.5rem 1rem",
@@ -149,6 +151,19 @@ export function RevisionsModal({
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={!!pendingRestoreId}
+        title="Restore this version?"
+        body="This copies the selected snapshot back into your draft. You can still undo afterward."
+        confirmLabel="Restore"
+        onConfirm={() => {
+          const id = pendingRestoreId;
+          setPendingRestoreId(null);
+          if (id) void runRestore(id);
+        }}
+        onCancel={() => setPendingRestoreId(null)}
+      />
     </div>
   );
 }
