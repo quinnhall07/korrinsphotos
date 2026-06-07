@@ -30,7 +30,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useSearchParams } from "next/navigation";
 import { submitBooking } from "./actions";
-import { findPackageById } from "@/app/investment/packages";
+import { findPackageById } from "@/app/pricing/packages";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 

@@ -15,6 +15,7 @@ const RESERVED_SLUGS = new Set<string>([
   "gallery",
   "investment",
   "journal",
+  "pricing",
   "locations",
   "login",
   "magnet",

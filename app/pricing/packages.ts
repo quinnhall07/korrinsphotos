@@ -1,7 +1,8 @@
-// app/investment/packages.ts
-// Static configuration for the public /investment page package cards.
-// Owned by the investment page only — do NOT reuse this shape across other
-// pricing surfaces (auto-responder rate table, admin proposal builder, etc.).
+// app/pricing/packages.ts
+// Shared package catalog used by the public /pricing page and the booking
+// inquiry form (/booking → BookingFormSteps). This module is intentionally
+// shared — it is the single source of truth for package IDs, prices, and
+// session-type mappings across all public-facing pricing surfaces.
 // Roadmap §2.3 + §13.14.
 
 /**
