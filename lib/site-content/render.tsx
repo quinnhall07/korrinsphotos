@@ -8,6 +8,7 @@ import Link from "next/link";
 import type { Section, PhotoRef } from "./types";
 import { buildCdnUrl } from "@/lib/cloudflare";
 import { renderConstrainedMarkdown, renderInlineMarkdown } from "./markdown";
+import { BookingFormSteps } from "@/app/booking/BookingFormSteps";
 
 function photoSrc(ref: PhotoRef, variant: "thumbnail" | "gallery" = "gallery"): string {
   return buildCdnUrl(ref.cloudflareImageId, variant);
@@ -43,6 +44,7 @@ function HeroBlock({ section }: { section: Extract<Section, { type: "HERO" }> })
             width: "100%",
             height: "100%",
             objectFit: "cover",
+            objectPosition: `${(firstSlide.photoRef.focalX ?? 0.5) * 100}% ${(firstSlide.photoRef.focalY ?? 0.5) * 100}%`,
             opacity: 0.55,
           }}
         />
@@ -443,6 +445,7 @@ function SlideshowBlock({ section }: { section: Extract<Section, { type: "SLIDES
               width: "100%",
               height: "100%",
               objectFit: "cover",
+              objectPosition: `${(p.focalX ?? 0.5) * 100}% ${(p.focalY ?? 0.5) * 100}%`,
               opacity: i === 0 ? 1 : 0,
               transition: "opacity 1.5s ease",
             }}
@@ -502,6 +505,33 @@ function StatsBlock({ section }: { section: Extract<Section, { type: "STATS" }> 
   );
 }
 
+function BookingFormBlock({ section }: { section: Extract<Section, { type: "BOOKING_FORM" }> }) {
+  return (
+    <section
+      data-section-id={section.id}
+      data-section-type="BOOKING_FORM"
+      style={{ padding: "5rem 4rem", maxWidth: "52rem", margin: "0 auto" }}
+    >
+      {section.eyebrow && (
+        <span style={{ fontSize: "0.65rem", letterSpacing: "0.22em", textTransform: "uppercase", color: "var(--olive)" }}>
+          {section.eyebrow}
+        </span>
+      )}
+      {section.heading && (
+        <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontWeight: 300, fontSize: "clamp(2rem,4vw,3rem)", margin: "0.75rem 0" }}>
+          {section.heading}
+        </h2>
+      )}
+      {section.intro && (
+        <p style={{ fontWeight: 300, lineHeight: 1.85, color: "var(--charcoal-light)", marginBottom: "2.5rem" }}>
+          {section.intro}
+        </p>
+      )}
+      <BookingFormSteps />
+    </section>
+  );
+}
+
 export function renderSection(section: Section): React.ReactNode {
   switch (section.type) {
     case "HERO":
@@ -522,6 +552,8 @@ export function renderSection(section: Section): React.ReactNode {
       return <SlideshowBlock key={section.id} section={section} />;
     case "STATS":
       return <StatsBlock key={section.id} section={section} />;
+    case "BOOKING_FORM":
+      return <BookingFormBlock key={section.id} section={section} />;
     default: {
       const exhaustive: never = section;
       return exhaustive;

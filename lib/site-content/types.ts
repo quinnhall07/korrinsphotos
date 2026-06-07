@@ -11,7 +11,8 @@ export type SectionType =
   | "PACKAGE_CARDS"
   | "TESTIMONIAL"
   | "SLIDESHOW"
-  | "STATS";
+  | "STATS"
+  | "BOOKING_FORM";
 
 export type PhotoSource = "PROJECT" | "SITE";
 
@@ -21,6 +22,8 @@ export interface PhotoRef {
   cloudflareImageId: string;
   eventId?: string;
   altText?: string;
+  focalX?: number;
+  focalY?: number;
 }
 
 export interface HeroSlide {
@@ -137,6 +140,14 @@ export interface StatsSection {
   items: StatRow[];
 }
 
+export interface BookingFormSection {
+  id: string;
+  type: "BOOKING_FORM";
+  eyebrow?: string;
+  heading?: string;
+  intro?: string;
+}
+
 export type Section =
   | HeroSection
   | PhotoGridSection
@@ -146,7 +157,8 @@ export type Section =
   | PackageCardsSection
   | TestimonialSection
   | SlideshowSection
-  | StatsSection;
+  | StatsSection
+  | BookingFormSection;
 
 export type SectionDraft = Section;
 

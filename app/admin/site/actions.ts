@@ -31,6 +31,7 @@ const CUSTOM_PAGE_ALLOWED_SECTIONS: readonly SectionType[] = [
   "PROCESS_STEPS",
   "PACKAGE_CARDS",
   "TESTIMONIAL",
+  "BOOKING_FORM",
 ];
 
 function allowedSectionsFor(pageId: string): readonly SectionType[] {
@@ -51,6 +52,8 @@ const PhotoRefSchema = z.object({
   cloudflareImageId: z.string().min(1),
   eventId: z.string().optional(),
   altText: z.string().optional(),
+  focalX: z.number().min(0).max(1).optional(),
+  focalY: z.number().min(0).max(1).optional(),
 });
 
 const HeroSchema = z.object({
@@ -154,6 +157,14 @@ const StatsSchema = z.object({
   })),
 });
 
+const BookingFormSchema = z.object({
+  id: z.string().min(1),
+  type: z.literal("BOOKING_FORM"),
+  eyebrow: z.string().optional(),
+  heading: z.string().optional(),
+  intro: z.string().max(2000).optional(),
+});
+
 const SectionSchema = z.discriminatedUnion("type", [
   HeroSchema,
   PhotoGridSchema,
@@ -164,6 +175,7 @@ const SectionSchema = z.discriminatedUnion("type", [
   TestimonialSchema,
   SlideshowSchema,
   StatsSchema,
+  BookingFormSchema,
 ]);
 
 type ActionResult = { success: true } | { success: false; error: string };

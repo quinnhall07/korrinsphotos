@@ -62,6 +62,7 @@ const CUSTOM_PAGE_ALLOWED_SECTIONS: readonly SectionType[] = [
   "PROCESS_STEPS",
   "PACKAGE_CARDS",
   "TESTIMONIAL",
+  "BOOKING_FORM",
 ];
 
 function makeId(type: SectionType): string {
@@ -103,6 +104,8 @@ function blank(type: SectionType): Section {
           { number: "0%", label: "Satisfaction" },
         ],
       };
+    case "BOOKING_FORM":
+      return { id: makeId("BOOKING_FORM"), type: "BOOKING_FORM", heading: "Book your session", intro: "Tell me about your session and I'll be in touch." };
   }
 }
 
