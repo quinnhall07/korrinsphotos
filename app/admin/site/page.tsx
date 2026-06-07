@@ -1,7 +1,8 @@
 // app/admin/site/page.tsx
 // Index of editable site pages. Shows last-published timestamp + draft-dirty pill.
-// Lists both registry-defined built-ins (Home / Investment / Portfolio / About / Footer)
+// Lists both registry-defined built-ins (Home / Portfolio / Pricing / Booking)
 // and admin-created custom pages stored under siteContent/{slug}.
+// Note: Footer is handled outside the registry (standalone canvas at /admin/site/footer).
 //
 // "Edit on site" deep-links each row into its public URL with `?edit=1` so
 // editing happens on the live page itself (no admin shell wrapping the

@@ -10,6 +10,7 @@
 //   - `?campaign=<slug>` — informational only; the server reads the cookie
 //     written by `/c/[slug]/page.tsx` for attribution.
 
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import { BookingFormSteps } from "./BookingFormSteps";
 
@@ -91,7 +92,7 @@ export default function BookingPage() {
             discuss availability and details.
           </p>
 
-          <BookingFormSteps />
+          <Suspense fallback={null}><BookingFormSteps /></Suspense>
         </div>
       </div>
     </div>

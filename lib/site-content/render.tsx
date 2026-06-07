@@ -5,6 +5,7 @@
 // Pure presentation — no data fetching. MAY embed "use client" components (e.g.
 // BookingFormSteps); do NOT import server-only modules (db, storage, session, etc.).
 
+import { Suspense } from "react";
 import Link from "next/link";
 import type { Section, PhotoRef } from "./types";
 import { buildCdnUrl } from "@/lib/cloudflare";
@@ -528,7 +529,7 @@ function BookingFormBlock({ section }: { section: Extract<Section, { type: "BOOK
           {section.intro}
         </p>
       )}
-      <BookingFormSteps />
+      <Suspense fallback={null}><BookingFormSteps /></Suspense>
     </section>
   );
 }

@@ -199,14 +199,15 @@ export function BookingFormSteps({
   // logic that used to live in app/booking/page.tsx.
   const packageId = searchParams.get("package") ?? undefined;
   const sessionTypeParam = searchParams.get("sessionType") ?? undefined;
-  // ?campaign= is informational — the server reads the __origin cookie for
-  // attribution; we just surface it here for completeness.
-  // const campaign = searchParams.get("campaign") ?? undefined;
 
-  // ?package= wins over ?sessionType=, which wins over the legacy prop.
+  // ?package= wins over ?sessionType= (case-insensitive), which wins over the legacy prop.
+  const sessionTypeValues = SESSION_OPTIONS.map((o) => o.value);
+  const matchedSessionParam = sessionTypeValues.find(
+    (v) => v.toLowerCase() === (sessionTypeParam?.trim().toLowerCase() ?? "")
+  );
   const resolvedSessionType: string | null =
     findPackageById(packageId)?.sessionType ??
-    (sessionTypeParam?.trim() || null) ??
+    matchedSessionParam ??
     initialSessionType ??
     null;
 
@@ -219,6 +220,10 @@ export function BookingFormSteps({
 
   const monthOptions = useMemo(() => buildMonthOptions(), []);
   const topRef = useRef<HTMLDivElement | null>(null);
+  // Guard so the draft-load runs exactly once per mount, even if searchParams
+  // (and therefore resolvedSessionType) changes while the user is filling out
+  // the form — we must not clobber their in-progress input.
+  const hasHydratedRef = useRef(false);
 
   // Rehydrate from localStorage on mount. If a prefill sessionType was
   // resolved (from URL params or the legacy prop), overlay it on top of the
@@ -226,6 +231,8 @@ export function BookingFormSteps({
   // Unknown legacy values (e.g. "Wedding") fall through and the dropdown
   // stays unselected, which is fine.
   useEffect(() => {
+    if (hasHydratedRef.current) return;
+    hasHydratedRef.current = true;
     const loaded = loadDraft();
     const known = SESSION_OPTIONS.find((o) => o.value === resolvedSessionType);
     setDraft(
