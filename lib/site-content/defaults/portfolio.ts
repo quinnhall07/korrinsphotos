@@ -15,6 +15,13 @@ export const PORTFOLIO_DEFAULTS: Section[] = [
     sub: "An evolving archive of recent sessions. Filter by category below — or drop me a note if you have a session in mind.",
   },
   {
+    id: "portfolio-about",
+    type: "RICH_TEXT",
+    eyebrow: "About",
+    heading: "How I got here",
+    body: "Photographer + student, currently based in Louisville and moving to Tuscaloosa for the fall. I shoot light-and-airy editorial work for portraits, families, and Greek-life events.",
+  },
+  {
     id: "portfolio-cta-default",
     type: "CTA_BANNER",
     eyebrow: "Like what you see?",
