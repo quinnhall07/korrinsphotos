@@ -94,67 +94,15 @@ export function Navbar() {
             </li>
             <li>
               <Link
-                href="/locations"
+                href="/pricing"
                 style={{
                   ...navLinkStyle,
-                  color: isActive("/locations") ? "var(--charcoal)" : "var(--charcoal-light)",
-                  borderBottom: isActive("/locations") ? "0.5px solid var(--olive)" : "none",
+                  color: isActive("/pricing") ? "var(--charcoal)" : "var(--charcoal-light)",
+                  borderBottom: isActive("/pricing") ? "0.5px solid var(--olive)" : "none",
                   paddingBottom: "2px",
                 }}
               >
-                Locations
-              </Link>
-            </li>
-            <li>
-              <Link
-                href="/journal"
-                style={{
-                  ...navLinkStyle,
-                  color: isActive("/journal") ? "var(--charcoal)" : "var(--charcoal-light)",
-                  borderBottom: isActive("/journal") ? "0.5px solid var(--olive)" : "none",
-                  paddingBottom: "2px",
-                }}
-              >
-                Journal
-              </Link>
-            </li>
-            <li>
-              <Link
-                href="/investment"
-                style={{
-                  ...navLinkStyle,
-                  color: isActive("/investment") ? "var(--charcoal)" : "var(--charcoal-light)",
-                  borderBottom: isActive("/investment") ? "0.5px solid var(--olive)" : "none",
-                  paddingBottom: "2px",
-                }}
-              >
-                Investment
-              </Link>
-            </li>
-            <li>
-              <Link
-                href="/style"
-                style={{
-                  ...navLinkStyle,
-                  color: isActive("/style") ? "var(--charcoal)" : "var(--charcoal-light)",
-                  borderBottom: isActive("/style") ? "0.5px solid var(--olive)" : "none",
-                  paddingBottom: "2px",
-                }}
-              >
-                Style
-              </Link>
-            </li>
-            <li>
-              <Link
-                href="/shop"
-                style={{
-                  ...navLinkStyle,
-                  color: isActive("/shop") ? "var(--charcoal)" : "var(--charcoal-light)",
-                  borderBottom: isActive("/shop") ? "0.5px solid var(--olive)" : "none",
-                  paddingBottom: "2px",
-                }}
-              >
-                Shop
+                Pricing
               </Link>
             </li>
             <li>

@@ -9,6 +9,6 @@ export const FOOTER_DEFAULTS: Section[] = [
   {
     id: "footer-richtext-default",
     type: "RICH_TEXT",
-    body: "© Korrin's Photos — based in Louisville, KY; relocating to Tuscaloosa, AL fall 2026.\n\n[Booking](/booking) · [Portfolio](/portfolio) · [Journal](/journal)",
+    body: "© Korrin's Photos — based in Louisville, KY; relocating to Tuscaloosa, AL fall 2026.\n\n[Portfolio](/portfolio) · [Pricing](/pricing) · [Booking](/booking)",
   },
 ];
