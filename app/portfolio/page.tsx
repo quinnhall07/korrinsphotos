@@ -1,8 +1,8 @@
 // app/portfolio/page.tsx
 // Public portfolio — fetches all portfolio photos from Firestore.
-// The page header (eyebrow + heading + intro) is editable via the site
-// editor at `/admin/site/portfolio` — once a draft is published, those
-// sections render above the photo grid in place of the static header.
+// Single-path render: <SectionsCanvas> always renders above the photo grid.
+// The editable surface is the header/about/CTA sections; the photo list +
+// category filter (<PortfolioClient>) is data-driven and always rendered below.
 
 import { adminDb }         from "@/lib/firebase-admin";
 import { buildCdnUrl }     from "@/lib/cloudflare";
@@ -14,7 +14,6 @@ import { loadPublishedSections, loadDraftSections } from "@/lib/db/site-content"
 import { getSessionOrNull } from "@/lib/session";
 import { listSiteAssets, listProjectPhotos } from "@/lib/db/site-assets";
 import { SectionsCanvas } from "@/components/site-editor/SectionsCanvas";
-import { FloatingEditPill } from "@/components/site-editor/FloatingEditPill";
 
 export const metadata: Metadata = {
   title:       "Portfolio",
@@ -84,7 +83,6 @@ export default async function PortfolioPage({ searchParams }: Props) {
   const published = await loadPublishedSections("portfolio").catch(() => null);
   const sections = draft ?? published;
 
-  const renderCanvas = (sections && sections.length > 0) || (isAdmin && editParam);
   const pickerData = isAdmin
     ? {
         siteAssets: (await listSiteAssets()).map((a) => ({
@@ -104,30 +102,17 @@ export default async function PortfolioPage({ searchParams }: Props) {
     : { siteAssets: [], projectPhotos: [] };
 
   return (
-    <div style={{ paddingTop: "72px" }} className="page-fade-in">
-      {renderCanvas ? (
-        <SectionsCanvas
-          pageId="portfolio"
-          pageLabel="Portfolio"
-          initialSections={sections && sections.length > 0 ? sections : []}
-          isAdmin={isAdmin}
-          editParam={editParam}
-          pickerData={pickerData}
-        />
-      ) : (
-        <div style={{ padding: "4rem 4rem 3rem", borderBottom: "0.5px solid var(--border)", marginBottom: "3rem" }}>
-          <p style={{ fontSize: "0.65rem", letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--olive)", marginBottom: "1rem" }}>
-            Korrin&apos;s Portfolio
-          </p>
-          <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "clamp(2.5rem, 5vw, 4rem)", fontWeight: 300, letterSpacing: "-0.01em" }}>
-            The full <em>collection</em>
-          </h1>
-        </div>
-      )}
-
+    <div className="page-fade-in" style={{ paddingTop: "72px" }}>
+      <SectionsCanvas
+        pageId="portfolio"
+        pageLabel="Portfolio"
+        initialSections={sections ?? []}
+        isAdmin={isAdmin}
+        editParam={editParam}
+        pickerData={pickerData}
+      />
       <PortfolioClient photos={photos} />
       <Footer />
-      {isAdmin && !editParam && <FloatingEditPill pageLabel="Portfolio" />}
     </div>
   );
 }

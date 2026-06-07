@@ -1,18 +1,16 @@
 // app/booking/page.tsx
-// Booking inquiry page. The form is a 3-step Client Component that submits
-// via the `submitBooking` Server Action (no API route involved).
-//
-// Accepts these query params — they are read directly by BookingFormSteps via
-// useSearchParams(), so the page no longer needs to thread them as props:
-//   - `?package=mini|story|day` — from /pricing (resolves to sessionType).
-//   - `?sessionType=<Wedding|Portrait|…>` — direct sessionType override (e.g.
-//     from a /c/<slug> campaign CTA).
-//   - `?campaign=<slug>` — informational only; the server reads the cookie
-//     written by `/c/[slug]/page.tsx` for attribution.
+// Booking inquiry page — single-path render via <SectionsCanvas pageId="booking">.
+// The BOOKING_FORM section block (rendered inside lib/site-content/render.tsx)
+// contains the <BookingFormSteps> component with its own Suspense wrapper.
+// No hand-coded fallback — the seed script guarantees published sections exist
+// at runtime (Slice 1A).
 
-import { Suspense } from "react";
 import type { Metadata } from "next";
-import { BookingFormSteps } from "./BookingFormSteps";
+import { Footer } from "@/components/Footer";
+import { loadPublishedSections, loadDraftSections } from "@/lib/db/site-content";
+import { getSessionOrNull } from "@/lib/session";
+import { listSiteAssets, listProjectPhotos } from "@/lib/db/site-assets";
+import { SectionsCanvas } from "@/components/site-editor/SectionsCanvas";
 
 export const metadata: Metadata = {
   title: "Booking",
@@ -20,81 +18,49 @@ export const metadata: Metadata = {
     "Book a photography session — weddings, portraits, editorial, and more.",
 };
 
-export default function BookingPage() {
+export const dynamic = "force-dynamic";
+
+type Props = { searchParams?: Promise<{ edit?: string }> };
+
+export default async function BookingPage({ searchParams }: Props) {
+  const sp = (await searchParams) ?? {};
+  const editParam = sp.edit === "1";
+  const session = await getSessionOrNull();
+  const isAdmin = session?.role === "ADMIN";
+
+  const draft = isAdmin && editParam ? await loadDraftSections("booking").catch(() => null) : null;
+  const published = await loadPublishedSections("booking").catch(() => null);
+  const sections = draft ?? published;
+
+  const pickerData = isAdmin
+    ? {
+        siteAssets: (await listSiteAssets()).map((a) => ({
+          id: a.id,
+          cloudflareImageId: a.cloudflareImageId,
+          label: a.label,
+          altText: a.altText,
+        })),
+        projectPhotos: (await listProjectPhotos()).map((p) => ({
+          photoId: p.photoId,
+          eventId: p.eventId,
+          cloudflareImageId: p.cloudflareImageId,
+          label: p.label,
+          category: p.category,
+        })),
+      }
+    : { siteAssets: [], projectPhotos: [] };
+
   return (
     <div style={{ paddingTop: "72px" }} className="page-fade-in">
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          minHeight: "calc(100vh - 72px)",
-        }}
-      >
-        {/* Left — image panel */}
-        <div
-          style={{
-            background:
-              "url('https://picsum.photos/seed/wedding44/900/1200') center/cover no-repeat",
-            position: "relative",
-          }}
-        >
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              background: "rgba(42,42,40,0.25)",
-            }}
-          />
-        </div>
-
-        {/* Right — form panel */}
-        <div
-          style={{
-            padding: "5rem",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "center",
-          }}
-        >
-          <p
-            style={{
-              fontSize: "0.65rem",
-              letterSpacing: "0.2em",
-              textTransform: "uppercase",
-              color: "var(--olive)",
-              marginBottom: "1rem",
-            }}
-          >
-            Book a Session
-          </p>
-          <h1
-            style={{
-              fontFamily: "'Cormorant Garamond', serif",
-              fontSize: "2.4rem",
-              fontWeight: 300,
-              lineHeight: 1.2,
-              marginBottom: "0.5rem",
-            }}
-          >
-            Let&apos;s make
-            <br />
-            <em>something beautiful</em>
-          </h1>
-          <p
-            style={{
-              fontSize: "0.88rem",
-              color: "var(--charcoal-muted)",
-              lineHeight: 1.7,
-              marginBottom: "2.5rem",
-            }}
-          >
-            Tell me about your vision. I&apos;ll follow up within 48 hours to
-            discuss availability and details.
-          </p>
-
-          <Suspense fallback={null}><BookingFormSteps /></Suspense>
-        </div>
-      </div>
+      <SectionsCanvas
+        pageId="booking"
+        pageLabel="Booking"
+        initialSections={sections ?? []}
+        isAdmin={isAdmin}
+        editParam={editParam}
+        pickerData={pickerData}
+      />
+      <Footer />
     </div>
   );
 }
