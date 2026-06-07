@@ -2,7 +2,8 @@
 // Booking inquiry page. The form is a 3-step Client Component that submits
 // via the `submitBooking` Server Action (no API route involved).
 //
-// Accepts these query params, all optional, all forwarded to the form:
+// Accepts these query params — they are read directly by BookingFormSteps via
+// useSearchParams(), so the page no longer needs to thread them as props:
 //   - `?package=mini|story|day` — from /investment (resolves to sessionType).
 //   - `?sessionType=<Wedding|Portrait|…>` — direct sessionType override (e.g.
 //     from a /c/<slug> campaign CTA).
@@ -11,7 +12,6 @@
 
 import type { Metadata } from "next";
 import { BookingFormSteps } from "./BookingFormSteps";
-import { findPackageById, type BookingSessionType } from "@/app/investment/packages";
 
 export const metadata: Metadata = {
   title: "Booking",
@@ -19,36 +19,7 @@ export const metadata: Metadata = {
     "Book a photography session — weddings, portraits, editorial, and more.",
 };
 
-const BOOKING_SESSION_TYPES: readonly BookingSessionType[] = [
-  "Wedding",
-  "Portrait",
-  "Editorial",
-  "Family",
-  "Engagement",
-  "Commercial",
-];
-
-function normaliseSessionType(raw: string | undefined): BookingSessionType | null {
-  if (!raw) return null;
-  const match = BOOKING_SESSION_TYPES.find(
-    (t) => t.toLowerCase() === raw.trim().toLowerCase()
-  );
-  return match ?? null;
-}
-
-export default async function BookingPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ package?: string; sessionType?: string; campaign?: string }>;
-}) {
-  const { package: packageParam, sessionType: sessionTypeParam } = await searchParams;
-  // `?package=` wins (it's the older entry point and already maps reliably);
-  // `?sessionType=` is a campaign-level direct override.
-  const initialSessionType =
-    findPackageById(packageParam)?.sessionType ??
-    normaliseSessionType(sessionTypeParam) ??
-    null;
-
+export default function BookingPage() {
   return (
     <div style={{ paddingTop: "72px" }} className="page-fade-in">
       <div
@@ -120,7 +91,7 @@ export default async function BookingPage({
             discuss availability and details.
           </p>
 
-          <BookingFormSteps initialSessionType={initialSessionType} />
+          <BookingFormSteps />
         </div>
       </div>
     </div>

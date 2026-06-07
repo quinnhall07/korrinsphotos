@@ -19,12 +19,18 @@
 // Persistence: progress is mirrored to localStorage under
 // `korrin-booking-draft` on every change. Cleared on successful submit.
 //
+// Prefill: reads ?package=, ?sessionType=, ?campaign= from the URL via
+// useSearchParams(), so this component can be embedded anywhere (including
+// as a BOOKING_FORM section on the site-editor canvas) without prop drilling.
+//
 // Style: inline styles consistent with the rest of the public site.
 // Cormorant Garamond for headings; Jost for body + form controls.
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useSearchParams } from "next/navigation";
 import { submitBooking } from "./actions";
+import { findPackageById } from "@/app/investment/packages";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -179,14 +185,31 @@ export function BookingFormSteps({
   initialSessionType = null,
 }: {
   /**
-   * Optional pre-selected session type. Sourced from /investment via
-   * `?package=mini|story|day` and from /c/<slug> campaign CTAs. Accepts any
-   * string (legacy values like "Wedding" may arrive from /investment until
-   * those packages are renamed) — unknown values fall through and the
-   * dropdown stays unselected, which is fine.
+   * Optional pre-selected session type. Legacy prop — kept so existing
+   * callers don't break. When present it takes precedence over ?sessionType=
+   * but not over ?package= (which also resolves to a sessionType). If not
+   * provided (the common case) the component reads ?package= and ?sessionType=
+   * from the URL via useSearchParams().
    */
   initialSessionType?: string | null;
 } = {}) {
+  const searchParams = useSearchParams();
+
+  // Derive prefill values from URL params, applying the same normalization
+  // logic that used to live in app/booking/page.tsx.
+  const packageId = searchParams.get("package") ?? undefined;
+  const sessionTypeParam = searchParams.get("sessionType") ?? undefined;
+  // ?campaign= is informational — the server reads the __origin cookie for
+  // attribution; we just surface it here for completeness.
+  // const campaign = searchParams.get("campaign") ?? undefined;
+
+  // ?package= wins over ?sessionType=, which wins over the legacy prop.
+  const resolvedSessionType: string | null =
+    findPackageById(packageId)?.sessionType ??
+    (sessionTypeParam?.trim() || null) ??
+    initialSessionType ??
+    null;
+
   const [step, setStep] = useState<StepNum>(1);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [hydrated, setHydrated] = useState(false);
@@ -197,20 +220,21 @@ export function BookingFormSteps({
   const monthOptions = useMemo(() => buildMonthOptions(), []);
   const topRef = useRef<HTMLDivElement | null>(null);
 
-  // Rehydrate from localStorage on mount. If a `?package=` arrived from
-  // /investment, overlay its sessionType on top of the rehydrated draft —
-  // but only if the value matches a current SessionType. Unknown legacy
-  // values are dropped so the form doesn't display an out-of-vocab option.
+  // Rehydrate from localStorage on mount. If a prefill sessionType was
+  // resolved (from URL params or the legacy prop), overlay it on top of the
+  // rehydrated draft — but only if the value matches a current SessionType.
+  // Unknown legacy values (e.g. "Wedding") fall through and the dropdown
+  // stays unselected, which is fine.
   useEffect(() => {
     const loaded = loadDraft();
-    const known = SESSION_OPTIONS.find((o) => o.value === initialSessionType);
+    const known = SESSION_OPTIONS.find((o) => o.value === resolvedSessionType);
     setDraft(
       known
         ? { ...loaded, sessionType: known.value }
         : loaded,
     );
     setHydrated(true);
-  }, [initialSessionType]);
+  }, [resolvedSessionType]);
 
   // Persist on every change, but only after hydration so we don't overwrite
   // existing draft with the empty default on first render.
