@@ -731,7 +731,7 @@ function Step2({
       >
         Curious what each package looks like?{" "}
         <Link
-          href="/investment"
+          href="/pricing"
           target="_blank"
           rel="noopener noreferrer"
           style={{

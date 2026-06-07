@@ -4,7 +4,7 @@
 //
 // Accepts these query params — they are read directly by BookingFormSteps via
 // useSearchParams(), so the page no longer needs to thread them as props:
-//   - `?package=mini|story|day` — from /investment (resolves to sessionType).
+//   - `?package=mini|story|day` — from /pricing (resolves to sessionType).
 //   - `?sessionType=<Wedding|Portrait|…>` — direct sessionType override (e.g.
 //     from a /c/<slug> campaign CTA).
 //   - `?campaign=<slug>` — informational only; the server reads the cookie

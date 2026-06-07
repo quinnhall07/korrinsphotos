@@ -5,9 +5,19 @@
 // Single-path render: always renders <SectionsCanvas pageId="pricing"> with
 // sections ?? []. No hand-coded fallback JSX — the seed script guarantees
 // published sections exist at runtime (Slice 1A).
+//
+// JSON-LD: one Service schema per package + a BreadcrumbList are emitted
+// unconditionally (outside the SectionsCanvas branch) so crawlers always
+// receive structured data regardless of whether Firestore has sections.
 
 import type { Metadata } from "next";
 import { Footer } from "@/components/Footer";
+import { JsonLd } from "@/components/JsonLd";
+import {
+  buildBreadcrumbSchema,
+  buildServiceSchema,
+} from "@/lib/seo/schema";
+import { INVESTMENT_PACKAGES } from "./packages";
 import { loadPublishedSections, loadDraftSections } from "@/lib/db/site-content";
 import { getSessionOrNull } from "@/lib/session";
 import { listSiteAssets, listProjectPhotos } from "@/lib/db/site-assets";
@@ -51,8 +61,26 @@ export default async function PricingPage({ searchParams }: Props) {
       }
     : { siteAssets: [], projectPhotos: [] };
 
+  // JSON-LD: one Service per package + a breadcrumb for the page itself.
+  // Rendered unconditionally so structured data is present even if Firestore
+  // sections are empty. buildServiceSchema accepts a category slug that maps
+  // onto the recognised labelMap in lib/seo/schema.ts.
+  const jsonLd = [
+    buildBreadcrumbSchema([
+      { name: "Home",    url: "/" },
+      { name: "Pricing", url: "/pricing" },
+    ]),
+    ...INVESTMENT_PACKAGES.map((p) =>
+      buildServiceSchema(p.sessionType.toLowerCase()),
+    ),
+  ];
+
   return (
     <div style={{ paddingTop: "72px" }} className="page-fade-in">
+      {/* JsonLd's `data` is typed against a generic recursive JSON shape;
+          the schema builders return narrowly-typed schema.org objects, so
+          we widen at the boundary rather than complicate the helpers. */}
+      <JsonLd data={jsonLd as unknown as Parameters<typeof JsonLd>[0]["data"]} />
       <SectionsCanvas
         pageId="pricing"
         pageLabel="Pricing"
