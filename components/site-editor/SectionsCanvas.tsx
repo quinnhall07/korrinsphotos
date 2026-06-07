@@ -11,7 +11,7 @@
 //
 //   • Edit mode (admin + ?edit=1): renders the SAME sections at the SAME
 //     full-page width, wrapped in admin-only chrome:
-//       - sticky EditBar at the top (Save / Publish / Discard / Revisions)
+//       - sticky EditorTopBar at the top (status / undo/redo / device / Publish / Discard / Revisions / Exit)
 //       - per-section hover outline + select toolbar (SectionWrapper)
 //       - "+ Add section" gap between sections (AddSectionGap)
 //       - right-side property drawer (SectionDrawer)
@@ -20,7 +20,7 @@
 // IS the source of truth, so every keystroke in the drawer updates the
 // rendered page live.
 
-import { useState, useTransition, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { toast } from "@/components/ui/Toaster";
 import { PhotoPicker } from "@/components/admin/PhotoPicker";
@@ -29,7 +29,12 @@ import type { Section, SectionType, PhotoRef } from "@/lib/site-content/types";
 import { getPageDefinition, CUSTOM_PAGE_ALLOWED_SECTIONS } from "@/lib/site-content/page-registry";
 import { saveDraftAction, discardDraftAction, publishDraftAction } from "@/app/admin/site/actions";
 
-import { EditBar, EDIT_BAR_HEIGHT } from "./EditBar";
+import { useEditorHistory } from "./useEditorHistory";
+import { useAutosave } from "./useAutosave";
+import { EditorTopBar, TOP_BAR_HEIGHT } from "./EditorTopBar";
+import type { DeviceMode } from "./EditorTopBar";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { PublishDialog } from "./PublishDialog";
 import { SectionWrapper } from "./SectionWrapper";
 import { AddSectionGap } from "./AddSectionGap";
 import { SectionDrawer, applyPickedPhoto, type PickerSlot } from "./SectionDrawer";
@@ -96,6 +101,12 @@ function blank(type: SectionType): Section {
   }
 }
 
+const DEVICE_WIDTH: Record<DeviceMode, string> = {
+  desktop: "100%",
+  tablet: "768px",
+  mobile: "390px",
+};
+
 export function SectionsCanvas({
   pageId,
   pageLabel,
@@ -129,7 +140,6 @@ export function SectionsCanvas({
       pickerData={pickerData}
       allowedSections={allowedSectionsOverride ?? getPageDefinition(pageId)?.allowedSections ?? CUSTOM_PAGE_ALLOWED_SECTIONS}
       onExit={() => router.push(pathname)}
-      onAfterPublishOrRestore={() => router.refresh()}
     />
   );
 }
@@ -141,7 +151,6 @@ function EditModeCanvas({
   pickerData,
   allowedSections,
   onExit,
-  onAfterPublishOrRestore,
 }: {
   pageId: string;
   pageLabel: string;
@@ -149,84 +158,111 @@ function EditModeCanvas({
   pickerData: PickerData;
   allowedSections: readonly SectionType[];
   onExit: () => void;
-  onAfterPublishOrRestore: () => void;
 }) {
-  const [sections, setSections] = useState<Section[]>(initialSections);
+  // ─── History + autosave ───────────────────────────────────────────────
+  const { sections, canUndo, canRedo, reset, replace, updateSection: updateSectionH, undo, redo } =
+    useEditorHistory(initialSections);
+
+  const saveFn = useCallback(
+    (s: Section[]) => saveDraftAction(pageId, JSON.stringify(s)),
+    [pageId]
+  );
+  const { status, flush } = useAutosave(sections, saveFn);
+
+  // ─── Local UI state ───────────────────────────────────────────────────
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [dirty, setDirty] = useState(false);
   const [picker, setPicker] = useState<PickerSlot | null>(null);
   const [showRevisions, setShowRevisions] = useState(false);
-  const [isPending, startTransition] = useTransition();
+  const [device, setDevice] = useState<DeviceMode>("desktop");
 
-  // Re-sync if the parent rehydrates after publish/restore.
+  // In-app dialog state (replaces native confirm/prompt)
+  const [confirmState, setConfirmState] = useState<{
+    title: string;
+    body?: string;
+    destructive?: boolean;
+    onConfirm: () => void;
+  } | null>(null);
+  const [publishOpen, setPublishOpen] = useState(false);
+
+  // Re-sync if the parent rehydrates (e.g. server-side initialSections changes).
   useEffect(() => {
-    setSections(initialSections);
-    setDirty(false);
+    reset(initialSections);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialSections]);
 
-  // Beforeunload guard for unsaved changes.
+  // Beforeunload guard for unsaved / in-flight changes.
   useEffect(() => {
-    if (!dirty) return;
+    if (status !== "unsaved" && status !== "saving") return;
     function onBeforeUnload(e: BeforeUnloadEvent) {
       e.preventDefault();
       e.returnValue = "";
     }
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [dirty]);
+  }, [status]);
+
+  // Keyboard undo / redo.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      if (e.key.toLowerCase() === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if ((e.key.toLowerCase() === "z" && e.shiftKey) || e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        redo();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undo, redo]);
 
   const selected = useMemo(
     () => sections.find((s) => s.id === selectedId) ?? null,
     [sections, selectedId]
   );
 
-  function updateSection(id: string, patch: Partial<Section>) {
-    setSections((prev) => prev.map((s) => (s.id === id ? ({ ...s, ...patch } as Section) : s)));
-    setDirty(true);
-  }
+  // ─── Mutation helpers (all go through the reducer) ────────────────────
 
   function insertSection(type: SectionType, atIndex: number) {
     const s = blank(type);
-    setSections((prev) => {
-      const next = [...prev];
-      next.splice(atIndex, 0, s);
-      return next;
-    });
+    const next = [...sections];
+    next.splice(atIndex, 0, s);
+    replace(next, "insert");
     setSelectedId(s.id);
-    setDirty(true);
   }
 
   function moveSection(id: string, dir: -1 | 1) {
-    setSections((prev) => {
-      const i = prev.findIndex((s) => s.id === id);
-      if (i < 0) return prev;
-      const j = i + dir;
-      if (j < 0 || j >= prev.length) return prev;
-      const next = [...prev];
-      const [item] = next.splice(i, 1);
-      next.splice(j, 0, item);
-      return next;
-    });
-    setDirty(true);
+    const i = sections.findIndex((s) => s.id === id);
+    if (i < 0) return;
+    const j = i + dir;
+    if (j < 0 || j >= sections.length) return;
+    const next = [...sections];
+    const [item] = next.splice(i, 1);
+    next.splice(j, 0, item);
+    replace(next, "move");
   }
 
   function duplicateSection(id: string) {
-    setSections((prev) => {
-      const i = prev.findIndex((s) => s.id === id);
-      if (i < 0) return prev;
-      const clone = { ...prev[i], id: makeId(prev[i].type) } as Section;
-      const next = [...prev];
-      next.splice(i + 1, 0, clone);
-      return next;
-    });
-    setDirty(true);
+    const i = sections.findIndex((s) => s.id === id);
+    if (i < 0) return;
+    const clone = { ...sections[i], id: makeId(sections[i].type) } as Section;
+    const next = [...sections];
+    next.splice(i + 1, 0, clone);
+    replace(next, "duplicate");
   }
 
   function deleteSection(id: string) {
-    if (!confirm("Delete this section?")) return;
-    setSections((prev) => prev.filter((s) => s.id !== id));
-    if (selectedId === id) setSelectedId(null);
-    setDirty(true);
+    const filtered = sections.filter((s) => s.id !== id);
+    setConfirmState({
+      title: "Delete this section?",
+      destructive: true,
+      onConfirm: () => {
+        replace(filtered, "delete");
+        if (selectedId === id) setSelectedId(null);
+      },
+    });
   }
 
   function handlePhotoSelected(ref: PhotoRef) {
@@ -237,114 +273,115 @@ function EditModeCanvas({
       return;
     }
     const updated = applyPickedPhoto(target, picker, ref);
-    setSections((prev) => prev.map((s) => (s.id === target.id ? updated : s)));
-    setDirty(true);
+    const next = sections.map((s) => (s.id === target.id ? updated : s));
+    replace(next, "photo");
     setPicker(null);
   }
 
-  function handleSave() {
-    const payload = JSON.stringify(sections);
-    startTransition(async () => {
-      const res = await saveDraftAction(pageId, payload);
-      if (!res.success) {
-        toast(res.error ?? "Save failed.");
-        return;
-      }
-      setDirty(false);
-      toast("Draft saved.");
-    });
-  }
+  // ─── Top-level actions ─────────────────────────────────────────────────
 
   function handleDiscard() {
-    if (!confirm("Discard unsaved changes and revert to the published version?")) return;
-    startTransition(async () => {
-      const res = await discardDraftAction(pageId);
-      if (!res.success) {
-        toast(res.error ?? "Discard failed.");
-        return;
-      }
-      toast("Draft discarded.");
-      onAfterPublishOrRestore();
+    setConfirmState({
+      title: "Discard draft?",
+      body: "Discard unsaved changes and revert to the published version?",
+      destructive: true,
+      onConfirm: async () => {
+        const res = await discardDraftAction(pageId);
+        if (!res.success) {
+          toast(res.error ?? "Discard failed.");
+          return;
+        }
+        reset(res.sections);
+        toast("Draft discarded.");
+      },
     });
   }
 
-  function handlePublish() {
-    if (dirty) {
-      toast("Save your draft before publishing.");
-      return;
+  function handleExit() {
+    if (status === "unsaved" || status === "saving") {
+      setConfirmState({
+        title: "Exit editing?",
+        body: "Your latest change may not be saved.",
+        onConfirm: () => onExit(),
+      });
+    } else {
+      onExit();
     }
-    const note = prompt("Optional changelog note for this publish:") ?? undefined;
-    startTransition(async () => {
-      const res = await publishDraftAction(pageId, note?.trim() || undefined);
-      if (!res.success) {
-        toast(res.error ?? "Publish failed.");
-        return;
-      }
-      toast("Published.");
-      onAfterPublishOrRestore();
-    });
   }
+
+  // ─── Render ────────────────────────────────────────────────────────────
 
   return (
     <>
-      <EditBar
+      <EditorTopBar
         pageLabel={pageLabel}
-        dirty={dirty}
-        saving={isPending}
-        onSaveDraft={handleSave}
-        onPublish={handlePublish}
+        status={status}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        device={device}
+        onUndo={undo}
+        onRedo={redo}
+        onDeviceChange={setDevice}
+        onPublish={() => setPublishOpen(true)}
         onDiscard={handleDiscard}
         onOpenRevisions={() => setShowRevisions(true)}
-        onExit={() => {
-          if (dirty && !confirm("Exit edit mode? Your unsaved changes will be lost.")) return;
-          onExit();
-        }}
+        onExit={handleExit}
       />
 
       {/* Push the canvas down so the sticky bar never covers the top of a hero. */}
-      <div style={{ paddingTop: EDIT_BAR_HEIGHT }}>
-        <AddSectionGap index={0} allowedSections={allowedSections} onInsert={insertSection} />
-        {sections.map((s, i) => (
-          <div key={s.id}>
-            <SectionWrapper
-              sectionId={s.id}
-              selected={selectedId === s.id}
-              isFirst={i === 0}
-              isLast={i === sections.length - 1}
-              onSelect={() => setSelectedId(s.id)}
-              onMoveUp={() => moveSection(s.id, -1)}
-              onMoveDown={() => moveSection(s.id, 1)}
-              onDuplicate={() => duplicateSection(s.id)}
-              onDelete={() => deleteSection(s.id)}
-            >
-              {renderSection(s)}
-            </SectionWrapper>
-            <AddSectionGap index={i + 1} allowedSections={allowedSections} onInsert={insertSection} />
-          </div>
-        ))}
+      <div style={{ paddingTop: TOP_BAR_HEIGHT }}>
+        {/* Device-preview width constraint */}
+        <div
+          style={{
+            maxWidth: DEVICE_WIDTH[device],
+            margin: "0 auto",
+            transition: "max-width 0.25s ease",
+            boxShadow: device === "desktop" ? "none" : "0 0 0 1px var(--border)",
+          }}
+        >
+          <AddSectionGap index={0} allowedSections={allowedSections} onInsert={insertSection} />
+          {sections.map((s, i) => (
+            <div key={s.id}>
+              <SectionWrapper
+                sectionId={s.id}
+                selected={selectedId === s.id}
+                isFirst={i === 0}
+                isLast={i === sections.length - 1}
+                onSelect={() => setSelectedId(s.id)}
+                onMoveUp={() => moveSection(s.id, -1)}
+                onMoveDown={() => moveSection(s.id, 1)}
+                onDuplicate={() => duplicateSection(s.id)}
+                onDelete={() => deleteSection(s.id)}
+              >
+                {renderSection(s)}
+              </SectionWrapper>
+              <AddSectionGap index={i + 1} allowedSections={allowedSections} onInsert={insertSection} />
+            </div>
+          ))}
 
-        {sections.length === 0 && (
-          <div
-            style={{
-              padding: "5rem 4rem",
-              textAlign: "center",
-              color: "var(--charcoal-muted)",
-              border: "0.5px dashed var(--border-strong)",
-              margin: "4rem 4rem 0",
-            }}
-          >
-            <p style={{ fontSize: "0.9rem", lineHeight: 1.7, margin: 0 }}>
-              This page has no sections yet. Use the &ldquo;+ Add section&rdquo; line above to insert your first one.
-            </p>
-          </div>
-        )}
+          {sections.length === 0 && (
+            <div
+              style={{
+                padding: "5rem 4rem",
+                textAlign: "center",
+                color: "var(--charcoal-muted)",
+                border: "0.5px dashed var(--border-strong)",
+                margin: "4rem 4rem 0",
+              }}
+            >
+              <p style={{ fontSize: "0.9rem", lineHeight: 1.7, margin: 0 }}>
+                This page has no sections yet. Use the &ldquo;+ Add section&rdquo; line above to insert your first one.
+              </p>
+            </div>
+          )}
+        </div>
       </div>
 
       <SectionDrawer
         section={selected}
         onChange={(patch) => {
           if (!selected) return;
-          updateSection(selected.id, patch);
+          updateSectionH(selected.id, patch);
         }}
         onClose={() => setSelectedId(null)}
         onRequestPicker={(slot) => setPicker(slot)}
@@ -361,7 +398,39 @@ function EditModeCanvas({
         pageId={pageId}
         open={showRevisions}
         onClose={() => setShowRevisions(false)}
-        onRestored={onAfterPublishOrRestore}
+        onRestored={(restoredSections) => reset(restoredSections)}
+      />
+
+      <ConfirmDialog
+        open={!!confirmState}
+        title={confirmState?.title ?? ""}
+        body={confirmState?.body}
+        destructive={confirmState?.destructive}
+        onConfirm={() => {
+          confirmState?.onConfirm();
+          setConfirmState(null);
+        }}
+        onCancel={() => setConfirmState(null)}
+      />
+
+      <PublishDialog
+        open={publishOpen}
+        onPublish={async (note) => {
+          setPublishOpen(false);
+          const ok = await flush();
+          if (!ok) {
+            toast("Couldn't save draft — try again.");
+            return;
+          }
+          const res = await publishDraftAction(pageId, note);
+          if (!res.success) {
+            toast(res.error ?? "Publish failed.");
+            return;
+          }
+          reset(res.sections);
+          toast("Published.");
+        }}
+        onCancel={() => setPublishOpen(false)}
       />
     </>
   );

@@ -8,6 +8,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { toast } from "@/components/ui/Toaster";
 import { listRevisionsAction, restoreRevisionAction, type RevisionSummary } from "@/app/admin/site/actions";
+import type { Section } from "@/lib/site-content/types";
 
 export function RevisionsModal({
   pageId,
@@ -18,7 +19,7 @@ export function RevisionsModal({
   pageId: string;
   open: boolean;
   onClose: () => void;
-  onRestored: () => void;
+  onRestored: (sections: Section[]) => void;
 }) {
   const [revisions, setRevisions] = useState<RevisionSummary[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -39,7 +40,6 @@ export function RevisionsModal({
   if (!open) return null;
 
   function restore(revisionId: string) {
-    if (!confirm("Restore this revision into the current draft? Any unsaved changes in the draft will be replaced.")) return;
     startTransition(async () => {
       const res = await restoreRevisionAction(pageId, revisionId);
       if (!res.success) {
@@ -47,7 +47,7 @@ export function RevisionsModal({
         return;
       }
       toast("Revision restored into draft.");
-      onRestored();
+      onRestored(res.sections);
       onClose();
     });
   }
