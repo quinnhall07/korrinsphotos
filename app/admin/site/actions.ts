@@ -165,6 +165,7 @@ const SectionSchema = z.discriminatedUnion("type", [
 ]);
 
 type ActionResult = { success: true } | { success: false; error: string };
+type SectionsResult = { success: true; sections: Section[] } | { success: false; error: string };
 
 function publicPathFor(pageId: string): string | null {
   const def = getPageDefinition(pageId);
@@ -219,12 +220,12 @@ export async function saveDraftAction(
   return { success: true };
 }
 
-export async function discardDraftAction(pageId: string): Promise<ActionResult> {
+export async function discardDraftAction(pageId: string): Promise<SectionsResult> {
   const session = await requireAdmin();
   if (!(await pageExists(pageId))) return { success: false, error: "Unknown page." };
   const label = await resolvePageLabel(pageId);
 
-  await dbDiscardDraft(pageId, session.uid);
+  const sections = await dbDiscardDraft(pageId, session.uid);
   await logActivity("SITE_DRAFT_DISCARDED", `Discarded draft for site page "${label}".`, {
     surface: "site-editor",
     pageId,
@@ -234,19 +235,19 @@ export async function discardDraftAction(pageId: string): Promise<ActionResult> 
   revalidatePath(`/admin/site/${pageId}`);
   const refreshHref = publicPathFor(pageId);
   if (refreshHref) revalidatePath(refreshHref);
-  return { success: true };
+  return { success: true, sections };
 }
 
 export async function publishDraftAction(
   pageId: string,
   noteSummary?: string
-): Promise<ActionResult> {
+): Promise<SectionsResult> {
   const session = await requireAdmin();
   if (!(await pageExists(pageId))) return { success: false, error: "Unknown page." };
   const label = await resolvePageLabel(pageId);
 
   try {
-    const { revisionId } = await dbPublishDraft(pageId, session.uid, noteSummary);
+    const { revisionId, sections } = await dbPublishDraft(pageId, session.uid, noteSummary);
     await logActivity("SITE_PUBLISHED", `Published site page "${label}".`, {
       surface: "site-editor",
       pageId,
@@ -266,7 +267,7 @@ export async function publishDraftAction(
     // navigation.
     if (pageId === "footer") revalidatePath("/");
 
-    return { success: true };
+    return { success: true, sections };
   } catch (err) {
     console.error("[site-editor] publish:", err);
     return { success: false, error: "Publish failed." };
@@ -311,13 +312,13 @@ export async function listRevisionsAction(pageId: string): Promise<{ success: tr
 export async function restoreRevisionAction(
   pageId: string,
   revisionId: string
-): Promise<ActionResult> {
+): Promise<SectionsResult> {
   const session = await requireAdmin();
   if (!(await pageExists(pageId))) return { success: false, error: "Unknown page." };
   const label = await resolvePageLabel(pageId);
 
   try {
-    await restoreRevisionToDraft(pageId, revisionId, session.uid);
+    const sections = await restoreRevisionToDraft(pageId, revisionId, session.uid);
     await logActivity("SITE_REVISION_RESTORED", `Restored revision into draft for site page "${label}".`, {
       surface: "site-editor",
       pageId,
@@ -328,7 +329,7 @@ export async function restoreRevisionAction(
     revalidatePath(`/admin/site/${pageId}`);
     const refreshHref = publicPathFor(pageId);
     if (refreshHref) revalidatePath(refreshHref);
-    return { success: true };
+    return { success: true, sections };
   } catch (err) {
     console.error("[site-editor] restore:", err);
     return { success: false, error: "Restore failed." };

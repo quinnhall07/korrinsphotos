@@ -89,25 +89,27 @@ export async function saveDraftSections(
   });
 }
 
-export async function discardDraft(pageId: string, uid: string): Promise<void> {
+export async function discardDraft(pageId: string, uid: string): Promise<Section[]> {
   const ref = siteContentCol().doc(pageId);
   const snap = await ref.get();
-  if (!snap.exists) return;
+  if (!snap.exists) return [];
   const data = snap.data() as Omit<SiteContentDoc, "id">;
+  const published = data.publishedSections ?? [];
   await ref.update({
-    draftSections: data.publishedSections ?? [],
+    draftSections: published,
     draftDirty: false,
     draftUpdatedAt: FieldValue.serverTimestamp(),
     draftUpdatedByUid: uid,
     updatedAt: FieldValue.serverTimestamp(),
   });
+  return published;
 }
 
 export async function publishDraft(
   pageId: string,
   uid: string,
   noteSummary?: string
-): Promise<{ revisionId: string }> {
+): Promise<{ revisionId: string; sections: Section[] }> {
   const ref = siteContentCol().doc(pageId);
   const snap = await ref.get();
   if (!snap.exists) throw new Error(`No draft to publish for pageId="${pageId}"`);
@@ -133,7 +135,7 @@ export async function publishDraft(
 
   await pruneOldRevisions(pageId);
 
-  return { revisionId: revisionRef.id };
+  return { revisionId: revisionRef.id, sections };
 }
 
 async function pruneOldRevisions(pageId: string): Promise<void> {
@@ -159,9 +161,10 @@ export async function restoreRevisionToDraft(
   pageId: string,
   revisionId: string,
   uid: string
-): Promise<void> {
+): Promise<Section[]> {
   const revSnap = await revisionsCol(pageId).doc(revisionId).get();
   if (!revSnap.exists) throw new Error(`Revision not found: ${revisionId}`);
   const rev = revSnap.data() as Omit<SiteContentRevisionDoc, "id">;
   await saveDraftSections(pageId, rev.sections, uid);
+  return rev.sections;
 }
