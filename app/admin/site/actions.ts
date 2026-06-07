@@ -16,23 +16,9 @@ import {
   listRevisions as dbListRevisions,
 } from "@/lib/db/site-content";
 import { logActivity } from "@/lib/db/activity";
-import { getPageDefinition } from "@/lib/site-content/page-registry";
+import { getPageDefinition, CUSTOM_PAGE_ALLOWED_SECTIONS } from "@/lib/site-content/page-registry";
 import { isReservedSlug } from "@/lib/site-content/slugs";
 import type { Section, SectionType } from "@/lib/site-content/types";
-
-// Custom pages (no registry entry) accept any registered section type.
-const CUSTOM_PAGE_ALLOWED_SECTIONS: readonly SectionType[] = [
-  "HERO",
-  "PHOTO_GRID",
-  "SLIDESHOW",
-  "STATS",
-  "RICH_TEXT",
-  "CTA_BANNER",
-  "PROCESS_STEPS",
-  "PACKAGE_CARDS",
-  "TESTIMONIAL",
-  "BOOKING_FORM",
-];
 
 function allowedSectionsFor(pageId: string): readonly SectionType[] {
   const def = getPageDefinition(pageId);

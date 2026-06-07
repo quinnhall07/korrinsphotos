@@ -21,37 +21,38 @@ export const SITE_PAGES: readonly PageDefinition[] = [
     id: "home",
     label: "Home",
     publicHref: "/",
-    description: "Landing page — hero slideshow, selected work, stats, closing CTA.",
+    description: "Landing page — hero, selected work, stats, closing CTA.",
     allowedSections: ["HERO", "PHOTO_GRID", "SLIDESHOW", "STATS", "RICH_TEXT", "CTA_BANNER"] as const,
-  },
-  {
-    id: "investment",
-    label: "Investment / Pricing",
-    publicHref: "/investment",
-    description: "Process steps, package cards, testimonial, closing CTA.",
-    allowedSections: ["HERO", "PROCESS_STEPS", "PACKAGE_CARDS", "TESTIMONIAL", "CTA_BANNER", "RICH_TEXT"] as const,
   },
   {
     id: "portfolio",
     label: "Portfolio",
     publicHref: "/portfolio",
-    description: "Editorial showcase. The category filter is driven by the photos themselves.",
+    description: "Editorial showcase + the about/story section. Category filter is photo-driven.",
     allowedSections: ["HERO", "PHOTO_GRID", "RICH_TEXT", "CTA_BANNER"] as const,
   },
   {
-    id: "about",
-    label: "About",
-    publicHref: "/about",
-    description: "Long-form story page. Free-form prose + supporting imagery.",
-    allowedSections: ["HERO", "RICH_TEXT", "PHOTO_GRID", "CTA_BANNER"] as const,
+    id: "pricing",
+    label: "Pricing",
+    publicHref: "/pricing",
+    description: "Process steps, package cards, testimonial, closing CTA.",
+    allowedSections: ["HERO", "PROCESS_STEPS", "PACKAGE_CARDS", "TESTIMONIAL", "CTA_BANNER", "RICH_TEXT"] as const,
   },
   {
-    id: "footer",
-    label: "Footer",
-    publicHref: "/",
-    description: "Global footer rendered at the bottom of every page.",
-    allowedSections: ["RICH_TEXT", "CTA_BANNER"] as const,
+    id: "booking",
+    label: "Booking",
+    publicHref: "/booking",
+    description: "Inquiry page — editable copy around the booking form.",
+    allowedSections: ["HERO", "RICH_TEXT", "BOOKING_FORM", "CTA_BANNER"] as const,
   },
+] as const;
+
+// Single source of truth for allowed section types on custom admin-created
+// pages (those without a registry entry). Imported by app/admin/site/actions.ts
+// and components/site-editor/SectionsCanvas.tsx — do NOT duplicate this list.
+export const CUSTOM_PAGE_ALLOWED_SECTIONS: readonly SectionType[] = [
+  "HERO", "PHOTO_GRID", "SLIDESHOW", "STATS", "RICH_TEXT", "CTA_BANNER",
+  "PROCESS_STEPS", "PACKAGE_CARDS", "TESTIMONIAL", "BOOKING_FORM",
 ] as const;
 
 export function getPageDefinition(pageId: string): PageDefinition | null {

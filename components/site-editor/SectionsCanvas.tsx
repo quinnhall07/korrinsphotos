@@ -26,7 +26,7 @@ import { toast } from "@/components/ui/Toaster";
 import { PhotoPicker } from "@/components/admin/PhotoPicker";
 import { renderSection, renderSections } from "@/lib/site-content/render";
 import type { Section, SectionType, PhotoRef } from "@/lib/site-content/types";
-import { getPageDefinition } from "@/lib/site-content/page-registry";
+import { getPageDefinition, CUSTOM_PAGE_ALLOWED_SECTIONS } from "@/lib/site-content/page-registry";
 import { saveDraftAction, discardDraftAction, publishDraftAction } from "@/app/admin/site/actions";
 
 import { EditBar, EDIT_BAR_HEIGHT } from "./EditBar";
@@ -51,19 +51,6 @@ interface Props {
   /** Custom-page allowed sections override (when the slug isn't in the registry). */
   allowedSectionsOverride?: readonly SectionType[];
 }
-
-const CUSTOM_PAGE_ALLOWED_SECTIONS: readonly SectionType[] = [
-  "HERO",
-  "PHOTO_GRID",
-  "SLIDESHOW",
-  "STATS",
-  "RICH_TEXT",
-  "CTA_BANNER",
-  "PROCESS_STEPS",
-  "PACKAGE_CARDS",
-  "TESTIMONIAL",
-  "BOOKING_FORM",
-];
 
 function makeId(type: SectionType): string {
   return `${type.toLowerCase()}-${Math.random().toString(36).slice(2, 9)}`;
