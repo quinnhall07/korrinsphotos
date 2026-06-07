@@ -8,6 +8,7 @@ import { loadPublishedSections, loadDraftSections } from "@/lib/db/site-content"
 import { getSessionOrNull } from "@/lib/session";
 import { listSiteAssets, listProjectPhotos } from "@/lib/db/site-assets";
 import { SectionsCanvas } from "@/components/site-editor/SectionsCanvas";
+import { HOME_DEFAULTS } from "@/lib/site-content/defaults/home";
 
 // Admins use ?edit=1 to enter the on-page editor, so the home page must be
 // dynamic. (The page used to ISR at 1h; we trade that for live admin editing.)
@@ -51,7 +52,7 @@ export default async function HomePage({ searchParams }: Props) {
       <SectionsCanvas
         pageId="home"
         pageLabel="Home"
-        initialSections={sections ?? []}
+        initialSections={sections ?? HOME_DEFAULTS}
         isAdmin={isAdmin}
         editParam={editParam}
         pickerData={pickerData}

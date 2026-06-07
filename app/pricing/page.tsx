@@ -22,6 +22,7 @@ import { loadPublishedSections, loadDraftSections } from "@/lib/db/site-content"
 import { getSessionOrNull } from "@/lib/session";
 import { listSiteAssets, listProjectPhotos } from "@/lib/db/site-assets";
 import { SectionsCanvas } from "@/components/site-editor/SectionsCanvas";
+import { INVESTMENT_DEFAULTS } from "@/lib/site-content/defaults/investment";
 
 export const dynamic = "force-dynamic";
 
@@ -84,7 +85,7 @@ export default async function PricingPage({ searchParams }: Props) {
       <SectionsCanvas
         pageId="pricing"
         pageLabel="Pricing"
-        initialSections={sections ?? []}
+        initialSections={sections ?? INVESTMENT_DEFAULTS}
         isAdmin={isAdmin}
         editParam={editParam}
         pickerData={pickerData}

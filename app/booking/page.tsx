@@ -11,6 +11,7 @@ import { loadPublishedSections, loadDraftSections } from "@/lib/db/site-content"
 import { getSessionOrNull } from "@/lib/session";
 import { listSiteAssets, listProjectPhotos } from "@/lib/db/site-assets";
 import { SectionsCanvas } from "@/components/site-editor/SectionsCanvas";
+import { BOOKING_DEFAULTS } from "@/lib/site-content/defaults/booking";
 
 export const metadata: Metadata = {
   title: "Booking",
@@ -55,7 +56,7 @@ export default async function BookingPage({ searchParams }: Props) {
       <SectionsCanvas
         pageId="booking"
         pageLabel="Booking"
-        initialSections={sections ?? []}
+        initialSections={sections ?? BOOKING_DEFAULTS}
         isAdmin={isAdmin}
         editParam={editParam}
         pickerData={pickerData}

@@ -14,6 +14,7 @@ import { loadPublishedSections, loadDraftSections } from "@/lib/db/site-content"
 import { getSessionOrNull } from "@/lib/session";
 import { listSiteAssets, listProjectPhotos } from "@/lib/db/site-assets";
 import { SectionsCanvas } from "@/components/site-editor/SectionsCanvas";
+import { PORTFOLIO_DEFAULTS } from "@/lib/site-content/defaults/portfolio";
 
 export const metadata: Metadata = {
   title:       "Portfolio",
@@ -106,7 +107,7 @@ export default async function PortfolioPage({ searchParams }: Props) {
       <SectionsCanvas
         pageId="portfolio"
         pageLabel="Portfolio"
-        initialSections={sections ?? []}
+        initialSections={sections ?? PORTFOLIO_DEFAULTS}
         isAdmin={isAdmin}
         editParam={editParam}
         pickerData={pickerData}
