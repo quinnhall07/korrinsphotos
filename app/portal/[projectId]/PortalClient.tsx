@@ -1036,37 +1036,13 @@ function GalleryTab({ gallery }: { gallery: PortalGallery | null }) {
 
 // ─── Inspiration ─────────────────────────────────────────────────────────────
 
-function InspirationTab({ journal }: { journal: PortalJournal | null }) {
+function InspirationTab({ journal: _journal }: { journal: PortalJournal | null }) {
   return (
     <div style={{ display: "grid", gap: "1.5rem" }}>
       <h2 style={SECTION_HEAD}>Inspiration</h2>
-      {journal ? (
-        <div style={{ ...CARD, background: "var(--olive-dim)", borderColor: "var(--olive)" }}>
-          <p style={EYEBROW}>Featured</p>
-          <h3
-            style={{
-              fontFamily: "'Cormorant Garamond', serif",
-              fontWeight: 300,
-              fontSize: "1.6rem",
-              margin: "0.5rem 0 0.5rem 0",
-              color: "var(--charcoal)",
-            }}
-          >
-            Your story is live
-          </h3>
-          <p style={bodyP}>
-            <em style={{ color: "var(--charcoal-light)" }}>{journal.title}</em> has
-            been published on the journal.
-          </p>
-          <Link href={`/journal/${journal.slug}`} style={BTN_PRIMARY}>
-            Read the post
-          </Link>
-        </div>
-      ) : (
-        <div style={CARD}>
-          <p style={mutedP}>Your journal post will appear here after delivery.</p>
-        </div>
-      )}
+      <div style={CARD}>
+        <p style={mutedP}>Your journal post will appear here after delivery.</p>
+      </div>
     </div>
   );
 }
