@@ -26,6 +26,7 @@ import { toast } from "@/components/ui/Toaster";
 import { PhotoPicker } from "@/components/admin/PhotoPicker";
 import { renderSection, renderSections } from "@/lib/site-content/render";
 import type { Section, SectionType, PhotoRef } from "@/lib/site-content/types";
+import type { EditContext } from "@/lib/site-content/edit-context";
 import { getPageDefinition, CUSTOM_PAGE_ALLOWED_SECTIONS } from "@/lib/site-content/page-registry";
 import { saveDraftAction, discardDraftAction, publishDraftAction } from "@/app/admin/site/actions";
 
@@ -282,6 +283,29 @@ function EditModeCanvas({
     setPicker(null);
   }
 
+  // Build the EditContext that render.tsx uses to wire inline text edits
+  // and image-replace clicks directly into the history reducer.
+  const editCtx: EditContext = useMemo(
+    () => ({
+      onText: (id, field, value) =>
+        updateSectionH(id, { [field]: value } as Partial<Section>),
+      onImage: (id, slot) => {
+        // Map EditContext ImageSlot { field, index? } → PickerSlot discriminant.
+        // We look up the section type so we can pick the right slot variant.
+        const section = sections.find((s) => s.id === id);
+        if (!section) return;
+        if (section.type === "HERO") {
+          setPicker({ sectionId: id, slot: "HERO_SLIDE", index: slot.index });
+        } else if (section.type === "PHOTO_GRID") {
+          setPicker({ sectionId: id, slot: "GRID_PHOTO", index: slot.index });
+        } else if (section.type === "SLIDESHOW") {
+          setPicker({ sectionId: id, slot: "SLIDESHOW_SLIDE", index: slot.index });
+        }
+      },
+    }),
+    [updateSectionH, sections]
+  );
+
   // ─── Top-level actions ─────────────────────────────────────────────────
 
   function handleDiscard() {
@@ -373,7 +397,7 @@ function EditModeCanvas({
                 onDuplicate={() => duplicateSection(s.id)}
                 onDelete={() => deleteSection(s.id)}
               >
-                {renderSection(s)}
+                {renderSection(s, editCtx)}
               </SectionWrapper>
               <AddSectionGap index={i + 1} allowedSections={allowedSections} onInsert={insertSection} />
             </div>

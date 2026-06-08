@@ -41,9 +41,14 @@ export function SectionWrapper({
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onClick={(e) => {
+        // If the click is inside a contentEditable element (EditableText in
+        // edit mode), let the browser place the caret — do not select/intercept.
+        const target = e.target as HTMLElement;
+        if (target.closest('[contenteditable="true"]')) {
+          return;
+        }
         // Block internal links inside the section from navigating during edit
         // mode — instead, treat any click as a section-select.
-        const target = e.target as HTMLElement;
         const link = target.closest("a");
         if (link) {
           e.preventDefault();

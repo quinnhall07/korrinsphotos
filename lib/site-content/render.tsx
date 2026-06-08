@@ -5,18 +5,20 @@
 // Pure presentation — no data fetching. MAY embed "use client" components (e.g.
 // BookingFormSteps); do NOT import server-only modules (db, storage, session, etc.).
 
-import { Suspense } from "react";
+import React, { Suspense } from "react";
 import Link from "next/link";
 import type { Section, PhotoRef } from "./types";
 import { buildCdnUrl } from "@/lib/cloudflare";
-import { renderConstrainedMarkdown, renderInlineMarkdown } from "./markdown";
 import { BookingFormSteps } from "@/app/booking/BookingFormSteps";
+import type { EditContext } from "./edit-context";
+import { EditableText } from "@/components/site-editor/EditableText";
+import { EditableImage, AddImageTile } from "@/components/site-editor/EditableImage";
 
 function photoSrc(ref: PhotoRef, variant: "thumbnail" | "gallery" = "gallery"): string {
   return buildCdnUrl(ref.cloudflareImageId, variant);
 }
 
-function HeroBlock({ section }: { section: Extract<Section, { type: "HERO" }> }) {
+function HeroBlock({ section, edit }: { section: Extract<Section, { type: "HERO" }>; edit?: EditContext }) {
   const { slides, eyebrow, headline, sub, primaryCtaLabel, primaryCtaHref, secondaryCtaLabel, secondaryCtaHref } = section;
   const firstSlide = slides[0];
   return (
@@ -33,7 +35,7 @@ function HeroBlock({ section }: { section: Extract<Section, { type: "HERO" }> })
         background: "var(--charcoal)",
       }}
     >
-      {firstSlide && (
+      {firstSlide ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={photoSrc(firstSlide.photoRef, "gallery")}
@@ -48,17 +50,43 @@ function HeroBlock({ section }: { section: Extract<Section, { type: "HERO" }> })
             objectFit: "cover",
             objectPosition: `${(firstSlide.photoRef.focalX ?? 0.5) * 100}% ${(firstSlide.photoRef.focalY ?? 0.5) * 100}%`,
             opacity: 0.55,
+            cursor: edit ? "pointer" : undefined,
           }}
+          {...(edit ? {
+            onClick: (e: React.MouseEvent<HTMLImageElement>) => {
+              e.stopPropagation();
+              edit.onImage(section.id, { field: "slides", index: 0 });
+            },
+          } : {})}
         />
-      )}
+      ) : edit ? (
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <AddImageTile
+            onClick={() => edit.onImage(section.id, { field: "slides", index: 0 })}
+            style={{ minHeight: "100%", border: "1px dashed rgba(250,249,246,0.3)", color: "rgba(250,249,246,0.6)" }}
+          />
+        </div>
+      ) : null}
       <div style={{ position: "relative", textAlign: "center", padding: "0 2rem", color: "var(--white)", maxWidth: "60rem" }}>
-        {eyebrow && (
-          <p style={{ fontSize: "0.7rem", letterSpacing: "0.24em", textTransform: "uppercase", color: "var(--olive-light)", marginBottom: "1.25rem" }}>
-            {eyebrow}
-          </p>
+        {(edit || eyebrow) && (
+          <EditableText
+            as="p"
+            value={eyebrow ?? ""}
+            editing={!!edit}
+            onCommit={(v) => edit?.onText(section.id, "eyebrow", v)}
+            markdown="none"
+            placeholder="Eyebrow"
+            style={{ fontSize: "0.7rem", letterSpacing: "0.24em", textTransform: "uppercase", color: "var(--olive-light)", marginBottom: "1.25rem" }}
+          />
         )}
-        {headline && (
-          <h1
+        {(edit || headline) && (
+          <EditableText
+            as="h1"
+            value={headline ?? ""}
+            editing={!!edit}
+            onCommit={(v) => edit?.onText(section.id, "headline", v)}
+            markdown="inline"
+            placeholder="Headline"
             style={{
               fontFamily: "'Cormorant Garamond', serif",
               fontSize: "clamp(2.6rem, 6vw, 5rem)",
@@ -66,13 +94,18 @@ function HeroBlock({ section }: { section: Extract<Section, { type: "HERO" }> })
               lineHeight: 1.05,
               letterSpacing: "-0.01em",
             }}
-            dangerouslySetInnerHTML={{ __html: renderInlineMarkdown(headline) }}
           />
         )}
-        {sub && (
-          <p style={{ marginTop: "1.5rem", fontSize: "1.05rem", lineHeight: 1.7, fontWeight: 300, opacity: 0.85 }}>
-            {sub}
-          </p>
+        {(edit || sub) && (
+          <EditableText
+            as="p"
+            value={sub ?? ""}
+            editing={!!edit}
+            onCommit={(v) => edit?.onText(section.id, "sub", v)}
+            markdown="none"
+            placeholder="Subheading"
+            style={{ marginTop: "1.5rem", fontSize: "1.05rem", lineHeight: 1.7, fontWeight: 300, opacity: 0.85 }}
+          />
         )}
         {(primaryCtaLabel || secondaryCtaLabel) && (
           <div style={{ marginTop: "2.5rem", display: "flex", gap: "1rem", justifyContent: "center", flexWrap: "wrap" }}>
@@ -99,7 +132,7 @@ function HeroBlock({ section }: { section: Extract<Section, { type: "HERO" }> })
   );
 }
 
-function PhotoGridBlock({ section }: { section: Extract<Section, { type: "PHOTO_GRID" }> }) {
+function PhotoGridBlock({ section, edit }: { section: Extract<Section, { type: "PHOTO_GRID" }>; edit?: EditContext }) {
   const { eyebrow, heading, body, columns, photos } = section;
   return (
     <section
@@ -107,26 +140,43 @@ function PhotoGridBlock({ section }: { section: Extract<Section, { type: "PHOTO_
       data-section-type="PHOTO_GRID"
       style={{ padding: "6rem 4rem" }}
     >
-      {(eyebrow || heading || body) && (
+      {(eyebrow || heading || body || edit) && (
         <div style={{ marginBottom: "3rem", maxWidth: "44rem" }}>
-          {eyebrow && (
+          {(edit || eyebrow) && (
             <div style={{ display: "flex", alignItems: "baseline", gap: "1.5rem", marginBottom: "2rem" }}>
-              <span style={{ fontSize: "0.65rem", letterSpacing: "0.22em", textTransform: "uppercase", color: "var(--olive)", fontWeight: 400, whiteSpace: "nowrap" }}>
-                {eyebrow}
-              </span>
+              <EditableText
+                as="span"
+                value={eyebrow ?? ""}
+                editing={!!edit}
+                onCommit={(v) => edit?.onText(section.id, "eyebrow", v)}
+                markdown="none"
+                placeholder="Eyebrow"
+                style={{ fontSize: "0.65rem", letterSpacing: "0.22em", textTransform: "uppercase", color: "var(--olive)", fontWeight: 400, whiteSpace: "nowrap" }}
+              />
               <div style={{ flex: 1, height: "0.5px", background: "var(--border)" }} />
             </div>
           )}
-          {heading && (
-            <h2
+          {(edit || heading) && (
+            <EditableText
+              as="h2"
+              value={heading ?? ""}
+              editing={!!edit}
+              onCommit={(v) => edit?.onText(section.id, "heading", v)}
+              markdown="inline"
+              placeholder="Heading"
               style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "clamp(2.2rem, 4vw, 3.2rem)", fontWeight: 300, lineHeight: 1.2, letterSpacing: "-0.01em" }}
-              dangerouslySetInnerHTML={{ __html: renderInlineMarkdown(heading) }}
             />
           )}
-          {body && (
-            <p style={{ marginTop: "1.5rem", fontSize: "1.05rem", fontWeight: 300, lineHeight: 1.85, color: "var(--charcoal-light)" }}>
-              {body}
-            </p>
+          {(edit || body) && (
+            <EditableText
+              as="p"
+              value={body ?? ""}
+              editing={!!edit}
+              onCommit={(v) => edit?.onText(section.id, "body", v)}
+              markdown="none"
+              placeholder="Body"
+              style={{ marginTop: "1.5rem", fontSize: "1.05rem", fontWeight: 300, lineHeight: 1.85, color: "var(--charcoal-light)" }}
+            />
           )}
         </div>
       )}
@@ -137,23 +187,40 @@ function PhotoGridBlock({ section }: { section: Extract<Section, { type: "PHOTO_
           gap: "1rem",
         }}
       >
-        {photos.map((p, i) => (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            key={`${p.id}-${i}`}
-            src={photoSrc(p, "gallery")}
-            alt={p.altText ?? ""}
-            onContextMenu={(e) => e.preventDefault()}
-            draggable={false}
-            style={{ width: "100%", height: "auto", display: "block" }}
+        {photos.map((p, i) =>
+          edit ? (
+            <EditableImage
+              key={`${p.id}-${i}`}
+              src={photoSrc(p, "gallery")}
+              alt={p.altText ?? ""}
+              editing={true}
+              onClick={() => edit.onImage(section.id, { field: "photos", index: i })}
+              style={{ width: "100%", height: "auto", display: "block" }}
+              wrapperStyle={{ display: "block" }}
+            />
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={`${p.id}-${i}`}
+              src={photoSrc(p, "gallery")}
+              alt={p.altText ?? ""}
+              onContextMenu={(e) => e.preventDefault()}
+              draggable={false}
+              style={{ width: "100%", height: "auto", display: "block" }}
+            />
+          )
+        )}
+        {edit && (
+          <AddImageTile
+            onClick={() => edit.onImage(section.id, { field: "photos" })}
           />
-        ))}
+        )}
       </div>
     </section>
   );
 }
 
-function RichTextBlock({ section }: { section: Extract<Section, { type: "RICH_TEXT" }> }) {
+function RichTextBlock({ section, edit }: { section: Extract<Section, { type: "RICH_TEXT" }>; edit?: EditContext }) {
   const { eyebrow, heading, body } = section;
   return (
     <section
@@ -161,22 +228,41 @@ function RichTextBlock({ section }: { section: Extract<Section, { type: "RICH_TE
       data-section-type="RICH_TEXT"
       style={{ padding: "5rem 4rem", maxWidth: "48rem", margin: "0 auto" }}
     >
-      {eyebrow && (
-        <p style={{ fontSize: "0.65rem", letterSpacing: "0.22em", textTransform: "uppercase", color: "var(--olive)", marginBottom: "1rem" }}>
-          {eyebrow}
-        </p>
+      {(edit || eyebrow) && (
+        <EditableText
+          as="p"
+          value={eyebrow ?? ""}
+          editing={!!edit}
+          onCommit={(v) => edit?.onText(section.id, "eyebrow", v)}
+          markdown="none"
+          placeholder="Eyebrow"
+          style={{ fontSize: "0.65rem", letterSpacing: "0.22em", textTransform: "uppercase", color: "var(--olive)", marginBottom: "1rem" }}
+        />
       )}
-      {heading && (
-        <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "clamp(1.8rem, 3vw, 2.4rem)", fontWeight: 300, lineHeight: 1.25, marginBottom: "1.5rem" }}>
-          {heading}
-        </h2>
+      {(edit || heading) && (
+        <EditableText
+          as="h2"
+          value={heading ?? ""}
+          editing={!!edit}
+          onCommit={(v) => edit?.onText(section.id, "heading", v)}
+          markdown="none"
+          placeholder="Heading"
+          style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "clamp(1.8rem, 3vw, 2.4rem)", fontWeight: 300, lineHeight: 1.25, marginBottom: "1.5rem" }}
+        />
       )}
-      <div dangerouslySetInnerHTML={{ __html: renderConstrainedMarkdown(body) }} />
+      <EditableText
+        as="div"
+        value={body}
+        editing={!!edit}
+        onCommit={(v) => edit?.onText(section.id, "body", v)}
+        markdown="block"
+        placeholder="Body"
+      />
     </section>
   );
 }
 
-function CtaBannerBlock({ section }: { section: Extract<Section, { type: "CTA_BANNER" }> }) {
+function CtaBannerBlock({ section, edit }: { section: Extract<Section, { type: "CTA_BANNER" }>; edit?: EditContext }) {
   const isDark = (section.variant ?? "DARK") === "DARK";
   const bg = isDark ? "var(--charcoal)" : "var(--olive-dim)";
   const fg = isDark ? "var(--white)" : "var(--charcoal)";
@@ -196,14 +282,25 @@ function CtaBannerBlock({ section }: { section: Extract<Section, { type: "CTA_BA
       }}
     >
       <div>
-        {section.eyebrow && (
-          <p style={{ fontSize: "0.65rem", letterSpacing: "0.2em", textTransform: "uppercase", color: eyebrowColor, marginBottom: "1rem" }}>
-            {section.eyebrow}
-          </p>
+        {(edit || section.eyebrow) && (
+          <EditableText
+            as="p"
+            value={section.eyebrow ?? ""}
+            editing={!!edit}
+            onCommit={(v) => edit?.onText(section.id, "eyebrow", v)}
+            markdown="none"
+            placeholder="Eyebrow"
+            style={{ fontSize: "0.65rem", letterSpacing: "0.2em", textTransform: "uppercase", color: eyebrowColor, marginBottom: "1rem" }}
+          />
         )}
-        <h2
+        <EditableText
+          as="h2"
+          value={section.headline}
+          editing={!!edit}
+          onCommit={(v) => edit?.onText(section.id, "headline", v)}
+          markdown="inline"
+          placeholder="Headline"
           style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "clamp(2rem, 4vw, 3rem)", fontWeight: 300, color: fg, lineHeight: 1.2 }}
-          dangerouslySetInnerHTML={{ __html: renderInlineMarkdown(section.headline) }}
         />
       </div>
       <div style={{ display: "flex", gap: "1rem", flexShrink: 0 }}>
@@ -238,7 +335,7 @@ function CtaBannerBlock({ section }: { section: Extract<Section, { type: "CTA_BA
   );
 }
 
-function ProcessStepsBlock({ section }: { section: Extract<Section, { type: "PROCESS_STEPS" }> }) {
+function ProcessStepsBlock({ section, edit }: { section: Extract<Section, { type: "PROCESS_STEPS" }>; edit?: EditContext }) {
   const { eyebrow, heading, intro, steps } = section;
   return (
     <section
@@ -246,26 +343,43 @@ function ProcessStepsBlock({ section }: { section: Extract<Section, { type: "PRO
       data-section-type="PROCESS_STEPS"
       style={{ padding: "6rem 4rem" }}
     >
-      {eyebrow && (
+      {(edit || eyebrow) && (
         <div style={{ display: "flex", alignItems: "baseline", gap: "1.5rem", marginBottom: "3rem" }}>
-          <span style={{ fontSize: "0.65rem", letterSpacing: "0.22em", textTransform: "uppercase", color: "var(--olive)", fontWeight: 400, whiteSpace: "nowrap" }}>
-            {eyebrow}
-          </span>
+          <EditableText
+            as="span"
+            value={eyebrow ?? ""}
+            editing={!!edit}
+            onCommit={(v) => edit?.onText(section.id, "eyebrow", v)}
+            markdown="none"
+            placeholder="Eyebrow"
+            style={{ fontSize: "0.65rem", letterSpacing: "0.22em", textTransform: "uppercase", color: "var(--olive)", fontWeight: 400, whiteSpace: "nowrap" }}
+          />
           <div style={{ flex: 1, height: "0.5px", background: "var(--border)" }} />
         </div>
       )}
-      {(heading || intro) && (
+      {(heading || intro || edit) && (
         <div style={{ maxWidth: "44rem", marginBottom: "4rem" }}>
-          {heading && (
-            <h2
+          {(edit || heading) && (
+            <EditableText
+              as="h2"
+              value={heading ?? ""}
+              editing={!!edit}
+              onCommit={(v) => edit?.onText(section.id, "heading", v)}
+              markdown="inline"
+              placeholder="Heading"
               style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "clamp(2.2rem, 4vw, 3.2rem)", fontWeight: 300, lineHeight: 1.2, letterSpacing: "-0.01em" }}
-              dangerouslySetInnerHTML={{ __html: renderInlineMarkdown(heading) }}
             />
           )}
-          {intro && (
-            <p style={{ marginTop: "1.5rem", fontSize: "1.05rem", fontWeight: 300, lineHeight: 1.85, color: "var(--charcoal-light)" }}>
-              {intro}
-            </p>
+          {(edit || intro) && (
+            <EditableText
+              as="p"
+              value={intro ?? ""}
+              editing={!!edit}
+              onCommit={(v) => edit?.onText(section.id, "intro", v)}
+              markdown="none"
+              placeholder="Intro"
+              style={{ marginTop: "1.5rem", fontSize: "1.05rem", fontWeight: 300, lineHeight: 1.85, color: "var(--charcoal-light)" }}
+            />
           )}
         </div>
       )}
@@ -304,7 +418,7 @@ function formatUsd(amount: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(amount);
 }
 
-function PackageCardsBlock({ section }: { section: Extract<Section, { type: "PACKAGE_CARDS" }> }) {
+function PackageCardsBlock({ section, edit }: { section: Extract<Section, { type: "PACKAGE_CARDS" }>; edit?: EditContext }) {
   const { eyebrow, heading, intro, packages } = section;
   return (
     <section
@@ -312,26 +426,43 @@ function PackageCardsBlock({ section }: { section: Extract<Section, { type: "PAC
       data-section-type="PACKAGE_CARDS"
       style={{ padding: "6rem 4rem", background: "rgba(232,235,216,0.25)", borderTop: "0.5px solid var(--border)", borderBottom: "0.5px solid var(--border)" }}
     >
-      {eyebrow && (
+      {(edit || eyebrow) && (
         <div style={{ display: "flex", alignItems: "baseline", gap: "1.5rem", marginBottom: "3rem" }}>
-          <span style={{ fontSize: "0.65rem", letterSpacing: "0.22em", textTransform: "uppercase", color: "var(--olive)", fontWeight: 400, whiteSpace: "nowrap" }}>
-            {eyebrow}
-          </span>
+          <EditableText
+            as="span"
+            value={eyebrow ?? ""}
+            editing={!!edit}
+            onCommit={(v) => edit?.onText(section.id, "eyebrow", v)}
+            markdown="none"
+            placeholder="Eyebrow"
+            style={{ fontSize: "0.65rem", letterSpacing: "0.22em", textTransform: "uppercase", color: "var(--olive)", fontWeight: 400, whiteSpace: "nowrap" }}
+          />
           <div style={{ flex: 1, height: "0.5px", background: "var(--border)" }} />
         </div>
       )}
-      {(heading || intro) && (
+      {(heading || intro || edit) && (
         <div style={{ maxWidth: "44rem", marginBottom: "4rem" }}>
-          {heading && (
-            <h2
+          {(edit || heading) && (
+            <EditableText
+              as="h2"
+              value={heading ?? ""}
+              editing={!!edit}
+              onCommit={(v) => edit?.onText(section.id, "heading", v)}
+              markdown="inline"
+              placeholder="Heading"
               style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "clamp(2.2rem, 4vw, 3.2rem)", fontWeight: 300, lineHeight: 1.2, letterSpacing: "-0.01em" }}
-              dangerouslySetInnerHTML={{ __html: renderInlineMarkdown(heading) }}
             />
           )}
-          {intro && (
-            <p style={{ marginTop: "1.5rem", fontSize: "1.05rem", fontWeight: 300, lineHeight: 1.85, color: "var(--charcoal-light)" }}>
-              {intro}
-            </p>
+          {(edit || intro) && (
+            <EditableText
+              as="p"
+              value={intro ?? ""}
+              editing={!!edit}
+              onCommit={(v) => edit?.onText(section.id, "intro", v)}
+              markdown="none"
+              placeholder="Intro"
+              style={{ marginTop: "1.5rem", fontSize: "1.05rem", fontWeight: 300, lineHeight: 1.85, color: "var(--charcoal-light)" }}
+            />
           )}
         </div>
       )}
@@ -370,7 +501,7 @@ function PackageCardsBlock({ section }: { section: Extract<Section, { type: "PAC
   );
 }
 
-function TestimonialBlock({ section }: { section: Extract<Section, { type: "TESTIMONIAL" }> }) {
+function TestimonialBlock({ section, edit }: { section: Extract<Section, { type: "TESTIMONIAL" }>; edit?: EditContext }) {
   const isDark = (section.variant ?? "DARK") === "DARK";
   return (
     <section
@@ -378,15 +509,28 @@ function TestimonialBlock({ section }: { section: Extract<Section, { type: "TEST
       data-section-type="TESTIMONIAL"
       style={{ padding: "8rem 4rem", background: isDark ? "var(--charcoal)" : "var(--white)", color: isDark ? "var(--white)" : "var(--charcoal)", textAlign: "center" }}
     >
-      {section.eyebrow && (
-        <p style={{ fontFamily: "'Jost', sans-serif", fontSize: "0.65rem", letterSpacing: "0.22em", textTransform: "uppercase", color: isDark ? "var(--olive-light)" : "var(--olive)", marginBottom: "2rem" }}>
-          {section.eyebrow}
-        </p>
+      {(edit || section.eyebrow) && (
+        <EditableText
+          as="p"
+          value={section.eyebrow ?? ""}
+          editing={!!edit}
+          onCommit={(v) => edit?.onText(section.id, "eyebrow", v)}
+          markdown="none"
+          placeholder="Eyebrow"
+          style={{ fontFamily: "'Jost', sans-serif", fontSize: "0.65rem", letterSpacing: "0.22em", textTransform: "uppercase", color: isDark ? "var(--olive-light)" : "var(--olive)", marginBottom: "2rem" }}
+        />
       )}
       <blockquote style={{ maxWidth: "56rem", margin: "0 auto", fontFamily: "'Cormorant Garamond', serif", fontSize: "clamp(1.8rem, 3.6vw, 2.8rem)", fontWeight: 300, fontStyle: "italic", lineHeight: 1.35, letterSpacing: "-0.005em" }}>
-        &ldquo;{section.quote}&rdquo;
+        &ldquo;<EditableText
+          as="span"
+          value={section.quote}
+          editing={!!edit}
+          onCommit={(v) => edit?.onText(section.id, "quote", v)}
+          markdown="none"
+          placeholder="Quote text"
+        />&rdquo;
       </blockquote>
-      {(section.author || section.authorRole) && (
+      {(section.author || section.authorRole || edit) && (
         <p style={{ fontFamily: "'Jost', sans-serif", marginTop: "2.5rem", fontSize: "0.7rem", letterSpacing: "0.22em", textTransform: "uppercase", color: isDark ? "var(--olive-light)" : "var(--olive)", fontWeight: 400 }}>
           {section.author}{section.author && section.authorRole ? " — " : ""}{section.authorRole}
         </p>
@@ -395,7 +539,7 @@ function TestimonialBlock({ section }: { section: Extract<Section, { type: "TEST
   );
 }
 
-function SlideshowBlock({ section }: { section: Extract<Section, { type: "SLIDESHOW" }> }) {
+function SlideshowBlock({ section, edit }: { section: Extract<Section, { type: "SLIDESHOW" }>; edit?: EditContext }) {
   // SSR-safe rendering: stack the slides absolutely; a small client-side
   // script (injected at render time) cycles them. The first slide is the
   // visible one on initial paint, so even without JS the page is legible.
@@ -404,7 +548,14 @@ function SlideshowBlock({ section }: { section: Extract<Section, { type: "SLIDES
   if (slides.length === 0) {
     return (
       <section data-section-id={section.id} data-section-type="SLIDESHOW" style={{ padding: "6rem 4rem", textAlign: "center", color: "var(--charcoal-muted)", fontStyle: "italic" }}>
-        Slideshow has no photos yet.
+        {edit ? (
+          <AddImageTile
+            onClick={() => edit.onImage(section.id, { field: "slides" })}
+            style={{ minHeight: "20rem" }}
+          />
+        ) : (
+          "Slideshow has no photos yet."
+        )}
       </section>
     );
   }
@@ -414,17 +565,29 @@ function SlideshowBlock({ section }: { section: Extract<Section, { type: "SLIDES
       data-section-type="SLIDESHOW"
       style={{ padding: "0", position: "relative", background: "var(--charcoal)" }}
     >
-      {(eyebrow || heading) && (
+      {(eyebrow || heading || edit) && (
         <div style={{ position: "absolute", top: "2rem", left: "2rem", zIndex: 2, color: "var(--white)" }}>
-          {eyebrow && (
-            <p style={{ fontSize: "0.65rem", letterSpacing: "0.22em", textTransform: "uppercase", color: "var(--olive-light)", marginBottom: "0.5rem" }}>
-              {eyebrow}
-            </p>
+          {(edit || eyebrow) && (
+            <EditableText
+              as="p"
+              value={eyebrow ?? ""}
+              editing={!!edit}
+              onCommit={(v) => edit?.onText(section.id, "eyebrow", v)}
+              markdown="none"
+              placeholder="Eyebrow"
+              style={{ fontSize: "0.65rem", letterSpacing: "0.22em", textTransform: "uppercase", color: "var(--olive-light)", marginBottom: "0.5rem" }}
+            />
           )}
-          {heading && (
-            <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "clamp(1.6rem, 3vw, 2.4rem)", fontWeight: 300 }}>
-              {heading}
-            </h2>
+          {(edit || heading) && (
+            <EditableText
+              as="h2"
+              value={heading ?? ""}
+              editing={!!edit}
+              onCommit={(v) => edit?.onText(section.id, "heading", v)}
+              markdown="none"
+              placeholder="Heading"
+              style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "clamp(1.6rem, 3vw, 2.4rem)", fontWeight: 300 }}
+            />
           )}
         </div>
       )}
@@ -450,10 +613,23 @@ function SlideshowBlock({ section }: { section: Extract<Section, { type: "SLIDES
               objectPosition: `${(p.focalX ?? 0.5) * 100}% ${(p.focalY ?? 0.5) * 100}%`,
               opacity: i === 0 ? 1 : 0,
               transition: "opacity 1.5s ease",
+              cursor: edit ? "pointer" : undefined,
             }}
             data-slide-index={i}
+            {...(edit ? {
+              onClick: (e: React.MouseEvent) => {
+                e.stopPropagation();
+                edit.onImage(section.id, { field: "slides", index: i });
+              },
+            } : {})}
           />
         ))}
+        {edit && (
+          <AddImageTile
+            onClick={() => edit.onImage(section.id, { field: "slides" })}
+            style={{ minHeight: "8rem", border: "1px dashed rgba(250,249,246,0.3)", color: "rgba(250,249,246,0.6)" }}
+          />
+        )}
       </div>
       {/* Cycle script — pure DOM, no React state. Runs once per mount. */}
       <script
@@ -507,55 +683,73 @@ function StatsBlock({ section }: { section: Extract<Section, { type: "STATS" }> 
   );
 }
 
-function BookingFormBlock({ section }: { section: Extract<Section, { type: "BOOKING_FORM" }> }) {
+function BookingFormBlock({ section, edit }: { section: Extract<Section, { type: "BOOKING_FORM" }>; edit?: EditContext }) {
   return (
     <section
       data-section-id={section.id}
       data-section-type="BOOKING_FORM"
       style={{ padding: "5rem 4rem", maxWidth: "52rem", margin: "0 auto" }}
     >
-      {section.eyebrow && (
-        <p style={{ fontSize: "0.65rem", letterSpacing: "0.22em", textTransform: "uppercase", color: "var(--olive)", marginBottom: "1rem" }}>
-          {section.eyebrow}
-        </p>
+      {(edit || section.eyebrow) && (
+        <EditableText
+          as="p"
+          value={section.eyebrow ?? ""}
+          editing={!!edit}
+          onCommit={(v) => edit?.onText(section.id, "eyebrow", v)}
+          markdown="none"
+          placeholder="Eyebrow"
+          style={{ fontSize: "0.65rem", letterSpacing: "0.22em", textTransform: "uppercase", color: "var(--olive)", marginBottom: "1rem" }}
+        />
       )}
-      {section.heading && (
-        <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontWeight: 300, fontSize: "clamp(2rem,4vw,3rem)", margin: "0.75rem 0" }}>
-          {section.heading}
-        </h2>
+      {(edit || section.heading) && (
+        <EditableText
+          as="h2"
+          value={section.heading ?? ""}
+          editing={!!edit}
+          onCommit={(v) => edit?.onText(section.id, "heading", v)}
+          markdown="none"
+          placeholder="Heading"
+          style={{ fontFamily: "'Cormorant Garamond', serif", fontWeight: 300, fontSize: "clamp(2rem,4vw,3rem)", margin: "0.75rem 0" }}
+        />
       )}
-      {section.intro && (
-        <p style={{ fontWeight: 300, lineHeight: 1.85, color: "var(--charcoal-light)", marginBottom: "2.5rem" }}>
-          {section.intro}
-        </p>
+      {(edit || section.intro) && (
+        <EditableText
+          as="p"
+          value={section.intro ?? ""}
+          editing={!!edit}
+          onCommit={(v) => edit?.onText(section.id, "intro", v)}
+          markdown="none"
+          placeholder="Intro"
+          style={{ fontWeight: 300, lineHeight: 1.85, color: "var(--charcoal-light)", marginBottom: "2.5rem" }}
+        />
       )}
       <Suspense fallback={null}><BookingFormSteps /></Suspense>
     </section>
   );
 }
 
-export function renderSection(section: Section): React.ReactNode {
+export function renderSection(section: Section, edit?: EditContext): React.ReactNode {
   switch (section.type) {
     case "HERO":
-      return <HeroBlock key={section.id} section={section} />;
+      return <HeroBlock key={section.id} section={section} edit={edit} />;
     case "PHOTO_GRID":
-      return <PhotoGridBlock key={section.id} section={section} />;
+      return <PhotoGridBlock key={section.id} section={section} edit={edit} />;
     case "RICH_TEXT":
-      return <RichTextBlock key={section.id} section={section} />;
+      return <RichTextBlock key={section.id} section={section} edit={edit} />;
     case "CTA_BANNER":
-      return <CtaBannerBlock key={section.id} section={section} />;
+      return <CtaBannerBlock key={section.id} section={section} edit={edit} />;
     case "PROCESS_STEPS":
-      return <ProcessStepsBlock key={section.id} section={section} />;
+      return <ProcessStepsBlock key={section.id} section={section} edit={edit} />;
     case "PACKAGE_CARDS":
-      return <PackageCardsBlock key={section.id} section={section} />;
+      return <PackageCardsBlock key={section.id} section={section} edit={edit} />;
     case "TESTIMONIAL":
-      return <TestimonialBlock key={section.id} section={section} />;
+      return <TestimonialBlock key={section.id} section={section} edit={edit} />;
     case "SLIDESHOW":
-      return <SlideshowBlock key={section.id} section={section} />;
+      return <SlideshowBlock key={section.id} section={section} edit={edit} />;
     case "STATS":
       return <StatsBlock key={section.id} section={section} />;
     case "BOOKING_FORM":
-      return <BookingFormBlock key={section.id} section={section} />;
+      return <BookingFormBlock key={section.id} section={section} edit={edit} />;
     default: {
       const exhaustive: never = section;
       return exhaustive;
@@ -563,6 +757,6 @@ export function renderSection(section: Section): React.ReactNode {
   }
 }
 
-export function renderSections(sections: Section[]): React.ReactNode {
-  return sections.map((s) => renderSection(s));
+export function renderSections(sections: Section[], edit?: EditContext): React.ReactNode {
+  return sections.map((s) => renderSection(s, edit));
 }
