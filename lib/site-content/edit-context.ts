@@ -5,7 +5,7 @@
 export interface ImageSlot {
   /** field on the section, e.g. "slides" | "photos" */
   field: string;
-  /** index into an array field, if applicable */
+  /** index into the array field; omit/undefined to APPEND a new image */
   index?: number;
 }
 

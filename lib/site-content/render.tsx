@@ -67,6 +67,15 @@ function HeroBlock({ section, edit }: { section: Extract<Section, { type: "HERO"
           />
         </div>
       ) : null}
+      {edit && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); edit.onImage(section.id, { field: "slides", index: 0 }); }}
+          style={{ position: "absolute", top: "1rem", right: "1rem", zIndex: 3, padding: "0.3rem 0.7rem", fontSize: "0.65rem", letterSpacing: "0.14em", textTransform: "uppercase", background: "var(--white)", color: "var(--charcoal)", border: "0.5px solid var(--olive)", cursor: "pointer" }}
+        >
+          &#x21C4; Replace photo
+        </button>
+      )}
       <div style={{ position: "relative", textAlign: "center", padding: "0 2rem", color: "var(--white)", maxWidth: "60rem" }}>
         {(edit || eyebrow) && (
           <EditableText
@@ -383,6 +392,7 @@ function ProcessStepsBlock({ section, edit }: { section: Extract<Section, { type
           )}
         </div>
       )}
+      {/* Sub-array items (steps[], packages[]) are edited via the drawer, not inline (1C scope). */}
       <ol style={{ listStyle: "none", margin: 0, padding: 0, maxWidth: "52rem" }}>
         {steps.map((s, i) => (
           <li
@@ -466,6 +476,7 @@ function PackageCardsBlock({ section, edit }: { section: Extract<Section, { type
           )}
         </div>
       )}
+      {/* Sub-array items (steps[], packages[]) are edited via the drawer, not inline (1C scope). */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "1.5rem" }}>
         {packages.map((p) => (
           <article key={p.id} style={{ display: "flex", flexDirection: "column", padding: "2.75rem 2.25rem", border: "0.5px solid var(--border-strong)", background: "var(--white)" }}>
@@ -521,14 +532,9 @@ function TestimonialBlock({ section, edit }: { section: Extract<Section, { type:
         />
       )}
       <blockquote style={{ maxWidth: "56rem", margin: "0 auto", fontFamily: "'Cormorant Garamond', serif", fontSize: "clamp(1.8rem, 3.6vw, 2.8rem)", fontWeight: 300, fontStyle: "italic", lineHeight: 1.35, letterSpacing: "-0.005em" }}>
-        &ldquo;<EditableText
-          as="span"
-          value={section.quote}
-          editing={!!edit}
-          onCommit={(v) => edit?.onText(section.id, "quote", v)}
-          markdown="none"
-          placeholder="Quote text"
-        />&rdquo;
+        &ldquo;{edit ? (
+          <EditableText as="span" editing value={section.quote} markdown="none" placeholder="Testimonial quote" onCommit={(v) => edit.onText(section.id, "quote", v)} />
+        ) : section.quote}&rdquo;
       </blockquote>
       {(section.author || section.authorRole || edit) && (
         <p style={{ fontFamily: "'Jost', sans-serif", marginTop: "2.5rem", fontSize: "0.7rem", letterSpacing: "0.22em", textTransform: "uppercase", color: isDark ? "var(--olive-light)" : "var(--olive)", fontWeight: 400 }}>
@@ -596,6 +602,15 @@ function SlideshowBlock({ section, edit }: { section: Extract<Section, { type: "
         data-interval-ms={interval}
         style={{ position: "relative", width: "100%", height: "70vh", overflow: "hidden" }}
       >
+        {edit && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); edit.onImage(section.id, { field: "slides", index: 0 }); }}
+            style={{ position: "absolute", top: "1rem", right: "1rem", zIndex: 3, padding: "0.3rem 0.7rem", fontSize: "0.65rem", letterSpacing: "0.14em", textTransform: "uppercase", background: "var(--white)", color: "var(--charcoal)", border: "0.5px solid var(--olive)", cursor: "pointer" }}
+          >
+            &#x21C4; Replace photo
+          </button>
+        )}
         {slides.map((p, i) => (
           // eslint-disable-next-line @next/next/no-img-element
           <img

@@ -300,6 +300,8 @@ function EditModeCanvas({
           setPicker({ sectionId: id, slot: "GRID_PHOTO", index: slot.index });
         } else if (section.type === "SLIDESHOW") {
           setPicker({ sectionId: id, slot: "SLIDESHOW_SLIDE", index: slot.index });
+        } else {
+          console.warn(`[site-editor] onImage: no image slot mapping for section type ${section.type}`);
         }
       },
     }),
