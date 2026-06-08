@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useLayoutEffect } from "react";
 import {
   renderInlineMarkdown,
   renderConstrainedMarkdown,
@@ -30,11 +30,15 @@ export function EditableText({
 }: EditableTextProps) {
   const ref = useRef<HTMLElement>(null);
 
-  // Keep the DOM text in sync with `value` when editing externally (e.g. undo)
-  // but never overwrite while the user is actively typing in this element.
-  useEffect(() => {
+  // Seed / sync DOM text content via ref rather than React children.
+  // useLayoutEffect fires before paint so the text is visible immediately on
+  // entering edit mode (no empty-flash). On SSR this component never renders
+  // the edit branch, so the warning is not a practical concern; guard anyway.
+  useLayoutEffect(() => {
+    if (typeof document === "undefined") return;
     const el = ref.current;
     if (!editing || !el) return;
+    // Don't fight the caret while the user is actively typing.
     if (document.activeElement === el) return;
     if (el.textContent !== value) {
       el.textContent = value;
@@ -81,21 +85,20 @@ export function EditableText({
     }
   }
 
-  // Pass value as the third argument (children) to satisfy react/no-children-prop.
-  // The useEffect above keeps textContent in sync for external updates (e.g. undo)
-  // without fighting the caret while the user is actively typing.
-  return React.createElement(
-    as,
-    {
-      ref,
-      contentEditable: true,
-      suppressContentEditableWarning: true,
-      suppressHydrationWarning: true,
-      "data-placeholder": placeholder,
-      style: editStyle,
-      onBlur: handleBlur,
-      onKeyDown: handleKeyDown,
-    },
-    value,
-  );
+  // Render with NO children — React must not manage the DOM text node of a
+  // contentEditable element (causes caret resets / overwrite glitches).
+  // Initial text seeding and external-update sync are both handled by the
+  // useLayoutEffect above, which writes directly to el.textContent.
+  return React.createElement(as, {
+    ref,
+    role: "textbox",
+    "aria-label": placeholder ?? "Editable text",
+    contentEditable: true,
+    suppressContentEditableWarning: true,
+    suppressHydrationWarning: true,
+    "data-placeholder": placeholder,
+    style: editStyle,
+    onBlur: handleBlur,
+    onKeyDown: handleKeyDown,
+  });
 }
