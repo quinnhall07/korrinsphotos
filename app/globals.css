@@ -262,3 +262,10 @@ textarea.form-input {
     grid-template-columns: 1fr !important;
   }
 }
+
+/* ─── Site Editor — editable field placeholder ────────────────────────────── */
+[contenteditable][data-placeholder]:empty:before {
+  content: attr(data-placeholder);
+  color: var(--charcoal-muted);
+  pointer-events: none;
+}
