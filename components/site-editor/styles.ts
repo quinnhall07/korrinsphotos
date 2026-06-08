@@ -106,3 +106,16 @@ export const SECTION_LABEL: Record<string, string> = {
   STATS: "Stats",
   BOOKING_FORM: "Booking form",
 };
+
+export const SECTION_DESCRIPTION: Record<string, string> = {
+  HERO: "Full-bleed banner with a headline and background image.",
+  PHOTO_GRID: "A tidy grid of photos with an optional heading.",
+  SLIDESHOW: "Auto-cycling full-width photo slideshow.",
+  STATS: "A row of big numbers (sessions, years, etc.).",
+  RICH_TEXT: "A block of formatted prose.",
+  CTA_BANNER: "A call-to-action band with buttons.",
+  PROCESS_STEPS: "Numbered steps describing your process.",
+  PACKAGE_CARDS: "Pricing and package cards with features.",
+  TESTIMONIAL: "A featured client quote.",
+  BOOKING_FORM: "Embeds the booking inquiry form.",
+};

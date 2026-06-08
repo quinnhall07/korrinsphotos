@@ -56,6 +56,7 @@ import { PublishDialog } from "./PublishDialog";
 import { SectionWrapper } from "./SectionWrapper";
 import { SectionToolbar } from "./SectionToolbar";
 import { AddSectionGap } from "./AddSectionGap";
+import { AddSectionModal } from "./AddSectionModal";
 import { SectionDrawer, applyPickedPhoto, type PickerSlot } from "./SectionDrawer";
 import { RevisionsModal } from "./RevisionsModal";
 import { FloatingEditPill } from "./FloatingEditPill";
@@ -260,6 +261,7 @@ function EditModeCanvas({
   const [picker, setPicker] = useState<PickerSlot | null>(null);
   const [showRevisions, setShowRevisions] = useState(false);
   const [device, setDevice] = useState<DeviceMode>("desktop");
+  const [addAt, setAddAt] = useState<number | null>(null);
 
   // In-app dialog state (replaces native confirm/prompt)
   const [confirmState, setConfirmState] = useState<{
@@ -293,7 +295,7 @@ function EditModeCanvas({
   // Keyboard undo / redo — suppressed while any dialog is open.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (confirmState || publishOpen) return;
+      if (confirmState || publishOpen || addAt !== null) return;
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) return;
       if (e.key.toLowerCase() === "z" && !e.shiftKey) {
@@ -306,7 +308,7 @@ function EditModeCanvas({
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [undo, redo, confirmState, publishOpen]);
+  }, [undo, redo, confirmState, publishOpen, addAt]);
 
   const selected = useMemo(
     () => sections.find((s) => s.id === selectedId) ?? null,
@@ -481,7 +483,7 @@ function EditModeCanvas({
             boxShadow: device === "desktop" ? "none" : "0 0 0 1px var(--border)",
           }}
         >
-          <AddSectionGap index={0} allowedSections={allowedSections} onInsert={insertSection} />
+          <AddSectionGap index={0} onRequestAdd={setAddAt} />
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
@@ -503,7 +505,7 @@ function EditModeCanvas({
                   >
                     {renderSection(s, editCtx)}
                   </SortableSection>
-                  <AddSectionGap index={i + 1} allowedSections={allowedSections} onInsert={insertSection} />
+                  <AddSectionGap index={i + 1} onRequestAdd={setAddAt} />
                 </div>
               ))}
             </SortableContext>
@@ -549,6 +551,16 @@ function EditModeCanvas({
         open={showRevisions}
         onClose={() => setShowRevisions(false)}
         onRestored={(restoredSections) => { suppressNext(); reset(restoredSections); }}
+      />
+
+      <AddSectionModal
+        open={addAt !== null}
+        allowedSections={allowedSections}
+        onClose={() => setAddAt(null)}
+        onPick={(type) => {
+          insertSection(type, addAt!);
+          setAddAt(null);
+        }}
       />
 
       <ConfirmDialog
