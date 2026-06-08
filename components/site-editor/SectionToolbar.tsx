@@ -10,13 +10,14 @@
 // and contentEditable text editing are never swallowed.
 
 import React from "react";
+import type { DraggableAttributes } from "@dnd-kit/core";
 import { TOP_BAR_HEIGHT } from "./EditorTopBar";
 
 interface Props {
   onDuplicate: () => void;
   onOpenSettings: () => void;
   onDelete: () => void;
-  dragHandleProps?: React.HTMLAttributes<HTMLButtonElement>;
+  dragHandleProps?: DraggableAttributes & Record<string, unknown>;
   dragHandleRef?: (el: HTMLButtonElement | null) => void;
 }
 

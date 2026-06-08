@@ -20,7 +20,7 @@
 // IS the source of truth, so every keystroke in the drawer updates the
 // rendered page live.
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { toast } from "@/components/ui/Toaster";
 import { PhotoPicker } from "@/components/admin/PhotoPicker";
@@ -218,7 +218,7 @@ function SortableSection({
             onDelete={onDelete}
             // Attach dnd-kit activator ONLY to the drag-handle button
             dragHandleRef={setActivatorNodeRef}
-            dragHandleProps={{ ...attributes, ...listeners } as React.HTMLAttributes<HTMLButtonElement>}
+            dragHandleProps={{ ...attributes, ...listeners }}
           />
         }
       >
@@ -315,20 +315,25 @@ function EditModeCanvas({
 
   // ─── dnd-kit sensors + drag handler ──────────────────────────────────
   // activationConstraint.distance = 6 px so a plain click never starts a drag.
+  // sectionsRef keeps handleDragEnd from closing over a stale sections array.
+
+  const sectionsRef = useRef(sections);
+  useEffect(() => { sectionsRef.current = sections; });
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
   );
 
-  function handleDragEnd(e: DragEndEvent) {
+  const handleDragEnd = useCallback((e: DragEndEvent) => {
     const { active, over } = e;
     if (!over || active.id === over.id) return;
-    const from = sections.findIndex((s) => s.id === active.id);
-    const to = sections.findIndex((s) => s.id === over.id);
+    const secs = sectionsRef.current;
+    const from = secs.findIndex((s) => s.id === active.id);
+    const to = secs.findIndex((s) => s.id === over.id);
     if (from >= 0 && to >= 0) {
-      replace(arrayMove(sections, from, to), "move");
+      replace(arrayMove(secs, from, to), "move");
     }
-  }
+  }, [replace]);
 
   // ─── Mutation helpers (all go through the reducer) ────────────────────
 
@@ -480,6 +485,7 @@ function EditModeCanvas({
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
+            onDragStart={() => setSelectedId(null)}
             onDragEnd={handleDragEnd}
           >
             <SortableContext
