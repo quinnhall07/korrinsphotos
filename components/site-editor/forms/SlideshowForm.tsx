@@ -6,6 +6,7 @@ import { buildCdnUrl } from "@/lib/cloudflare";
 import type { SlideshowSection } from "@/lib/site-content/types";
 import { editorStyles } from "../styles";
 import { Field, TextInput } from "./primitives";
+import { FocalPointPicker } from "../FocalPointPicker";
 
 export function SlideshowForm({
   section,
@@ -48,6 +49,19 @@ export function SlideshowForm({
                 >
                   Remove
                 </button>
+              </div>
+              <div style={{ marginTop: "0.4rem" }}>
+                <FocalPointPicker
+                  cloudflareImageId={slide.cloudflareImageId}
+                  focalX={slide.focalX}
+                  focalY={slide.focalY}
+                  onChange={(focalX, focalY) => {
+                    const slides = section.slides.map((s, j) =>
+                      j === i ? { ...s, focalX, focalY } : s
+                    );
+                    onChange({ slides });
+                  }}
+                />
               </div>
             </div>
           ))}

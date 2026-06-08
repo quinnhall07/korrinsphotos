@@ -6,6 +6,7 @@ import { buildCdnUrl } from "@/lib/cloudflare";
 import type { PhotoGridSection } from "@/lib/site-content/types";
 import { editorStyles } from "../styles";
 import { Field, TextInput, TextArea } from "./primitives";
+import { FocalPointPicker } from "../FocalPointPicker";
 
 export function PhotoGridForm({
   section,
@@ -55,6 +56,19 @@ export function PhotoGridForm({
                 >
                   Remove
                 </button>
+              </div>
+              <div style={{ marginTop: "0.4rem" }}>
+                <FocalPointPicker
+                  cloudflareImageId={p.cloudflareImageId}
+                  focalX={p.focalX}
+                  focalY={p.focalY}
+                  onChange={(focalX, focalY) => {
+                    const photos = section.photos.map((ph, j) =>
+                      j === i ? { ...ph, focalX, focalY } : ph
+                    );
+                    onChange({ photos });
+                  }}
+                />
               </div>
             </div>
           ))}

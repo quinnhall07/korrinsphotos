@@ -7,6 +7,7 @@ import { buildCdnUrl } from "@/lib/cloudflare";
 import type { HeroSection } from "@/lib/site-content/types";
 import { editorStyles } from "../styles";
 import { Field, TextInput, TextArea } from "./primitives";
+import { FocalPointPicker } from "../FocalPointPicker";
 
 export function HeroForm({
   section,
@@ -65,6 +66,19 @@ export function HeroForm({
                 >
                   Remove
                 </button>
+              </div>
+              <div style={{ marginTop: "0.4rem" }}>
+                <FocalPointPicker
+                  cloudflareImageId={slide.photoRef.cloudflareImageId}
+                  focalX={slide.photoRef.focalX}
+                  focalY={slide.photoRef.focalY}
+                  onChange={(focalX, focalY) => {
+                    const slides = section.slides.map((s, j) =>
+                      j === i ? { ...s, photoRef: { ...s.photoRef, focalX, focalY } } : s
+                    );
+                    onChange({ slides });
+                  }}
+                />
               </div>
             </div>
           ))}

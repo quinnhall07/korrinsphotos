@@ -149,7 +149,7 @@ const tile: React.CSSProperties = {
   flexDirection: "column",
   alignItems: "flex-start",
   gap: "0.35rem",
-  padding: "1rem 1rem 1rem",
+  padding: "1rem",
   background: "var(--white)",
   border: "0.5px solid var(--border)",
   cursor: "pointer",

@@ -2,6 +2,8 @@
 // Shared inline-style constants for the on-page editor. Re-used by forms,
 // drawer, edit bar and section toolbar so the editor chrome stays consistent.
 
+import type { SectionType } from "@/lib/site-content/types";
+
 export const editorStyles = {
   field: {
     display: "block" as const,
@@ -94,7 +96,7 @@ export const editorStyles = {
   } as React.CSSProperties,
 } as const;
 
-export const SECTION_LABEL: Record<string, string> = {
+export const SECTION_LABEL: Record<SectionType, string> = {
   HERO: "Hero",
   PHOTO_GRID: "Photo grid",
   RICH_TEXT: "Rich text",
@@ -107,7 +109,7 @@ export const SECTION_LABEL: Record<string, string> = {
   BOOKING_FORM: "Booking form",
 };
 
-export const SECTION_DESCRIPTION: Record<string, string> = {
+export const SECTION_DESCRIPTION: Record<SectionType, string> = {
   HERO: "Full-bleed banner with a headline and background image.",
   PHOTO_GRID: "A tidy grid of photos with an optional heading.",
   SLIDESHOW: "Auto-cycling full-width photo slideshow.",
