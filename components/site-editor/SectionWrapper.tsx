@@ -1,35 +1,29 @@
 "use client";
 
 // components/site-editor/SectionWrapper.tsx
-// Hover outline + click-to-select + per-section floating toolbar (move up /
-// move down / duplicate / delete). Wraps every rendered section in edit mode.
+// Hover outline + click-to-select. Wraps every rendered section in edit mode.
+//
+// The per-section action toolbar (drag / duplicate / edit / delete) is now
+// provided externally via the `toolbar` prop and rendered by the canvas /
+// SortableSection when the section is selected. This keeps the wrapper slim
+// and decoupled from the dnd-kit wiring.
 
 import { useState } from "react";
-import { TOP_BAR_HEIGHT } from "./EditorTopBar";
 
 interface Props {
   sectionId: string;
   selected: boolean;
-  isFirst: boolean;
-  isLast: boolean;
   onSelect: () => void;
-  onMoveUp: () => void;
-  onMoveDown: () => void;
-  onDuplicate: () => void;
-  onDelete: () => void;
+  /** Optional toolbar node rendered when the section is selected. */
+  toolbar?: React.ReactNode;
   children: React.ReactNode;
 }
 
 export function SectionWrapper({
   sectionId,
   selected,
-  isFirst,
-  isLast,
   onSelect,
-  onMoveUp,
-  onMoveDown,
-  onDuplicate,
-  onDelete,
+  toolbar,
   children,
 }: Props) {
   const [hover, setHover] = useState(false);
@@ -67,66 +61,7 @@ export function SectionWrapper({
       }}
     >
       {children}
-      {selected && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            position: "sticky",
-            top: `calc(${TOP_BAR_HEIGHT}px + 0.5rem)`,
-            marginTop: "-2.5rem",
-            float: "right",
-            zIndex: 8400,
-            display: "flex",
-            gap: "0.25rem",
-            padding: "0.25rem",
-            background: "var(--white)",
-            border: "0.5px solid var(--olive)",
-            boxShadow: "0 4px 14px rgba(42,42,40,0.12)",
-            marginRight: "0.5rem",
-          }}
-        >
-          <ToolbarBtn label="Move up" onClick={onMoveUp} disabled={isFirst}>↑</ToolbarBtn>
-          <ToolbarBtn label="Move down" onClick={onMoveDown} disabled={isLast}>↓</ToolbarBtn>
-          <ToolbarBtn label="Duplicate" onClick={onDuplicate}>⎘</ToolbarBtn>
-          <ToolbarBtn label="Delete" onClick={onDelete} danger>×</ToolbarBtn>
-        </div>
-      )}
+      {selected && toolbar}
     </div>
-  );
-}
-
-function ToolbarBtn({
-  label,
-  onClick,
-  disabled,
-  danger,
-  children,
-}: {
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-  danger?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        width: 32,
-        height: 32,
-        background: "transparent",
-        border: "0.5px solid var(--border)",
-        cursor: disabled ? "not-allowed" : "pointer",
-        fontSize: "0.95rem",
-        color: danger ? "#a83232" : "var(--charcoal-light)",
-        opacity: disabled ? 0.35 : 1,
-      }}
-    >
-      {children}
-    </button>
   );
 }

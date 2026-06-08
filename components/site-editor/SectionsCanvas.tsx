@@ -30,6 +30,23 @@ import type { EditContext } from "@/lib/site-content/edit-context";
 import { getPageDefinition, CUSTOM_PAGE_ALLOWED_SECTIONS } from "@/lib/site-content/page-registry";
 import { saveDraftAction, discardDraftAction, publishDraftAction } from "@/app/admin/site/actions";
 
+// dnd-kit
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+
 import { useEditorHistory } from "./useEditorHistory";
 import { useAutosave } from "./useAutosave";
 import { EditorTopBar, TOP_BAR_HEIGHT } from "./EditorTopBar";
@@ -37,6 +54,7 @@ import type { DeviceMode } from "./EditorTopBar";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { PublishDialog } from "./PublishDialog";
 import { SectionWrapper } from "./SectionWrapper";
+import { SectionToolbar } from "./SectionToolbar";
 import { AddSectionGap } from "./AddSectionGap";
 import { SectionDrawer, applyPickedPhoto, type PickerSlot } from "./SectionDrawer";
 import { RevisionsModal } from "./RevisionsModal";
@@ -145,6 +163,73 @@ export function SectionsCanvas({
   );
 }
 
+// ─── SortableSection ──────────────────────────────────────────────────────────
+// One draggable row. useSortable provides:
+//   • setNodeRef  → applied to the wrapper div so dnd-kit tracks the element
+//   • setActivatorNodeRef + listeners + attributes → forwarded ONLY to the
+//     drag-handle button inside SectionToolbar so plain clicks / text edits
+//     are never swallowed by the drag recogniser
+//   • transform / transition / isDragging → visual feedback during drag
+
+interface SortableSectionProps {
+  section: Section;
+  selected: boolean;
+  onSelect: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+  children: React.ReactNode;
+}
+
+function SortableSection({
+  section,
+  selected,
+  onSelect,
+  onDuplicate,
+  onDelete,
+  children,
+}: SortableSectionProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: section.id });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.6 : 1,
+      }}
+    >
+      <SectionWrapper
+        sectionId={section.id}
+        selected={selected}
+        onSelect={onSelect}
+        toolbar={
+          <SectionToolbar
+            onDuplicate={onDuplicate}
+            onOpenSettings={onSelect}
+            onDelete={onDelete}
+            // Attach dnd-kit activator ONLY to the drag-handle button
+            dragHandleRef={setActivatorNodeRef}
+            dragHandleProps={{ ...attributes, ...listeners } as React.HTMLAttributes<HTMLButtonElement>}
+          />
+        }
+      >
+        {children}
+      </SectionWrapper>
+    </div>
+  );
+}
+
+// ─── EditModeCanvas ────────────────────────────────────────────────────────────
+
 function EditModeCanvas({
   pageId,
   pageLabel,
@@ -228,6 +313,23 @@ function EditModeCanvas({
     [sections, selectedId]
   );
 
+  // ─── dnd-kit sensors + drag handler ──────────────────────────────────
+  // activationConstraint.distance = 6 px so a plain click never starts a drag.
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
+  );
+
+  function handleDragEnd(e: DragEndEvent) {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const from = sections.findIndex((s) => s.id === active.id);
+    const to = sections.findIndex((s) => s.id === over.id);
+    if (from >= 0 && to >= 0) {
+      replace(arrayMove(sections, from, to), "move");
+    }
+  }
+
   // ─── Mutation helpers (all go through the reducer) ────────────────────
 
   function insertSection(type: SectionType, atIndex: number) {
@@ -236,17 +338,6 @@ function EditModeCanvas({
     next.splice(atIndex, 0, s);
     replace(next, "insert");
     setSelectedId(s.id);
-  }
-
-  function moveSection(id: string, dir: -1 | 1) {
-    const i = sections.findIndex((s) => s.id === id);
-    if (i < 0) return;
-    const j = i + dir;
-    if (j < 0 || j >= sections.length) return;
-    const next = [...sections];
-    const [item] = next.splice(i, 1);
-    next.splice(j, 0, item);
-    replace(next, "move");
   }
 
   function duplicateSection(id: string) {
@@ -386,24 +477,31 @@ function EditModeCanvas({
           }}
         >
           <AddSectionGap index={0} allowedSections={allowedSections} onInsert={insertSection} />
-          {sections.map((s, i) => (
-            <div key={s.id}>
-              <SectionWrapper
-                sectionId={s.id}
-                selected={selectedId === s.id}
-                isFirst={i === 0}
-                isLast={i === sections.length - 1}
-                onSelect={() => setSelectedId(s.id)}
-                onMoveUp={() => moveSection(s.id, -1)}
-                onMoveDown={() => moveSection(s.id, 1)}
-                onDuplicate={() => duplicateSection(s.id)}
-                onDelete={() => deleteSection(s.id)}
-              >
-                {renderSection(s, editCtx)}
-              </SectionWrapper>
-              <AddSectionGap index={i + 1} allowedSections={allowedSections} onInsert={insertSection} />
-            </div>
-          ))}
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext
+              items={sections.map((s) => s.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              {sections.map((s, i) => (
+                <div key={s.id}>
+                  <SortableSection
+                    section={s}
+                    selected={selectedId === s.id}
+                    onSelect={() => setSelectedId(s.id)}
+                    onDuplicate={() => duplicateSection(s.id)}
+                    onDelete={() => deleteSection(s.id)}
+                  >
+                    {renderSection(s, editCtx)}
+                  </SortableSection>
+                  <AddSectionGap index={i + 1} allowedSections={allowedSections} onInsert={insertSection} />
+                </div>
+              ))}
+            </SortableContext>
+          </DndContext>
 
           {sections.length === 0 && (
             <div
