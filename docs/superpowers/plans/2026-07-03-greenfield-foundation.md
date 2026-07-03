@@ -1547,20 +1547,29 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 **Interfaces:**
 - Produces: `stripe` singleton (pinned apiVersion, **throws at import in production if `STRIPE_SECRET_KEY` unset** — no mock-key fallback); `claimEvent(eventId: string): Promise<boolean>` (atomic, returns false if already claimed); webhook route verifying signatures and dispatching to a `handlers: Record<string, (event: Stripe.Event) => Promise<void>>` map that SP5 will populate. Payment-link helpers ported as-is.
 
-- [ ] **Step 1: Port `lib/stripe.ts`** from REF, replacing the `sk_test_mock` fallback with:
+- [ ] **Step 1: Port `lib/stripe.ts`** from REF, replacing the `sk_test_mock` fallback with a **lazy-throwing pattern matching `lib/firebase-admin.ts`** (decision 2026-07-03, review adjudication: module-eval throw coupled `next build` to secret availability; lazy keeps builds env-free while a misconfigured production runtime still throws loudly on first Stripe use — and no mock key ever exists in production):
 
 ```ts
-const key = process.env.STRIPE_SECRET_KEY;
-if (!key) {
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("STRIPE_SECRET_KEY is required in production");
+// Lazy singleton: no secret needed at build time; first use without
+// STRIPE_SECRET_KEY throws in production (dev warns + placeholder).
+let _stripe: Stripe | null = null;
+export function getStripe(): Stripe {
+  if (_stripe) return _stripe;
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("STRIPE_SECRET_KEY is required in production");
+    }
+    console.warn("[stripe] STRIPE_SECRET_KEY not set — Stripe calls will fail");
   }
-  console.warn("[stripe] STRIPE_SECRET_KEY not set — Stripe calls will fail");
+  _stripe = new Stripe(key ?? "sk_test_placeholder", {
+    apiVersion: "2026-04-22.dahlia" as never, // pinned account apiVersion; cast scoped to the literal
+  });
+  return _stripe;
 }
-export const stripe = new Stripe(key ?? "sk_test_placeholder", {
-  apiVersion: "2026-04-22.dahlia",
-});
 ```
+
+(Callers use `getStripe()`; a `stripe` proxy export delegating property access to `getStripe()` is an acceptable equivalent.)
 
 - [ ] **Step 2: Failing idempotency test**
 
