@@ -31,3 +31,4 @@ yarn-error.log*
 # Claude Code local settings
 .claude/local/
 .claude/settings.local.json.superpowers/
+.superpowers/
