@@ -26,7 +26,7 @@ A new repository containing a deployed, tested "hello-world with the brand's bon
 | Language | **TypeScript strict** | plus `noUncheckedIndexedAccess`, `noImplicitOverride` |
 | Styling | **Tailwind v4** | CSS-first `@theme`; no inline-style styling system |
 | Validation | **Zod v4** | |
-| Backend SDKs | `firebase-admin` v13, `firebase` (client) v11, `stripe` pinned + pinned API version, `@aws-sdk/client-s3` v3 | |
+| Backend SDKs | `firebase-admin` v13, `firebase` (client) v11, `stripe` pinned + pinned API version, `@aws-sdk/client-s3` v3 | *As built (recorded deviations 2026-07-03): firebase-admin 14.1.0 / firebase 12.15.0 (current majors at install time, exact-pinned, API-compatible — verified in review). Cache Components/PPR configuration deferred to SP3 (no public pages exist in the foundation).* |
 | Interaction | `@dnd-kit/*` (editor, later), Radix primitives (a11y cores) | |
 | Fonts | `next/font` self-hosted **Fraunces** (variable incl. SOFT/WONK axes) + **Instrument Sans** | no Google Fonts `<link>` tags |
 | Testing | **Vitest** + Testing Library, **Playwright** | from the first commit |
