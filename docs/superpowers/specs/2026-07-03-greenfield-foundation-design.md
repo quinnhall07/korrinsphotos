@@ -14,7 +14,7 @@ A new repository containing a deployed, tested "hello-world with the brand's bon
 
 - **New repository `goldenrod`**, created as a sibling folder to `korrinsphotos` (which becomes the read-only reference archive).
 - GitHub remote + fresh Vercel project on day one; every PR gets a preview deployment.
-- `main` protected; all work lands via PRs. Node 24 LTS, npm.
+- `main` protected. During the foundation build (this sub-project), commits land directly on `main` with CI validating every push — decided with Quinn 2026-07-03. From sub-project 2 onward, all work lands via PRs (by then Vercel preview deployments make them useful). Node 24 LTS, npm.
 - `.env.local` carries over from the old app **unchanged** — same Firebase project, Stripe account, R2 bucket, Cloudflare Images account, and the same env-var names.
 
 ## 3. Stack (all versions pinned exactly — no `"latest"`, no floating carets on core deps)
